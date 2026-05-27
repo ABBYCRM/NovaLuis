@@ -1,0 +1,45 @@
+name: Deploy to Fly.io
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build + deploy to Fly
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Diag — versions
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -x
+          flyctl version
+          flyctl auth whoami
+          flyctl status -a openclawomega-ace36e
+
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -x
+          flyctl deploy \
+            --app openclawomega-ace36e \
+            --remote-only \
+            --ha=false \
+            --wait-timeout=900

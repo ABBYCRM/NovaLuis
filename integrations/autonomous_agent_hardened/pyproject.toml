@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autonomous-agent"
+version = "1.0.0"
+description = "Hardened autonomous code repair agent with safe patching, review, verification, and VCS helpers"
+authors = [{name = "Engineering"}]
+license = {text = "Apache-2.0"}
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "click>=8.1",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "ruff>=0.1.6",
+  "mypy>=1.7",
+]
+github = ["PyGithub>=2.1"]
+metrics = ["prometheus-client>=0.19"]
+
+[project.scripts]
+agent = "autonomous_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["autonomous_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["autonomous_agent/tests"]
+addopts = "-q --tb=short --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
