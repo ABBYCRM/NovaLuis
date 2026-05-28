@@ -988,6 +988,8 @@ body {
     }
     const staleModels = ['mistralai/Mistral-Large-3-675B', ''];
     if (!s.model || staleModels.includes(s.model)) { s.model = 'XiaomiMiMo/MiMo-V2-Flash'; changed = true; }
+    // Force direct HTTP mode — gateway/WebSocket mode requires OpenClaw which we don't run
+    if (s.mode !== 'direct') { s.mode = 'direct'; changed = true; }
     if (changed) localStorage.setItem(LS_KEY, JSON.stringify(s));
   } catch (_) {}
 })();
