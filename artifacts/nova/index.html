@@ -976,16 +976,19 @@ body {
   try {
     const res = await fetch('/api/nova-config');
     if (!res.ok) return;
-    const { apiKey, baseUrl } = await res.json();
+    const { apiKey } = await res.json();
     if (!apiKey) return;
     const LS_KEY = 'bob-settings';
     let s = {};
     try { s = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (_) {}
-    if (!s.apiKey) {
-      s.apiKey  = apiKey;
-      s.baseUrl = s.baseUrl || baseUrl;
-      localStorage.setItem(LS_KEY, JSON.stringify(s));
+    let changed = false;
+    if (!s.apiKey)  { s.apiKey  = apiKey; changed = true; }
+    if (!s.baseUrl || s.baseUrl === '/api-proxy/v1' || s.baseUrl === 'https://api-inference.bitdeer.ai/v1') {
+      s.baseUrl = '/api/v1'; changed = true;
     }
+    const staleModels = ['mistralai/Mistral-Large-3-675B', ''];
+    if (!s.model || staleModels.includes(s.model)) { s.model = 'XiaomiMiMo/MiMo-V2-Flash'; changed = true; }
+    if (changed) localStorage.setItem(LS_KEY, JSON.stringify(s));
   } catch (_) {}
 })();
 </script>
