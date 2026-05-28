@@ -971,6 +971,24 @@ body {
 <!-- Toast container -->
 <div id="toast-container"></div>
 
+<script>
+(async () => {
+  try {
+    const res = await fetch('/api/nova-config');
+    if (!res.ok) return;
+    const { apiKey, baseUrl } = await res.json();
+    if (!apiKey) return;
+    const LS_KEY = 'bob-settings';
+    let s = {};
+    try { s = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (_) {}
+    if (!s.apiKey) {
+      s.apiKey  = apiKey;
+      s.baseUrl = s.baseUrl || baseUrl;
+      localStorage.setItem(LS_KEY, JSON.stringify(s));
+    }
+  } catch (_) {}
+})();
+</script>
 <script src="/assets/bob.js"></script>
 </body>
 </html>
