@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.local
+.nova-data
+.replit-artifact
+.replit
+attached_assets
+/tmp
+*.log
+.env
+.env.*
