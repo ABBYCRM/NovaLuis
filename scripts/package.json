@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "deep-worker": "node deep-worker.mjs",
+    "poll-events": "node poll-events.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",
