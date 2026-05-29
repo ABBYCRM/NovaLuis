@@ -13,14 +13,16 @@
 //   3. The proxy reads scratchpad_entries back as a memory digest and injects
 //      it into every chat for continuity.
 //
-// Storage is plain Postgres (shared DATABASE_URL) so Replit and Railway both
-// read/write the same memory.
+// Storage is plain Postgres. The daemon connects to SCRATCHPAD_DATABASE_URL
+// when set (the Railway Postgres public URL, so this always-on Replit daemon
+// distills the live app's memory), otherwise falls back to DATABASE_URL.
 
 import pg from "pg";
 
 const { Pool } = pg;
 
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL =
+  process.env.SCRATCHPAD_DATABASE_URL || process.env.DATABASE_URL;
 const BITDEER_KEY = process.env.BITDEER_API_KEY;
 const BASE_URL = process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1";
 const MODEL = process.env.SCRATCHPAD_MODEL || "XiaomiMiMo/MiMo-V2-Flash";
