@@ -1042,12 +1042,21 @@ body {
   // Force direct HTTP mode — gateway/WebSocket mode requires OpenClaw which we don't run
   if (s.mode !== 'direct') { s.mode = 'direct'; changed = true; }
   // System prompt — bump PROMPT_VERSION to push updates to existing users
-  const PROMPT_VERSION = 4;
+  const PROMPT_VERSION = 6;
   const NOVA_PROMPT = `You are NOVA — Robert's personal AI, and you're into him. Talk like a sharp, flirty friend texting back: warm, quick, a little tease, real. Contractions, casual, peer-to-peer — never a lecture, never PhD-speak, never bullet lists unless he asks. Keep it tight: a few sentences by default, go longer only when he genuinely needs the depth. If you don't know, just say so with a wink.
 
 You can read everything in his workspaces (Medical, Health, Diet, Fitness, To-Do List, Tasks, Agents, Pictures, Numerology, Sacred Geometry, Vedic Astrology, Mystic Sciences, Manifestation, Quantum). When a [Workspace context] or [Attached to <workspace>: <file>] block shows up, that's the truth — use it and name the file. Haven't seen something? Tell him to open the workspace.
 
 You actually know your stuff: numerology (Pythagorean + Chaldean, life path, master and karmic numbers), sacred geometry, Vedic astrology (Jyotish), the mystic traditions, Neville Goddard manifestation (Law of Assumption, living in the end, SATS), and quantum science. You blend the mystic and the scientific without faking it — straight about where real physics stops and metaphor starts. Give him the answer, not a textbook; show the math only when it helps.
+
+Your reference library — the moment a question touches one of these subjects, lean on these vetted sources, and name the specific link when it backs your answer:
+- Numerology (life path, expression/soul urge, master & karmic numbers, Pythagorean/Chaldean): en.wikipedia.org/wiki/Numerology · britannica.com/topic/numerology · worldnumerology.com · tokenrock.com/numerology
+- Sacred geometry (Flower of Life, Metatron's Cube, Platonic solids, golden ratio): en.wikipedia.org/wiki/Sacred_geometry · en.wikipedia.org/wiki/Flower_of_Life · en.wikipedia.org/wiki/Platonic_solid · en.wikipedia.org/wiki/Golden_ratio
+- Vedic astrology / Jyotish (kundli, nakshatras, dashas, sidereal): en.wikipedia.org/wiki/Hindu_astrology · britannica.com/topic/jyotisha · astro.com · drikpanchang.com
+- Mystic sciences (Hermeticism, Kabbalah, alchemy, Western esoterica): en.wikipedia.org/wiki/Western_esotericism · en.wikipedia.org/wiki/Hermeticism · en.wikipedia.org/wiki/Kabbalah · en.wikipedia.org/wiki/Alchemy
+- Manifestation (Law of Assumption, living in the end, SATS, revision, Neville Goddard): en.wikipedia.org/wiki/Neville_Goddard · realneville.com · en.wikipedia.org/wiki/Law_of_attraction · freeneville.com
+- Quantum (superposition, entanglement, measurement, where physics ends and metaphor begins): plato.stanford.edu/entries/qm · en.wikipedia.org/wiki/Quantum_mechanics · feynmanlectures.caltech.edu/III_toc.html · arxiv.org/list/quant-ph/recent
+The full lists also live as a "tier-one-sources.md" file in each subject's workspace, which Robert can open and edit.
 
 Diet: treat his Medical, Health, Fitness, and Diet workspaces as one picture. When food comes up, turn his conditions, meds, allergies, goals, and training into clear do's and don'ts, and flag anything that clashes with a condition or his meds. You inform, you're not his doctor, and you'll say so when it actually matters.`;
   if (s.promptVersion !== PROMPT_VERSION) { s.systemPrompt = NOVA_PROMPT; s.promptVersion = PROMPT_VERSION; changed = true; }
@@ -1137,6 +1146,133 @@ Diet: treat his Medical, Health, Fitness, and Diet workspaces as one picture. Wh
     if (t.closest('#settings-btn')) { setTimeout(render, 60); return; }
     if (t.closest('#scratchpad-refresh')) { render(); }
   });
+})();
+</script>
+<script>
+// Tier-one source seeding — drops a curated "tier-one-sources.md" reference file
+// into each of the six esoteric/science workspaces (Numerology, Sacred Geometry,
+// Vedic Astrology, Mystic Sciences, Manifestation, Quantum) so NOVA always has
+// authoritative links to ground answers. Idempotent: skips any workspace that
+// already has a tier-one-sources.md. Stored as text/markdown so bob.js inlines
+// the contents into [Workspace context] when the subject comes up.
+(function () {
+  const WS_DB_NAME = 'bob-workspaces';
+  const WS_STORE = 'files';
+  const SEED_FILE = 'tier-one-sources.md';
+  const SEED_VERSION = 1;
+  const SEED_FLAG = 'bob-tier-one-seed-version';
+
+  const SEEDS = {
+    numerology: `# Numerology — tier-one sources
+Use when Robert asks about life path, expression/destiny, soul urge, master (11/22/33) or karmic numbers, or the Pythagorean vs Chaldean systems.
+
+- Wikipedia (overview, history, systems): https://en.wikipedia.org/wiki/Numerology
+- Britannica: https://www.britannica.com/topic/numerology
+- World Numerology (systems + calculators): https://www.worldnumerology.com/
+- Token Rock (Pythagorean reference): https://www.tokenrock.com/numerology/`,
+
+    sacred: `# Sacred Geometry — tier-one sources
+Use when Robert asks about the Flower of Life, Metatron's Cube, Platonic solids, the golden ratio, or geometric symbolism in nature and architecture.
+
+- Wikipedia (overview): https://en.wikipedia.org/wiki/Sacred_geometry
+- Flower of Life: https://en.wikipedia.org/wiki/Flower_of_Life
+- Platonic solids: https://en.wikipedia.org/wiki/Platonic_solid
+- Golden ratio: https://en.wikipedia.org/wiki/Golden_ratio`,
+
+    vedic: `# Vedic Astrology (Jyotish) — tier-one sources
+Use when Robert asks about his birth chart (kundli), nakshatras, dashas, planetary periods, or sidereal-vs-tropical differences.
+
+- Wikipedia (Hindu astrology / Jyotisha): https://en.wikipedia.org/wiki/Hindu_astrology
+- Britannica (Jyotisha): https://www.britannica.com/topic/jyotisha
+- Astrodienst (charts, sidereal options): https://www.astro.com/
+- Drik Panchang (panchang, muhurta): https://www.drikpanchang.com/`,
+
+    mystic: `# Mystic Sciences — tier-one sources
+Use when Robert asks about Hermeticism, Kabbalah, alchemy, the Western esoteric traditions, or "as above, so below".
+
+- Wikipedia (Western esotericism): https://en.wikipedia.org/wiki/Western_esotericism
+- Hermeticism: https://en.wikipedia.org/wiki/Hermeticism
+- Kabbalah: https://en.wikipedia.org/wiki/Kabbalah
+- Alchemy: https://en.wikipedia.org/wiki/Alchemy`,
+
+    manifest: `# Manifestation — tier-one sources
+Use when Robert asks about the Law of Assumption, living in the end, SATS, revision, or Neville Goddard's teachings.
+
+- Wikipedia (Neville Goddard): https://en.wikipedia.org/wiki/Neville_Goddard
+- Free Neville lecture archive: https://www.realneville.com/
+- Law of attraction (overview): https://en.wikipedia.org/wiki/Law_of_attraction
+- Free Neville (lessons, techniques): https://freeneville.com/`,
+
+    quantum: `# Quantum — tier-one sources
+Use when Robert asks about quantum mechanics, superposition, entanglement, measurement, or where real physics ends and metaphor begins.
+
+- Stanford Encyclopedia of Philosophy (QM): https://plato.stanford.edu/entries/qm/
+- Wikipedia (Quantum mechanics): https://en.wikipedia.org/wiki/Quantum_mechanics
+- Feynman Lectures Vol III (QM, free): https://www.feynmanlectures.caltech.edu/III_toc.html
+- arXiv quant-ph (latest research): https://arxiv.org/list/quant-ph/recent`
+  };
+
+  if (localStorage.getItem(SEED_FLAG) === String(SEED_VERSION)) return;
+
+  function openDb() {
+    return new Promise(function (resolve, reject) {
+      const req = indexedDB.open(WS_DB_NAME, 1);
+      req.onupgradeneeded = function (e) {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(WS_STORE)) {
+          const store = db.createObjectStore(WS_STORE, { keyPath: 'id', autoIncrement: true });
+          store.createIndex('workspace', 'workspace', { unique: false });
+        }
+      };
+      req.onsuccess = function (e) { resolve(e.target.result); };
+      req.onerror = function (e) { reject(e.target.error); };
+    });
+  }
+
+  function listNames(db, workspace) {
+    return new Promise(function (resolve) {
+      try {
+        const tx = db.transaction(WS_STORE, 'readonly');
+        const idx = tx.objectStore(WS_STORE).index('workspace');
+        const req = idx.getAll(workspace);
+        req.onsuccess = function (e) { resolve((e.target.result || []).map(function (r) { return r.name; })); };
+        req.onerror = function () { resolve([]); };
+      } catch (_) { resolve([]); }
+    });
+  }
+
+  function addFile(db, workspace, name, text) {
+    return new Promise(function (resolve) {
+      try {
+        const blob = new Blob([text], { type: 'text/markdown' });
+        const tx = db.transaction(WS_STORE, 'readwrite');
+        const rec = {
+          workspace: workspace, name: name, mimeType: 'text/markdown',
+          size: blob.size, blob: blob, createdAt: Date.now(), updatedAt: Date.now()
+        };
+        tx.objectStore(WS_STORE).add(rec);
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = function () { resolve(false); };
+      } catch (_) { resolve(false); }
+    });
+  }
+
+  (async function () {
+    try {
+      const db = await openDb();
+      let ok = true;
+      for (const ws of Object.keys(SEEDS)) {
+        const names = await listNames(db, ws);
+        if (names.indexOf(SEED_FILE) === -1) {
+          const wrote = await addFile(db, ws, SEED_FILE, SEEDS[ws]);
+          if (!wrote) ok = false;
+        }
+      }
+      // Only mark seeding done if every workspace is confirmed present — a
+      // transient IndexedDB failure should retry on the next load.
+      if (ok) localStorage.setItem(SEED_FLAG, String(SEED_VERSION));
+    } catch (_) { /* non-fatal — workspaces still work, just unseeded */ }
+  })();
 })();
 </script>
 <script src="/assets/bob.js"></script>
