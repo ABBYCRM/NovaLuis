@@ -1,1 +1,2 @@
 - [Nova workspace context & AI awareness](nova-workspace-context.md) — workspace files only inline on literal name match; put must-use content in the index.html system prompt (bump PROMPT_VERSION).
+- [Nova voice & speed levers](nova-voice-and-speed.md) — only `settings.model` controls speed (no bob.js edit); model-migration lists must match full ids w/ one-time guard; browser TTS ignores `ttsVoice` (uses `voiceName`+`speechRate`), human voice needs OpenAI key.

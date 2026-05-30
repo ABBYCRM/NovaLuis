@@ -898,7 +898,10 @@ body {
     <div class="form-group">
       <label class="form-label">Model</label>
       <select class="form-input" id="s-model">
-        <option value="mistralai/Mistral-Large-3-675B-Instruct-2512">mistralai/Mistral-Large-3-675B-Instruct-2512 ★</option>
+        <option value="XiaomiMiMo/MiMo-V2-Flash">XiaomiMiMo/MiMo-V2-Flash ★ (fastest)</option>
+        <option value="ByteDance-Seed/Seed-1.6-Flash">ByteDance-Seed/Seed-1.6-Flash (fast)</option>
+        <option value="Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen/Qwen3-Next-80B-A3B-Instruct (fast)</option>
+        <option value="mistralai/Mistral-Large-3-675B-Instruct-2512">mistralai/Mistral-Large-3-675B-Instruct-2512 (heavy / slower)</option>
         <option value="MiniMaxAI/MiniMax-M2.5">MiniMaxAI/MiniMax-M2.5</option>
         <option value="moonshotai/Kimi-K2.6">moonshotai/Kimi-K2.6</option>
         <option value="deepseek-ai/DeepSeek-V4-Pro">deepseek-ai/DeepSeek-V4-Pro</option>
@@ -1039,6 +1042,24 @@ body {
   }
   const staleModels = ['mistralai/Mistral-Large-3-675B', ''];
   if (!s.model || staleModels.includes(s.model)) { s.model = 'XiaomiMiMo/MiMo-V2-Flash'; changed = true; }
+  // One-time speed migration: move anyone still on a heavy model (incl. the
+  // full-id 675B default the old staleModels check missed) onto the fast Flash
+  // model. Guarded so a deliberate later choice in Settings sticks.
+  if (!s.speedMigration) {
+    const heavyModels = [
+      'mistralai/Mistral-Large-3-675B-Instruct-2512',
+      'mistralai/Mistral-Large-3-675B'
+    ];
+    if (heavyModels.includes(s.model)) { s.model = 'XiaomiMiMo/MiMo-V2-Flash'; changed = true; }
+    s.speedMigration = true; changed = true;
+  }
+  // One-time voice migration: softer, more natural cadence + sweetest neural
+  // voice (the latter applies when an OpenAI TTS key is configured).
+  if (!s.voiceMigration) {
+    s.speechRate = 1.0;
+    s.ttsVoice = 'shimmer';
+    s.voiceMigration = true; changed = true;
+  }
   // Force direct HTTP mode — gateway/WebSocket mode requires OpenClaw which we don't run
   if (s.mode !== 'direct') { s.mode = 'direct'; changed = true; }
   // System prompt — bump PROMPT_VERSION to push updates to existing users
