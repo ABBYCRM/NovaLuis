@@ -1,0 +1,10 @@
+import pg from "pg";
+const c=new pg.Client({connectionString:process.env.VURL});
+await c.connect();
+const t=await c.query("select id,processed from conversation_turns where user_text like $1",["%"+process.env.NONCE+"%"]);
+console.log("new turn rows=",t.rowCount, t.rows.map(r=>`#${r.id} processed=${r.processed}`).join(" "));
+const tot=await c.query("select count(*)::int n,count(*) filter(where processed)::int p from conversation_turns");
+console.log("turns total=",tot.rows[0].n,"processed=",tot.rows[0].p);
+const e=await c.query("select count(*)::int n from scratchpad_entries");
+console.log("scratchpad_entries=",e.rows[0].n);
+await c.end();
