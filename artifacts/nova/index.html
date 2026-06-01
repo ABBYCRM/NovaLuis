@@ -938,7 +938,7 @@ body {
     <div id="gateway-fields">
       <div class="form-group">
         <label class="form-label">Gateway URL</label>
-        <input class="form-input" id="s-gateway-url" type="text" placeholder="https://bobs-super-claw.fly.dev">
+        <input class="form-input" id="s-gateway-url" type="text" placeholder="https://your-gateway.example.com">
       </div>
       <div class="form-group">
         <label class="form-label">Gateway Token</label>
@@ -1179,7 +1179,7 @@ INPUT → Parse Tone/Workspace → Adjust Hormone/Valence Vectors → Run Active
     s.ttsVoice = 'shimmer';
     s.voiceMigration = true; changed = true;
   }
-  // Force direct HTTP mode — gateway/WebSocket mode requires OpenClaw which we don't run
+  // Force direct HTTP mode — gateway/WebSocket mode requires a separate gateway we don't run
   if (s.mode !== 'direct') { s.mode = 'direct'; changed = true; }
   // System prompt — the authoritative NOVA-ROSE persona, read verbatim from the
   // inert text block above (avoids template-literal escaping of its backticks /

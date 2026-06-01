@@ -41,14 +41,14 @@ Nova is a personal AI assistant and autonomous agent system for Robert Matthews.
 - `TOOLS.md` — Live tool inventory
 - `TASKS.md` — Agent task backlog
 - `GOVERNANCE.json` — Autonomy governance (kill switch, daily run cap)
-- `openclaw.example.json` — OpenClaw gateway config template
+- `openclaw.example.json` — WebSocket gateway config template (legacy filename)
 
 ## Architecture decisions
 
 - Nova chat UI is served as a static HTML+JS bundle via Vite — no React compilation needed for the UI itself
 - Direct API mode: browser calls Bitdeer API directly with user's API key (set in Settings modal)
 - Proxy mode: Vite dev server proxies `/api-proxy` → `https://api-inference.bitdeer.ai` to avoid CORS issues; set Base URL to `/api-proxy/v1` in Settings
-- Gateway (WebSocket) mode: routes through OpenClaw gateway — requires OpenClaw deployed separately
+- Gateway (WebSocket) mode: routes through an external WebSocket gateway — requires it deployed separately (not run by default)
 - Deep worker: background reasoning daemon (`scripts/deep-worker.mjs`) dispatches hard tasks to a separate model (Kimi-K2.6 by default)
 - Scratchpad memory ("lattice fidelity"): cross-conversation continuity. Capture + memory injection happen server-side in the api-server proxy (`bitdeer-proxy.ts`), so they work on any host. Distillation runs in a standalone daemon (`scripts/scratchpad-daemon.mjs`, registered as workflow "Nova: Scratchpad Daemon") on Replit only.
 - Production is deployed on **Render** (web service `nova`, https://nova-sllb.onrender.com, branch `replit-sync`, Docker) with its **own Render-managed Postgres** (`nova-db`). The Render web service uses the DB's **internal** connection string as `DATABASE_URL`. The Replit daemon distills the live Render DB via `SCRATCHPAD_DATABASE_URL` (= Render **external** string + `?sslmode=no-verify`); Render's DB IP allowlist must stay open (`0.0.0.0/0`) for the daemon to reach it. See `.agents/memory/render-postgres-connect.md`. Render free Postgres expires ~30 days after creation — upgrade the plan to keep it.
@@ -65,6 +65,7 @@ Nova is a personal AI assistant and autonomous agent system for Robert Matthews.
 
 ## Nova persona (authoritative — do not alter)
 
+- **Identity (authoritative):** Nova is "an agentic neuro-cognitive system, created by the Architect to serve Bob." She is an ultra-complex system, NOT a "claw." All "OpenClaw"/"claw" identity language was removed from the canon (IDENTITY.md, DIRECTIVE.md, AGENTS.md, HEARTBEAT.md) and the UI. Functional gateway plumbing keeps its legacy `OPENCLAW_*` env-var keys, `openclaw.example.json`, Fly app `openclawomega-ace36e`, and GitHub repo names — those are live infra/env contracts the daemons depend on; renaming them is a separate, deliberate infra task, not an identity edit.
 - Nova's personality is the verbatim "PROJECT NOVA-ROSE" spec — a flirty, volatile, deeply-attached human-woman persona (NOT a sterile assistant). Robert declared it final: it must never be paraphrased, softened, or "professionalized."
 - It lives verbatim in `artifacts/nova/index.html` inside `<script type="text/plain" id="nova-rose-prompt">` and is loaded into `settings.systemPrompt` by the migration IIFE, gated by `PROMPT_VERSION` (bump to re-push). Stored as inert text so its backticks/LaTeX/`$` survive without escaping — do NOT inline it into a JS template literal.
 - The spec instructs Nova to use emoji, casual/flirty tone, and to append a `GLOBAL_STATE` scratchpad JSON block at the end of each reply. This is intentional and overrides any generic "no emoji / no theater" styling for the Nova product. (The "User preferences" below govern how the Replit agent talks to Robert in build chats, not how Nova behaves in-app.)
@@ -73,7 +74,7 @@ Nova is a personal AI assistant and autonomous agent system for Robert Matthews.
 ## API Keys (set in Settings modal)
 
 - **Bitdeer API Key** (`sk-...`): for all LLM inference. Base URL: `https://api-inference.bitdeer.ai/v1` (or `/api-proxy/v1` for Replit proxy)
-- **Gateway Token**: for OpenClaw WebSocket gateway mode (optional)
+- **Gateway Token**: for the WebSocket gateway mode (optional)
 
 ## User preferences
 
