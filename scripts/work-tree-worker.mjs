@@ -62,20 +62,54 @@ function clip(s, n) {
   return s.length > n ? s.slice(0, n) : s;
 }
 
-// GOVERNANCE.json kill switch (SOUL.md §26) — when autonomyEnabled is false the
-// worker idles. Fails CLOSED: an unreadable/corrupt governance file must stop the
-// worker rather than let it run unsupervised.
-function autonomyEnabled() {
+// GOVERNANCE.json governs autonomous operation (SOUL.md §26). Reads BOTH the
+// kill switch (autonomyEnabled) and the daily run cap (dailyAutonomousRunCap).
+// Fails CLOSED: an unreadable/corrupt governance file must stop the worker
+// rather than let it run unsupervised (autonomyEnabled=false). cap=0 means no
+// cap configured; a positive cap limits autonomous runs started per UTC day.
+function readGovernance() {
   try {
     const raw = fs.readFileSync(GOVERNANCE_PATH, "utf8");
     const g = JSON.parse(raw);
-    return g.autonomyEnabled !== false;
+    const cap = Number(g.dailyAutonomousRunCap ?? 0);
+    return {
+      autonomyEnabled: g.autonomyEnabled !== false,
+      cap: Number.isFinite(cap) && cap > 0 ? cap : 0,
+    };
   } catch (e) {
     console.error(
       `work-tree-worker: governance unreadable (${e.message || e}); failing closed`,
     );
-    return false;
+    return { autonomyEnabled: false, cap: 0 };
   }
+}
+
+// UTC-day key (YYYY-MM-DD) — matches the poller's run-cap reset semantics.
+function utcDay() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// Durable, restart-safe daily run counter (work_tree_governance). The worker
+// holds a global advisory lock while ticking, so the read-then-increment is
+// effectively single-writer; the ON CONFLICT upsert keeps it correct even if
+// that ever changes.
+async function runsStartedToday() {
+  const { rows } = await pool.query(
+    `SELECT run_count FROM work_tree_governance WHERE day = $1`,
+    [utcDay()],
+  );
+  return rows[0]?.run_count ?? 0;
+}
+
+async function incrementRunsToday() {
+  await pool.query(
+    `INSERT INTO work_tree_governance (day, run_count)
+          VALUES ($1, 1)
+     ON CONFLICT (day)
+     DO UPDATE SET run_count = work_tree_governance.run_count + 1,
+                   updated_at = now()`,
+    [utcDay()],
+  );
 }
 
 async function callLLM({ system, user, maxTokens = 1500, temperature = 0.3, model }) {
@@ -136,7 +170,26 @@ function extractJson(raw) {
 
 // ── DB helpers ──────────────────────────────────────────────────────────────
 
-async function claimRun() {
+// Claim one pending run, but only if the daily autonomous run cap (if any)
+// hasn't been reached. Counts each newly started run in the durable counter so
+// the cap survives restarts. In-flight runs already "running" are allowed to
+// finish; the cap only gates STARTING new autonomous runs (mirrors the poller,
+// which disables future heartbeats rather than killing in-flight ones).
+let capLoggedDay = "";
+async function claimRun(cap) {
+  if (cap > 0) {
+    const started = await runsStartedToday();
+    if (started >= cap) {
+      if (capLoggedDay !== utcDay()) {
+        console.log(
+          `work-tree-worker: daily autonomous run cap reached (${started}/${cap}); ` +
+            `not starting new runs until UTC midnight`,
+        );
+        capLoggedDay = utcDay();
+      }
+      return null;
+    }
+  }
   // Atomically take one pending run and mark it running.
   const { rows } = await pool.query(
     `UPDATE work_tree_runs
@@ -150,7 +203,9 @@ async function claimRun() {
       )
       RETURNING *`,
   );
-  return rows[0] || null;
+  const run = rows[0] || null;
+  if (run) await incrementRunsToday();
+  return run;
 }
 
 async function runningRuns() {
@@ -541,7 +596,8 @@ async function tick() {
   const client = await pool.connect();
   let locked = false;
   try {
-    if (!autonomyEnabled()) return; // kill switch
+    const gov = readGovernance();
+    if (!gov.autonomyEnabled) return; // kill switch (fails closed)
 
     const lk = await client.query("SELECT pg_try_advisory_lock($1) AS ok", [
       ADVISORY_LOCK_ID,
@@ -556,8 +612,9 @@ async function tick() {
       recovered = true;
     }
 
-    // Promote one pending run to running per tick, then advance all running runs.
-    await claimRun();
+    // Promote one pending run to running per tick (gated by the daily run cap),
+    // then advance all running runs.
+    await claimRun(gov.cap);
     const runs = await runningRuns();
     for (const r of runs) {
       try {

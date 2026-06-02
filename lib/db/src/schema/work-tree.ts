@@ -60,3 +60,19 @@ export const insertWorkTreeNodeSchema = createInsertSchema(
 ).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertWorkTreeNode = z.infer<typeof insertWorkTreeNodeSchema>;
 export type WorkTreeNode = typeof workTreeNodesTable.$inferSelect;
+
+// Durable, restart-safe daily counter that enforces GOVERNANCE.json
+// dailyAutonomousRunCap in the worker. One row per UTC day; the worker
+// increments runCount once per autonomous run it starts and stops claiming new
+// runs once runCount reaches the cap. Resets implicitly at UTC midnight because
+// the worker keys on the current UTC date string.
+export const workTreeGovernanceTable = pgTable("work_tree_governance", {
+  day: text("day").primaryKey(),
+  runCount: integer("run_count").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export type WorkTreeGovernance = typeof workTreeGovernanceTable.$inferSelect;
