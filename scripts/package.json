@@ -8,7 +8,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "deep-worker": "node deep-worker.mjs",
     "poll-events": "node poll-events.mjs",
-    "scratchpad-daemon": "node scratchpad-daemon.mjs"
+    "scratchpad-daemon": "node scratchpad-daemon.mjs",
+    "work-tree-worker": "node work-tree-worker.mjs"
   },
   "dependencies": {
     "pg": "^8.20.0"
