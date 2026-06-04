@@ -73,6 +73,44 @@ function clip(s, n) {
   return s.length > n ? s.slice(0, n) : s;
 }
 
+// Build a size-bounded, ALWAYS-VALID-JSON trace string for storage. We cap each
+// step's fields and then drop the oldest steps until the serialized form fits
+// the column budget — we never slice the serialized JSON itself, since cutting
+// mid-structure produces invalid JSON that makes the UI drop the whole trace.
+const TRACE_BUDGET = 12000;
+function clipArgs(args) {
+  if (!args || typeof args !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(args)) {
+    out[k] = typeof v === "string" && v.length > 300 ? v.slice(0, 300) + "…" : v;
+  }
+  return out;
+}
+function serializeTrace(trace) {
+  if (!Array.isArray(trace) || !trace.length) return "";
+  let arr = trace.map((t) => ({
+    attempt: t.attempt,
+    step: t.step,
+    tool: t.tool,
+    ok: t.ok,
+    args: clipArgs(t.args),
+    result: clip(String(t.result ?? ""), 1000),
+  }));
+  let s = JSON.stringify(arr);
+  while (s.length > TRACE_BUDGET && arr.length > 1) {
+    arr = arr.slice(1);
+    s = JSON.stringify(arr);
+  }
+  if (s.length > TRACE_BUDGET) {
+    arr = [{ ...arr[0], result: clip(String(arr[0].result ?? ""), 2000) }];
+    s = JSON.stringify(arr);
+    if (s.length > TRACE_BUDGET) {
+      s = JSON.stringify([{ note: "trace too large to store" }]);
+    }
+  }
+  return s;
+}
+
 // GOVERNANCE.json governs autonomous operation (SOUL.md §26). Reads BOTH the
 // kill switch (autonomyEnabled) and the daily run cap (dailyAutonomousRunCap).
 // Fails CLOSED: an unreadable/corrupt governance file must stop the worker
@@ -580,7 +618,7 @@ async function runTerminal(run, nodes, node) {
     result: clip(result, 8000),
     verification: clip(verification, 2000),
     attempts: (node.attempts || 0) + 1,
-    trace: trace.length ? clip(JSON.stringify(trace), 12000) : "",
+    trace: serializeTrace(trace),
   });
   return passed;
 }

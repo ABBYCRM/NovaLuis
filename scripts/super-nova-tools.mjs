@@ -19,6 +19,9 @@ import path from "node:path";
 import os from "node:os";
 import net from "node:net";
 import dns from "node:dns/promises";
+import { lookup as rawLookup } from "node:dns";
+import http from "node:http";
+import https from "node:https";
 import { spawn } from "node:child_process";
 
 const BITDEER_KEY = process.env.BITDEER_API_KEY;
@@ -87,6 +90,106 @@ async function assertSafeUrl(raw) {
   return u;
 }
 
+// Connect-time DNS guard. net.connect() calls this `lookup` at socket-connect
+// time, so the address we validate here is the exact address we connect to —
+// closing the DNS-rebinding / TOCTOU window between assertSafeUrl()'s pre-check
+// and the actual connection. We always inspect every resolved address and only
+// hand back the safe ones.
+function guardedLookup(hostname, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  rawLookup(hostname, { ...options, all: true, verbatim: true }, (err, addresses) => {
+    if (err) return callback(err);
+    const list = Array.isArray(addresses)
+      ? addresses
+      : [{ address: addresses, family: options && options.family === 6 ? 6 : 4 }];
+    const safe = list.filter((a) => !ipIsPrivate(a.address));
+    if (!safe.length) return callback(new Error("blocked private address"));
+    if (options && options.all) return callback(null, safe);
+    return callback(null, safe[0].address, safe[0].family);
+  });
+}
+
+// Low-level fetch built on node:http(s) so we can (a) pin the connect-time DNS
+// resolution through guardedLookup and (b) stream-cap the response body instead
+// of buffering an unbounded amount into memory. Redirects are NOT followed —
+// each hop must be re-fetched so the SSRF guard re-validates it.
+function rawFetch({ url, method, headers, body, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      reject(new Error("invalid URL"));
+      return;
+    }
+    const mod = u.protocol === "https:" ? https : http;
+    let settled = false;
+    const done = (v) => {
+      if (!settled) {
+        settled = true;
+        resolve(v);
+      }
+    };
+    const fail = (e) => {
+      if (!settled) {
+        settled = true;
+        reject(e);
+      }
+    };
+    const req = mod.request(
+      u,
+      { method, headers: headers || {}, lookup: guardedLookup },
+      (res) => {
+        const status = res.statusCode || 0;
+        if (status >= 300 && status < 400) {
+          res.resume();
+          done({
+            status,
+            redirectTo: res.headers.location || "",
+            note: "redirect not followed — re-fetch the redirect URL to keep the SSRF guard in effect",
+          });
+          return;
+        }
+        const contentType = res.headers["content-type"] || "";
+        const chunks = [];
+        let received = 0;
+        let truncated = false;
+        res.on("data", (d) => {
+          if (truncated) return;
+          received += d.length;
+          chunks.push(d);
+          if (received >= MAX_BODY) {
+            truncated = true;
+            req.destroy();
+            done({
+              status,
+              contentType,
+              body: Buffer.concat(chunks).toString("utf8").slice(0, MAX_BODY),
+              truncated: true,
+            });
+          }
+        });
+        res.on("end", () =>
+          done({
+            status,
+            contentType,
+            body: Buffer.concat(chunks).toString("utf8").slice(0, MAX_BODY),
+            truncated,
+          }),
+        );
+        res.on("error", fail);
+      },
+    );
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("request timeout")));
+    req.on("error", fail);
+    if (body != null && method !== "GET" && method !== "HEAD") req.write(String(body));
+    req.end();
+  });
+}
+
 // ── Sandbox ──────────────────────────────────────────────────────────────────
 
 async function sandboxDir(runId) {
@@ -147,116 +250,108 @@ async function httpFetch(args) {
   const url = String(args.url || "");
   if (!url) return { error: "url required" };
   const method = String(args.method || "GET").toUpperCase();
+  // Fast literal/pre-resolution pre-check (defense in depth); the authoritative
+  // guard is guardedLookup, applied at connect time inside rawFetch.
   await assertSafeUrl(url);
   const headers =
     args.headers && typeof args.headers === "object" ? args.headers : {};
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      method,
-      headers,
-      body:
-        args.body != null && method !== "GET" && method !== "HEAD"
-          ? String(args.body)
-          : undefined,
-      signal: ctrl.signal,
-      redirect: "manual",
-    });
-    if (res.status >= 300 && res.status < 400) {
-      return {
-        status: res.status,
-        redirectTo: res.headers.get("location") || "",
-        note: "redirect not followed — re-fetch the redirect URL to keep the SSRF guard in effect",
-      };
-    }
-    const text = await res.text();
-    return {
-      status: res.status,
-      contentType: res.headers.get("content-type") || "",
-      body: text.slice(0, MAX_BODY),
-      truncated: text.length > MAX_BODY,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+  return rawFetch({
+    url,
+    method,
+    headers,
+    body: args.body,
+    timeoutMs: FETCH_TIMEOUT_MS,
+  });
 }
 
 async function webSearch(args) {
   const q = String(args.query || "").slice(0, 400);
   if (!q) return { error: "query required" };
-  try {
-    if (process.env.TAVILY_API_KEY) {
-      const res = await fetch("https://api.tavily.com/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          api_key: process.env.TAVILY_API_KEY,
-          query: q,
-          max_results: 5,
-        }),
-      });
-      if (!res.ok) return { error: `tavily ${res.status}` };
-      const j = await res.json();
-      return {
-        provider: "tavily",
-        results: (j.results || []).slice(0, 5).map((r) => ({
-          title: r.title,
-          url: r.url,
-          snippet: String(r.content || "").slice(0, 300),
-        })),
-      };
-    }
-    if (process.env.BRAVE_API_KEY) {
-      const res = await fetch(
-        "https://api.search.brave.com/res/v1/web/search?count=5&q=" +
-          encodeURIComponent(q),
-        {
-          headers: {
-            "X-Subscription-Token": process.env.BRAVE_API_KEY,
-            Accept: "application/json",
-          },
-        },
-      );
-      if (!res.ok) return { error: `brave ${res.status}` };
-      const j = await res.json();
-      return {
-        provider: "brave",
-        results: ((j.web && j.web.results) || []).slice(0, 5).map((r) => ({
-          title: r.title,
-          url: r.url,
-          snippet: String(r.description || "").slice(0, 300),
-        })),
-      };
-    }
-    if (process.env.FIRECRAWL_API_KEY) {
-      const res = await fetch("https://api.firecrawl.dev/v1/search", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query: q, limit: 5 }),
-      });
-      if (!res.ok) return { error: `firecrawl ${res.status}` };
-      const j = await res.json();
-      return {
-        provider: "firecrawl",
-        results: (j.data || []).slice(0, 5).map((r) => ({
-          title: r.title,
-          url: r.url,
-          snippet: String(r.description || "").slice(0, 300),
-        })),
-      };
-    }
-  } catch (e) {
-    return { error: `search failed: ${e.message || e}` };
+  // Try each configured provider in precedence order. A provider failure (bad
+  // key → 401, rate limit, network error, or empty result) falls through to the
+  // next provider instead of aborting, so one stale key can't disable search.
+  const providers = [
+    { key: "TAVILY_API_KEY", run: searchTavily },
+    { key: "BRAVE_API_KEY", run: searchBrave },
+    { key: "FIRECRAWL_API_KEY", run: searchFirecrawl },
+  ];
+  const configured = providers.filter((p) => process.env[p.key]);
+  if (!configured.length) {
+    return {
+      error:
+        "web_search unavailable: no search provider key set " +
+        "(TAVILY_API_KEY / BRAVE_API_KEY / FIRECRAWL_API_KEY). " +
+        "Use http_fetch on a known URL instead.",
+    };
   }
+  const errors = [];
+  for (const p of configured) {
+    try {
+      const out = await p.run(q);
+      if (out && out.results && out.results.length) return out;
+      errors.push(`${out && out.provider ? out.provider : p.key}: no results`);
+    } catch (e) {
+      errors.push(`${p.key.replace("_API_KEY", "").toLowerCase()}: ${e.message || e}`);
+    }
+  }
+  return { error: `all search providers failed (${errors.join("; ")})` };
+}
+
+async function searchTavily(q) {
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: process.env.TAVILY_API_KEY, query: q, max_results: 5 }),
+  });
+  if (!res.ok) throw new Error(`tavily ${res.status}`);
+  const j = await res.json();
   return {
-    error:
-      "web_search unavailable: no search provider key set " +
-      "(TAVILY_API_KEY / BRAVE_API_KEY / FIRECRAWL_API_KEY). " +
-      "Use http_fetch on a known URL instead.",
+    provider: "tavily",
+    results: (j.results || []).slice(0, 5).map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: String(r.content || "").slice(0, 300),
+    })),
+  };
+}
+
+async function searchBrave(q) {
+  const res = await fetch(
+    "https://api.search.brave.com/res/v1/web/search?count=5&q=" + encodeURIComponent(q),
+    { headers: { "X-Subscription-Token": process.env.BRAVE_API_KEY, Accept: "application/json" } },
+  );
+  if (!res.ok) throw new Error(`brave ${res.status}`);
+  const j = await res.json();
+  return {
+    provider: "brave",
+    results: ((j.web && j.web.results) || []).slice(0, 5).map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: String(r.description || "").slice(0, 300),
+    })),
+  };
+}
+
+async function searchFirecrawl(q) {
+  const res = await fetch("https://api.firecrawl.dev/v1/search", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query: q, limit: 5 }),
+  });
+  if (!res.ok) throw new Error(`firecrawl ${res.status}`);
+  const j = await res.json();
+  // v1 returns {data:[...]}, v2 returns {data:{web:[...]}} — handle both.
+  const rows = Array.isArray(j.data) ? j.data : (j.data && j.data.web) || [];
+  return {
+    provider: "firecrawl",
+    results: rows.slice(0, 5).map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: String(r.description || r.snippet || "").slice(0, 300),
+    })),
   };
 }
 
