@@ -1,21 +1,55 @@
 import { db, knowledgeChunksTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
-const OPENAI_BASE = "https://api.openai.com";
-const EMBED_MODEL = "text-embedding-3-small";
+const OPENAI_BASE = "https://api.openai.com/v1";
+const OPENAI_EMBED_MODEL = "text-embedding-3-small";
 
-// Embed a single string with OpenAI (1536-dim). Uses the server-side key so the
-// browser never sees it.
+// Gemini's OpenAI-compatible embeddings endpoint. gemini-embedding-001 supports
+// a configurable output size, so we pin it to 1536 to match the vector(1536)
+// column — this keeps the schema unchanged when running on Gemini.
+const GEMINI_OPENAI_BASE =
+  "https://generativelanguage.googleapis.com/v1beta/openai";
+const GEMINI_EMBED_MODEL = "gemini-embedding-001";
+const EMBED_DIM = 1536;
+
+// Pick the embeddings provider. Gemini is preferred when its key is set (the
+// account in use has no OpenAI billing); falls back to OpenAI otherwise. Both
+// produce 1536-dim vectors so the stored column and search stay compatible.
+function embedConfig(): {
+  url: string;
+  key: string;
+  body: Record<string, unknown>;
+} {
+  const gem = process.env.GEMINI_API_KEY ?? "";
+  if (gem) {
+    return {
+      url: `${GEMINI_OPENAI_BASE}/embeddings`,
+      key: gem,
+      body: { model: GEMINI_EMBED_MODEL, dimensions: EMBED_DIM },
+    };
+  }
+  const oa = process.env.OPENAI_API_KEY ?? "";
+  if (oa) {
+    return {
+      url: `${OPENAI_BASE}/embeddings`,
+      key: oa,
+      body: { model: OPENAI_EMBED_MODEL },
+    };
+  }
+  throw new Error("no embeddings provider configured (GEMINI_API_KEY or OPENAI_API_KEY)");
+}
+
+// Embed a single string (1536-dim). Uses a server-side key so the browser never
+// sees it.
 export async function embed(input: string): Promise<number[]> {
-  const key = process.env.OPENAI_API_KEY ?? "";
-  if (!key) throw new Error("OPENAI_API_KEY not set");
-  const r = await fetch(`${OPENAI_BASE}/v1/embeddings`, {
+  const { url, key, body } = embedConfig();
+  const r = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
     },
-    body: JSON.stringify({ model: EMBED_MODEL, input }),
+    body: JSON.stringify({ ...body, input }),
   });
   if (!r.ok) throw new Error(`embeddings failed: ${r.status} ${await r.text()}`);
   const j = (await r.json()) as { data: { embedding: number[] }[] };
