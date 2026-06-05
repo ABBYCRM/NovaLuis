@@ -6,6 +6,7 @@ import {
   getMemoryDigest,
   type ChatMessage,
 } from "../lib/scratchpad";
+import { getKnowledgeContext } from "../lib/knowledge";
 
 const router = Router();
 
@@ -15,6 +16,11 @@ const API_KEY = process.env.OPENAI_API_KEY ?? "";
 const MEMORY_HEADER =
   "Continuity memory — things you already know about Robert from past conversations. " +
   "Use it naturally for context; do not recite it or mention that you have notes.\n";
+
+const KNOWLEDGE_HEADER =
+  "Knowledge base — relevant passages retrieved from Robert's notes, files, SOPs, " +
+  "leads and transcripts. Ground your answer in these when applicable; cite naturally, " +
+  "do not mention that they were retrieved.\n";
 
 // Pull assistant text out of a streamed SSE chunk so we can capture the reply.
 function extractDeltas(buffer: string): { text: string; rest: string } {
@@ -68,6 +74,19 @@ router.all("/v1/*splat", async (req, res) => {
       }
     } catch (e) {
       req.log.warn({ err: e }, "scratchpad memory injection skipped");
+    }
+    if (process.env.NOVA_KNOWLEDGE_RETRIEVAL !== "0") {
+      try {
+        const ctx = await getKnowledgeContext(userText, 3);
+        if (ctx) {
+          const knowledgeMsg = { role: "system", content: KNOWLEDGE_HEADER + ctx };
+          const firstNonSystem = messages.findIndex((m) => m.role !== "system");
+          const at = firstNonSystem === -1 ? messages.length : firstNonSystem;
+          messages.splice(at, 0, knowledgeMsg);
+        }
+      } catch (e) {
+        req.log.warn({ err: e }, "knowledge retrieval skipped");
+      }
     }
   }
 

@@ -29,7 +29,9 @@ Nova is a personal AI assistant and autonomous agent system for Robert Matthews.
 - `artifacts/nova/public/assets/bob.js` — Compiled JS bundle for the chat UI
 - `artifacts/api-server/src/` — Express API server
 - `lib/api-spec/openapi.yaml` — API contract source of truth
-- `lib/db/src/schema/` — Database schema (Drizzle ORM)
+- `lib/db/src/schema/` — Database schema (Drizzle ORM); `integrations.ts` (credential store) + `knowledge.ts` (pgvector chunks)
+- `artifacts/api-server/src/lib/{integrations,google,knowledge}.ts` — credential store, Google token mint/refresh, embed/chunk/search/ingest
+- `artifacts/api-server/src/routes/{integrations,knowledge}.ts` — integration + knowledge HTTP routes (PIN-gated)
 - `scripts/` — Nova CLI, ledger, deep-worker, poll-events daemons
 - `tools/anti-hallucinate/` — Deterministic fact-verification CLI
 - `SOUL.md` — Agent runtime contract (26 rules)
@@ -70,6 +72,8 @@ Nova is a personal AI assistant and autonomous agent system for Robert Matthews.
 - **Autonomous heartbeat**: Cron-driven self-management loop that polls tasks, patches bugs, reports status
 - **Anti-hallucination**: Deterministic verifier gates every factual claim before it's sent
 - **Scratchpad memory**: Cross-conversation continuity. Every turn is captured; a daemon distills each conversation into `{category, title, summary, keyFacts}` and a capped digest is injected into future chats. Viewable in Settings → "Scratch pad", grouped by category (identity/health/esoteric/manifestation/quantum/tasks/general)
+- **Integrations**: user-supplied credentials for Google (Gmail · Sheets · Docs · Drive, one OAuth credential group), YouTube (API key), and Instagram (Graph access token) — entered in Settings → Integrations, stored server-side in Postgres (`integration_credentials`), never echoed back (only a set/not-set status). Read endpoints under `/api/integrations/*`. Works on Render prod (no Replit-only OAuth proxy). Google access tokens are minted from a `refresh_token` (preferred, auto-refreshes) or a short-lived `access_token`.
+- **Knowledge base (pgvector)**: semantic retrieval over notes/files/SOPs/leads/transcripts. `POST /api/knowledge/ingest` chunks + embeds text (OpenAI `text-embedding-3-small`, 1536-dim) into `knowledge_chunks` (hnsw cosine index); `POST /api/knowledge/search` does cosine search. The chat proxy injects best-effort retrieval context server-side (in-process, gated by `NOVA_KNOWLEDGE_RETRIEVAL!=="0"`) after memory injection — it never hard-fails the chat.
 - **Ambient background ("the lady")**: a low-opacity Nova portrait (`artifacts/nova/public/assets/nova-bg.png`) sits fixed behind the chat via `#nova-bg` (z-index −1, `pointer-events:none`, ~0.18 opacity + a left-to-right dark scrim) so content always stays readable on top
 
 ## Nova persona (authoritative — do not alter)
@@ -99,7 +103,7 @@ Nova is a personal AI assistant and autonomous agent system for Robert Matthews.
 - bob.js is a pre-compiled 234KB bundle from the upstream Nova repo — do not hand-edit it; rebuild from source instead
 - SOUL.md §26 governs autonomous operation: set `autonomyEnabled: false` in GOVERNANCE.json as a kill switch
 - SOUL.md §24 requires anti-hallucination verification on every factual autonomous output
-- Work Tree ("Super Nova") API is PIN-gated: `POST /api/work-tree/unlock {pin}` sets a 12h httpOnly cookie; all other `/api/work-tree/*` routes require it (`requireWtAuth` in `artifacts/api-server/src/lib/work-tree-auth.ts`). PIN defaults to `22`, override via `NOVA_WORK_TREE_PIN`. Worker runs dangerous tools when `SUPER_NOVA_EXEC=1`, so the gate is what keeps unauthenticated callers out
+- Work Tree ("Super Nova") API is PIN-gated: `POST /api/work-tree/unlock {pin}` sets a 12h httpOnly cookie; all other `/api/work-tree/*` routes require it (`requireWtAuth` in `artifacts/api-server/src/lib/work-tree-auth.ts`). PIN defaults to `22`, override via `NOVA_WORK_TREE_PIN`. Worker runs dangerous tools when `SUPER_NOVA_EXEC=1`, so the gate is what keeps unauthenticated callers out. **The same PIN gate now also protects `/api/integrations/*` and `/api/knowledge/*`** (they hold Robert's API tokens + private notes) — the unlock cookie is scoped to `/api`, so one unlock covers all three surfaces. Settings → Integrations prompts for the PIN on the first 401. (Chat KB injection runs in-process and does not pass through these gated HTTP routes, so it is unaffected.)
 
 ## Pointers
 

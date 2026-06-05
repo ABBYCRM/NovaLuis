@@ -115,7 +115,10 @@ export function handleUnlock(req: Request, res: Response): void {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     maxAge: TTL_MS,
-    path: "/api/work-tree",
+    // Scoped to /api so a single PIN unlock also covers the other sensitive
+    // surfaces (integrations credential store + knowledge base), not just
+    // /api/work-tree.
+    path: "/api",
   });
   res.json({ ok: true, expiresAt: new Date(expMs).toISOString() });
 }

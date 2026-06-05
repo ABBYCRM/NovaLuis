@@ -4,4 +4,5 @@
 - [Render Postgres connect](render-postgres-connect.md) — external conn needs IP allowlist opened (defaults null) + `sslmode=no-verify`; app uses internal string, Replit daemon distills via SCRATCHPAD_DATABASE_URL.
 - [GLOBAL_STATE stripper](global-state-stripper.md) — anchor every marker to line-start, gate block removal on an explicit opener; balances leak vs over-strip.
 - [Super Nova tool registry](super-nova-tools.md) — SSRF-safe fetch must pin DNS at connect-time (node:http lookup), stream-cap body; web_search must fall through providers on per-key failure.
+- [api-server authz model](api-authz.md) — no per-user auth; the Work Tree PIN gate is the ONLY authz, so any new secret/private-data route must mount behind requireWtAuth.
 - [Super Nova model router](super-nova-router.md) — central role→provider router; on a failed provider override, drop the provider-specific model on bitdeer fallback or the run breaks.

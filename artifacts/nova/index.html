@@ -1038,6 +1038,38 @@ body {
       </div>
     </div>
 
+    <hr class="section-divider">
+
+    <div class="form-group">
+      <div class="sp-header">
+        <label class="form-label" style="margin:0;">Integrations</label>
+        <button id="intg-refresh" type="button" class="sp-refresh">Refresh</button>
+      </div>
+      <p class="ws-muted ws-tiny" style="margin:4px 0 10px;">Plug in API tokens for each service. Stored on the server (never shown back — only a “set / not set” status). Leave a field blank to keep its current value; type a single space and save to clear it.</p>
+
+      <div class="intg-svc">
+        <div class="intg-head">Google — Gmail · Sheets · Docs · Drive <span class="intg-status" id="intg-st-google">…</span></div>
+        <input class="form-input intg-in" id="intg-google-client_id" type="text" autocomplete="off" placeholder="OAuth client_id">
+        <input class="form-input intg-in" id="intg-google-client_secret" type="password" autocomplete="off" placeholder="OAuth client_secret">
+        <input class="form-input intg-in" id="intg-google-refresh_token" type="password" autocomplete="off" placeholder="OAuth refresh_token (recommended — auto-refreshes)">
+        <input class="form-input intg-in" id="intg-google-access_token" type="password" autocomplete="off" placeholder="…or a short-lived access_token">
+      </div>
+
+      <div class="intg-svc">
+        <div class="intg-head">YouTube Data API <span class="intg-status" id="intg-st-youtube">…</span></div>
+        <input class="form-input intg-in" id="intg-youtube-api_key" type="password" autocomplete="off" placeholder="YouTube Data API v3 key">
+      </div>
+
+      <div class="intg-svc">
+        <div class="intg-head">Instagram — Meta Graph <span class="intg-status" id="intg-st-instagram">…</span></div>
+        <input class="form-input intg-in" id="intg-instagram-access_token" type="password" autocomplete="off" placeholder="Long-lived access token">
+        <input class="form-input intg-in" id="intg-instagram-ig_user_id" type="text" autocomplete="off" placeholder="IG user / business id (optional)">
+      </div>
+
+      <button id="intg-save-btn" type="button">Save Integrations</button>
+      <div class="ws-tiny ws-muted" id="intg-msg" style="margin-top:6px;"></div>
+    </div>
+
     <button id="save-settings-btn">Save Settings</button>
   </div>
 </div>
@@ -1399,6 +1431,130 @@ INPUT → Parse Tone/Workspace → Adjust Hormone/Valence Vectors → Run Active
     if (!t || !t.closest) return;
     if (t.closest('#settings-btn')) { setTimeout(render, 60); return; }
     if (t.closest('#scratchpad-refresh')) { render(); }
+  });
+})();
+</script>
+<style>
+  .intg-svc {
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:8px; padding:10px 11px; margin-bottom:10px;
+    display:flex; flex-direction:column; gap:7px;
+  }
+  .intg-head {
+    font-size:12.5px; font-weight:600; color:var(--text);
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+  }
+  .intg-status { font-size:10.5px; font-weight:500; color:var(--muted); white-space:nowrap; }
+  .intg-status.on { color:var(--accent2); }
+  .intg-in { font-size:12.5px; }
+  #intg-save-btn {
+    background:var(--surface2); color:var(--text); border:1px solid var(--border);
+    border-radius:7px; padding:7px 14px; font-size:13px; cursor:pointer;
+    transition:background 0.12s, border-color 0.12s;
+  }
+  #intg-save-btn:hover { background:var(--accent-dim); border-color:rgba(139,92,246,0.45); }
+</style>
+<script>
+// Integrations panel — server-side credential store. Loads masked "set/not set"
+// status on open, saves typed fields to /api/integrations/:service. Secrets are
+// never returned to the browser. Self-contained; does not touch bob.js.
+(function () {
+  var FIELDS = {
+    google: ['client_id', 'client_secret', 'refresh_token', 'access_token'],
+    youtube: ['api_key'],
+    instagram: ['access_token', 'ig_user_id']
+  };
+
+  function setStatus(svc, fields) {
+    var el = document.getElementById('intg-st-' + svc);
+    if (!el) return;
+    var on = fields && Object.keys(fields).some(function (k) { return fields[k]; });
+    el.textContent = on ? 'connected' : 'not set';
+    el.classList.toggle('on', !!on);
+  }
+
+  // PIN gate: the credential store + knowledge base share the Work Tree PIN.
+  // On a 401 we prompt for the PIN, POST it to /unlock (sets a 12h cookie scoped
+  // to /api), then retry the original request.
+  async function unlock() {
+    var p = window.prompt('Enter PIN to unlock Integrations (stays unlocked 12h):');
+    if (p == null) return false;
+    try {
+      var r = await fetch('/api/work-tree/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: String(p).trim() })
+      });
+      if (!r.ok) { window.alert('Wrong PIN.'); return false; }
+      return true;
+    } catch (_) { return false; }
+  }
+  async function gFetch(url, opts) {
+    var res = await fetch(url, opts);
+    if (res.status === 401) {
+      var ok = await unlock();
+      if (ok) res = await fetch(url, opts);
+    }
+    return res;
+  }
+
+  async function load() {
+    try {
+      var res = await gFetch('/api/integrations');
+      if (!res.ok) throw new Error('http ' + res.status);
+      var data = await res.json();
+      var services = (data && data.services) || {};
+      Object.keys(FIELDS).forEach(function (svc) { setStatus(svc, services[svc] || {}); });
+    } catch (_) {
+      Object.keys(FIELDS).forEach(function (svc) {
+        var el = document.getElementById('intg-st-' + svc);
+        if (el) el.textContent = '—';
+      });
+    }
+  }
+
+  async function save() {
+    var msg = document.getElementById('intg-msg');
+    if (msg) msg.textContent = 'Saving…';
+    try {
+      for (var svc in FIELDS) {
+        var payload = {};
+        FIELDS[svc].forEach(function (f) {
+          var input = document.getElementById('intg-' + svc + '-' + f);
+          if (!input) return;
+          // Blank = keep existing. Anything typed (incl. a lone space → '') is sent;
+          // the server treats '' as "clear this field".
+          if (input.value !== '') payload[f] = input.value.trim();
+        });
+        if (Object.keys(payload).length) {
+          var r = await gFetch('/api/integrations/' + svc, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: payload })
+          });
+          if (!r.ok) throw new Error(svc + ' http ' + r.status);
+        }
+      }
+      // Clear the inputs so secrets don't linger in the DOM, then refresh status.
+      Object.keys(FIELDS).forEach(function (svc) {
+        FIELDS[svc].forEach(function (f) {
+          var input = document.getElementById('intg-' + svc + '-' + f);
+          if (input) input.value = '';
+        });
+      });
+      await load();
+      if (msg) msg.textContent = 'Saved.';
+    } catch (e) {
+      if (msg) msg.textContent = 'Save failed: ' + (e && e.message ? e.message : e);
+    }
+  }
+
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#settings-btn')) { setTimeout(load, 60); return; }
+    if (t.closest('#intg-refresh')) { load(); return; }
+    if (t.closest('#intg-save-btn')) { save(); }
   });
 })();
 </script>
