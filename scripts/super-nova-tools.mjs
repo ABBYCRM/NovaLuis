@@ -270,10 +270,13 @@ async function webSearch(args) {
   // Try each configured provider in precedence order. A provider failure (bad
   // key → 401, rate limit, network error, or empty result) falls through to the
   // next provider instead of aborting, so one stale key can't disable search.
+  // Firecrawl is the most reliable provider — put it first so dead/rate-limited
+  // keys (Tavily 401, Brave quota) don't waste tool-budget steps before we reach
+  // a working result.  The full fallback chain is still intact.
   const providers = [
+    { key: "FIRECRAWL_API_KEY", run: searchFirecrawl },
     { key: "TAVILY_API_KEY", run: searchTavily },
     { key: "BRAVE_API_KEY", run: searchBrave },
-    { key: "FIRECRAWL_API_KEY", run: searchFirecrawl },
   ];
   const configured = providers.filter((p) => process.env[p.key]);
   if (!configured.length) {

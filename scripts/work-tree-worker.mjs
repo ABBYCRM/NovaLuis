@@ -56,10 +56,10 @@ const STEP_BUDGET = Number(process.env.WORK_TREE_STEP_BUDGET || 6);
 const MAX_DEPTH = Number(process.env.WORK_TREE_MAX_DEPTH || 3);
 const MAX_NODES = Number(process.env.WORK_TREE_MAX_NODES || 60);
 // A terminal node gets one execute + up to this many correction passes.
-const MAX_CORRECTIONS = Number(process.env.WORK_TREE_MAX_CORRECTIONS || 1);
+const MAX_CORRECTIONS = Number(process.env.WORK_TREE_MAX_CORRECTIONS || 2);
 // Max model<->tool round trips per terminal execution attempt (Super Nova
 // ReAct loop). Bounds spend and latency so one node can't loop forever.
-const MAX_TOOL_STEPS = Number(process.env.SUPER_NOVA_MAX_TOOL_STEPS || 8);
+const MAX_TOOL_STEPS = Number(process.env.SUPER_NOVA_MAX_TOOL_STEPS || 14);
 // Global mutual exclusion across daemon instances. Arbitrary stable lock id.
 const ADVISORY_LOCK_ID = 778120454;
 
@@ -578,10 +578,25 @@ async function executeTerminal(run, nodes, node, priorIssues, role = "executor")
 async function verify(run, node, result) {
   const system =
     "You are NOVA's verifier (anti-hallucination gate). Judge whether the work " +
-    "fully satisfies the task's scope and acceptance criteria and contains no " +
+    "product represents a genuine, good-faith attempt at the task and contains no " +
     "fabricated or unsupported claims. Output STRICT JSON only: " +
     '{"pass": boolean, "issues": string}. issues: empty when pass=true, else a ' +
-    "short, specific list of what must be fixed.";
+    "short, specific list of what must be fixed.\n\n" +
+    "PASS criteria — ALL of these must be true:\n" +
+    "  • The work product is non-empty and substantive (not a blank string).\n" +
+    "  • No facts are invented or fabricated — the agent only claims what it " +
+    "actually observed or retrieved.\n" +
+    "  • If external data sources were inaccessible (403, bot-protection, paywalls, " +
+    "rate limits), the agent clearly documented what was blocked and why, and " +
+    "delivered the best structured analysis possible with available data. " +
+    "Honest reporting of access limitations IS a valid deliverable — do not fail " +
+    "a node solely because live data was unavailable.\n\n" +
+    "FAIL criteria — any of these causes a fail:\n" +
+    "  • The work product is empty or contains only boilerplate with no analysis.\n" +
+    "  • The agent fabricated specific data points (prices, dates, names) it could " +
+    "not have actually retrieved.\n" +
+    "  • The task required a specific deliverable format and the agent produced " +
+    "something completely different with no explanation.";
   const user =
     `TASK:\n${node.title}\n${clip(node.detail, 800)}\n\n` +
     `WORK PRODUCT:\n${clip(result, 4000)}`;
