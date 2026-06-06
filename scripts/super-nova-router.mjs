@@ -185,38 +185,69 @@ export async function chatComplete({
     stream: false,
   };
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${r.provider.baseURL}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(
-        `router(${role}/${r.providerName}) HTTP ${res.status}: ${t.slice(0, 300)}`,
-      );
+  // Retry on 503 / 429 (overload / rate-limit) with exponential back-off.
+  // After MAX_RETRIES failures on gemini, fall back to bitdeer so a capacity
+  // spike on Google never kills an entire run.
+  const MAX_RETRIES = 3;
+  let lastErr = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delayMs = Math.min(1000 * 2 ** (attempt - 1), 16_000);
+      await new Promise((ok) => setTimeout(ok, delayMs));
+      // Final retry: fall back to bitdeer when the primary provider is gemini.
+      if (attempt === MAX_RETRIES && r.providerName !== "bitdeer") {
+        console.warn(
+          `router(${role}): ${r.providerName} overloaded — falling back to bitdeer`,
+        );
+        r.providerName = "bitdeer";
+        r.provider = PROVIDERS.bitdeer;
+        if (!r.provider.key) throw lastErr;
+        headers.Authorization = `Bearer ${r.provider.key}`;
+        if (body.model.startsWith("gemini-")) {
+          body.model = process.env.BITDEER_FALLBACK_MODEL || "moonshotai/Kimi-K2.6";
+        }
+      }
     }
-    const j = await res.json();
-    const msg = j.choices?.[0]?.message;
-    const content = msg?.content || "";
-    if (content) return content;
-    // Some reasoning models (Kimi-K2.6, DeepSeek-R1) put the user-facing answer
-    // in reasoning_content when content is empty.  Only fall back to it when it
-    // appears to contain a complete deliverable — i.e. it has a "final" key
-    // (our ReAct protocol) or is long prose, not just a thinking-trace fragment
-    // that starts with {"thought":...} and would confuse the ReAct parser.
-    const rc = msg?.reasoning_content || "";
-    if (rc && (rc.includes('"final"') || (!rc.trimStart().startsWith("{") && rc.length > 50))) {
-      return rc;
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${r.provider.baseURL}/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        const err = new Error(
+          `router(${role}/${r.providerName}) HTTP ${res.status}: ${t.slice(0, 300)}`,
+        );
+        if ((res.status === 503 || res.status === 429) && attempt < MAX_RETRIES) {
+          lastErr = err;
+          continue; // retry after delay
+        }
+        throw err;
+      }
+      const j = await res.json();
+      const msg = j.choices?.[0]?.message;
+      const content = msg?.content || "";
+      if (content) return content;
+      // Some reasoning models (Kimi-K2.6, DeepSeek-R1) put the user-facing answer
+      // in reasoning_content when content is empty.  Only fall back to it when it
+      // appears to contain a complete deliverable — i.e. it has a "final" key
+      // (our ReAct protocol) or is long prose, not just a thinking-trace fragment
+      // that starts with {"thought":...} and would confuse the ReAct parser.
+      const rc = msg?.reasoning_content || "";
+      if (rc && (rc.includes('"final"') || (!rc.trimStart().startsWith("{") && rc.length > 50))) {
+        return rc;
+      }
+      return "";
+    } finally {
+      clearTimeout(timer);
     }
-    return "";
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastErr || new Error(`router(${role}): all retries exhausted`);
 }
 
 // One-line-per-role summary for startup logging (no secrets).
