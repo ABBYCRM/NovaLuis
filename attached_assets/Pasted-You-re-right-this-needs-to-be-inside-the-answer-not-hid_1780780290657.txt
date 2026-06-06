@@ -1,0 +1,2465 @@
+You’re right — this needs to be **inside the answer**, not hidden in a download.
+
+I searched current OpenClaw docs plus major agentic frameworks and built the tool pack below on top of the runtime shape you already had. Your prior runtime already had the correct skeleton: `ToolDef/ToolSpec`, registry, execution, verification, memory, and audit flow. 
+
+OpenClaw’s docs describe tools as typed callable actions such as `exec`, `browser`, `web_search`, `message`, and `image_generate`; skills are instruction packs; plugins add runtime capability and can register tools. OpenClaw’s own tool groups include runtime, filesystem, sessions, memory, web, UI/browser, automation, messaging, nodes, agents, media, OpenClaw built-ins, and plugin/MCP tools. ([OpenClaw][1]) AutoGPT’s built-in command providers include `finish`, `ask_user`, file tools, shell/Python execution, git clone, image generation, web search, website reading, and context open/close tools. ([GitHub][2]) LangChain, AutoGen, OpenAI Agents SDK, and MCP all converge on the same core idea: tools are callable functions with defined input/output schemas, and the runtime executes them outside the model. ([LangChain Docs][3])
+
+Important truth: there is no honest way to paste **every OpenClaw ecosystem skill** because the community registry is huge and dynamic. One OpenClaw skill collection says it filtered **5,400+ skills** from ClawHub and excluded thousands more as spam, duplicates, low-quality, finance/crypto, or malicious-risk categories. ([GitHub][4]) So below is the correct move: a **universal tool-calling catalog** with the OpenClaw first-class tools, AutoGPT-style tools, MCP/plugin hooks, and the major agentic runtime functions you actually need.
+
+---
+
+# Python — Universal Agent Tool Catalog
+
+Paste this into:
+
+```text
+tool_catalog.py
+```
+
+```python
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import time
+import uuid
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+
+# =============================================================================
+# UNIVERSAL AGENT TOOL CATALOG
+#
+# Covers:
+# - OpenClaw-style tools
+# - AutoGPT-style commands
+# - MCP-style dynamic tools
+# - LangChain/OpenAI/AutoGen-style callable tool schemas
+# - General production agent operations
+#
+# External tools are declared but not wired until you add credentials,
+# policy, auth, and verification.
+# =============================================================================
+
+
+JSONSchema = Dict[str, Any]
+ToolHandler = Callable[[Dict[str, Any], "ToolContext"], Dict[str, Any]]
+
+
+@dataclass
+class ToolDef:
+    name: str
+    category: str
+    risk: str
+    description: str
+    input_schema: JSONSchema = field(default_factory=dict)
+    output_schema: JSONSchema = field(default_factory=dict)
+    requires_auth: bool = False
+    requires_approval: bool = False
+    enabled_by_default: bool = False
+    source_family: str = "universal"
+
+
+@dataclass
+class ToolContext:
+    workspace: Path
+    allow_network: bool = False
+    allow_shell: bool = False
+    allow_destructive: bool = False
+    env: Dict[str, str] = field(default_factory=dict)
+    memory: Dict[str, Any] = field(default_factory=dict)
+    audit: List[Dict[str, Any]] = field(default_factory=list)
+
+    def log(self, event_type: str, payload: Dict[str, Any]) -> None:
+        self.audit.append({
+            "ts": int(time.time()),
+            "event_type": event_type,
+            "payload": payload,
+        })
+
+
+def obj_schema(properties: Dict[str, Any], required: Optional[List[str]] = None) -> JSONSchema:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required or [],
+        "additionalProperties": False,
+    }
+
+
+def string_prop(description: str, default: Optional[str] = None) -> Dict[str, Any]:
+    prop: Dict[str, Any] = {"type": "string", "description": description}
+    if default is not None:
+        prop["default"] = default
+    return prop
+
+
+def bool_prop(description: str, default: Optional[bool] = None) -> Dict[str, Any]:
+    prop: Dict[str, Any] = {"type": "boolean", "description": description}
+    if default is not None:
+        prop["default"] = default
+    return prop
+
+
+def int_prop(description: str, default: Optional[int] = None, minimum: Optional[int] = None) -> Dict[str, Any]:
+    prop: Dict[str, Any] = {"type": "integer", "description": description}
+    if default is not None:
+        prop["default"] = default
+    if minimum is not None:
+        prop["minimum"] = minimum
+    return prop
+
+
+def array_prop(description: str, item_schema: Dict[str, Any]) -> Dict[str, Any]:
+    return {"type": "array", "description": description, "items": item_schema}
+
+
+def result_schema() -> JSONSchema:
+    return obj_schema({
+        "ok": {"type": "boolean"},
+        "data": {"description": "Tool-specific result payload"},
+        "message": {"type": "string"},
+        "error": {"type": ["string", "null"]},
+    }, ["ok"])
+
+
+# =============================================================================
+# TOOL CATALOG
+# =============================================================================
+
+TOOL_DEFS: List[ToolDef] = [
+    # -------------------------------------------------------------------------
+    # Runtime / Shell / Code Execution
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="exec",
+        category="runtime",
+        risk="high",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Run a bounded shell command in the workspace.",
+        input_schema=obj_schema({
+            "command": string_prop("Shell command to execute."),
+            "timeout_sec": int_prop("Timeout in seconds.", default=30, minimum=1),
+        }, ["command"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="bash",
+        category="runtime",
+        risk="high",
+        source_family="openclaw_alias",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Alias for exec.",
+        input_schema=obj_schema({
+            "command": string_prop("Shell command to execute."),
+            "timeout_sec": int_prop("Timeout in seconds.", default=30, minimum=1),
+        }, ["command"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="process",
+        category="runtime",
+        risk="high",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Start or inspect a long-running background process.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["start", "status", "kill"]},
+            "command": string_prop("Command when action=start."),
+            "process_id": string_prop("Process id when action=status or kill."),
+            "timeout_sec": int_prop("Startup timeout.", default=10, minimum=1),
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="code_execution",
+        category="runtime",
+        risk="high",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Execute code in a controlled runtime, normally Python or JavaScript.",
+        input_schema=obj_schema({
+            "language": {"type": "string", "enum": ["python", "javascript", "typescript", "bash"]},
+            "code": string_prop("Code to execute."),
+            "timeout_sec": int_prop("Timeout in seconds.", default=30, minimum=1),
+        }, ["language", "code"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="execute_shell",
+        category="runtime",
+        risk="high",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="AutoGPT-style shell command execution.",
+        input_schema=obj_schema({
+            "command": string_prop("Shell command to execute."),
+            "timeout_sec": int_prop("Timeout in seconds.", default=30, minimum=1),
+        }, ["command"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="execute_shell_popen",
+        category="runtime",
+        risk="high",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="AutoGPT-style popen shell command execution.",
+        input_schema=obj_schema({
+            "command": string_prop("Shell command to execute."),
+            "timeout_sec": int_prop("Timeout in seconds.", default=30, minimum=1),
+        }, ["command"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="execute_python_code",
+        category="runtime",
+        risk="high",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Execute Python code in a bounded runtime.",
+        input_schema=obj_schema({
+            "code": string_prop("Python code to execute."),
+            "timeout_sec": int_prop("Timeout in seconds.", default=30, minimum=1),
+        }, ["code"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="execute_python_file",
+        category="runtime",
+        risk="high",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Execute a Python file in the workspace.",
+        input_schema=obj_schema({
+            "path": string_prop("Workspace-relative Python file path."),
+            "args": array_prop("Command-line arguments.", {"type": "string"}),
+            "timeout_sec": int_prop("Timeout in seconds.", default=30, minimum=1),
+        }, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="calculator",
+        category="runtime",
+        risk="low",
+        source_family="universal",
+        enabled_by_default=True,
+        description="Evaluate a safe arithmetic expression.",
+        input_schema=obj_schema({
+            "expression": string_prop("Arithmetic expression, numbers/operators only."),
+        }, ["expression"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Filesystem / Patch / Diff
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="read",
+        category="fs",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Read a workspace file.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="write",
+        category="fs",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Write a workspace file.",
+        input_schema=obj_schema({
+            "path": string_prop("Workspace-relative path."),
+            "content": string_prop("File content."),
+            "overwrite": bool_prop("Whether overwriting existing file is allowed.", default=False),
+        }, ["path", "content"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="edit",
+        category="fs",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Edit a file by replacing exact text.",
+        input_schema=obj_schema({
+            "path": string_prop("Workspace-relative path."),
+            "old_text": string_prop("Exact text to replace."),
+            "new_text": string_prop("Replacement text."),
+        }, ["path", "old_text", "new_text"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="apply_patch",
+        category="fs",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Apply a unified diff patch to workspace files.",
+        input_schema=obj_schema({"patch": string_prop("Unified diff patch.")}, ["patch"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="read_file",
+        category="fs",
+        risk="low",
+        source_family="autogpt",
+        enabled_by_default=True,
+        description="AutoGPT-style file read.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="write_file",
+        category="fs",
+        risk="medium",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="AutoGPT-style file write.",
+        input_schema=obj_schema({
+            "path": string_prop("Workspace-relative path."),
+            "content": string_prop("File content."),
+            "overwrite": bool_prop("Whether overwriting existing file is allowed.", default=False),
+        }, ["path", "content"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="list_folder",
+        category="fs",
+        risk="low",
+        source_family="autogpt",
+        enabled_by_default=True,
+        description="List files in a workspace folder.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative folder path.", default=".")}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="list_directory",
+        category="fs",
+        risk="low",
+        source_family="universal",
+        enabled_by_default=True,
+        description="List files and directories.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative folder path.", default=".")}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="search_files",
+        category="fs",
+        risk="low",
+        source_family="universal",
+        enabled_by_default=True,
+        description="Find files by glob pattern.",
+        input_schema=obj_schema({
+            "pattern": string_prop("Glob pattern, e.g. **/*.py."),
+            "path": string_prop("Workspace-relative root path.", default="."),
+        }, ["pattern"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="grep_files",
+        category="fs",
+        risk="low",
+        source_family="universal",
+        enabled_by_default=True,
+        description="Search file contents by regex.",
+        input_schema=obj_schema({
+            "pattern": string_prop("Regex pattern."),
+            "path": string_prop("Workspace-relative root path.", default="."),
+            "glob": string_prop("Glob filter.", default="**/*"),
+            "max_matches": int_prop("Maximum matches.", default=100, minimum=1),
+        }, ["pattern"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="file_exists",
+        category="fs",
+        risk="low",
+        source_family="universal",
+        enabled_by_default=True,
+        description="Check whether a workspace path exists.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="make_directory",
+        category="fs",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Create a workspace directory.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="delete_path",
+        category="fs",
+        risk="destructive",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Delete a workspace file or empty directory.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="open_file",
+        category="context",
+        risk="low",
+        source_family="autogpt",
+        enabled_by_default=True,
+        description="Open a file into the agent context.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="open_folder",
+        category="context",
+        risk="low",
+        source_family="autogpt",
+        enabled_by_default=True,
+        description="Open a folder listing into the agent context.",
+        input_schema=obj_schema({"path": string_prop("Workspace-relative folder path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="close_context_item",
+        category="context",
+        risk="low",
+        source_family="autogpt",
+        enabled_by_default=True,
+        description="Remove a context item by key.",
+        input_schema=obj_schema({"key": string_prop("Context item key.")}, ["key"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="diff_render",
+        category="fs",
+        risk="low",
+        source_family="openclaw_plugin",
+        enabled_by_default=True,
+        description="Render a file or markdown diff for review.",
+        input_schema=obj_schema({
+            "before": string_prop("Original content."),
+            "after": string_prop("New content."),
+        }, ["before", "after"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Web Search / Fetch / Browser
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="web_search",
+        category="web",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Search the web using a configured search provider.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "max_results": int_prop("Maximum results.", default=5, minimum=1),
+        }, ["query"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="x_search",
+        category="web",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Search X/Twitter posts using a configured provider.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "max_results": int_prop("Maximum results.", default=5, minimum=1),
+        }, ["query"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="web_fetch",
+        category="web",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=False,
+        description="Fetch readable page content from a URL.",
+        input_schema=obj_schema({
+            "url": string_prop("URL to fetch."),
+            "max_chars": int_prop("Maximum characters.", default=20000, minimum=1),
+        }, ["url"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="search_web",
+        category="web",
+        risk="medium",
+        source_family="autogpt",
+        enabled_by_default=False,
+        description="AutoGPT-style DuckDuckGo web search.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "max_results": int_prop("Maximum results.", default=5, minimum=1),
+        }, ["query"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="google",
+        category="web",
+        risk="medium",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="AutoGPT-style Google Custom Search.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "max_results": int_prop("Maximum results.", default=5, minimum=1),
+        }, ["query"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="read_website",
+        category="web",
+        risk="medium",
+        source_family="autogpt",
+        enabled_by_default=False,
+        description="Read a webpage and answer a question about it.",
+        input_schema=obj_schema({
+            "url": string_prop("URL to read."),
+            "question": string_prop("Question/topic to focus on."),
+        }, ["url"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="browser",
+        category="browser",
+        risk="high",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Operate a browser session: open, click, type, screenshot, evaluate.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["open", "click", "type", "screenshot", "evaluate", "close"]},
+            "url": string_prop("URL for action=open."),
+            "selector": string_prop("CSS selector for click/type."),
+            "text": string_prop("Text to type."),
+            "script": string_prop("JavaScript for evaluate."),
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="playwright_open",
+        category="browser",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Open a URL using Playwright.",
+        input_schema=obj_schema({"url": string_prop("URL to open.")}, ["url"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="playwright_click",
+        category="browser",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Click an element using Playwright.",
+        input_schema=obj_schema({"selector": string_prop("CSS selector.")}, ["selector"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="playwright_screenshot",
+        category="browser",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        description="Capture a browser screenshot.",
+        input_schema=obj_schema({"path": string_prop("Output screenshot path.")}, ["path"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Sessions / Multi-Agent / Control Loop
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="finish",
+        category="control",
+        risk="low",
+        source_family="autogpt",
+        enabled_by_default=True,
+        description="Finish the current task with a final response.",
+        input_schema=obj_schema({"answer": string_prop("Final answer.")}, ["answer"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="ask_user",
+        category="control",
+        risk="low",
+        source_family="autogpt",
+        enabled_by_default=True,
+        description="Ask user for missing information.",
+        input_schema=obj_schema({
+            "question": string_prop("Question to ask."),
+            "options": array_prop("Optional choices.", {"type": "string"}),
+        }, ["question"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="update_plan",
+        category="agents",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Update a visible plan/checklist for multi-step work.",
+        input_schema=obj_schema({
+            "steps": array_prop("Plan steps.", obj_schema({
+                "step": string_prop("Step label."),
+                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+            }, ["step", "status"])),
+        }, ["steps"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="goal",
+        category="agents",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Set or inspect the current agent goal.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["set", "get"]},
+            "goal": string_prop("New goal when action=set."),
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="steer",
+        category="agents",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Steer an ongoing agent run with additional instructions.",
+        input_schema=obj_schema({
+            "instruction": string_prop("Steering instruction."),
+        }, ["instruction"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="agents_list",
+        category="agents",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="List configured agents.",
+        input_schema=obj_schema({}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="agent_send",
+        category="agents",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        description="Send a message/task to another agent.",
+        input_schema=obj_schema({
+            "agent_id": string_prop("Target agent id."),
+            "message": string_prop("Message/task."),
+        }, ["agent_id", "message"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="subagents",
+        category="agents",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        description="Spawn or coordinate sub-agents.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["spawn", "list", "cancel"]},
+            "task": string_prop("Task for spawned subagent."),
+            "agent_id": string_prop("Optional target agent id."),
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="sessions_list",
+        category="sessions",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="List visible sessions.",
+        input_schema=obj_schema({}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="sessions_history",
+        category="sessions",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        description="Read a visible session history.",
+        input_schema=obj_schema({
+            "session_id": string_prop("Session id."),
+            "limit": int_prop("Maximum messages.", default=50, minimum=1),
+        }, ["session_id"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="sessions_send",
+        category="sessions",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        description="Send a message to a visible session.",
+        input_schema=obj_schema({
+            "session_id": string_prop("Session id."),
+            "message": string_prop("Message to send."),
+        }, ["session_id", "message"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="sessions_spawn",
+        category="sessions",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        description="Spawn a child session/subagent.",
+        input_schema=obj_schema({
+            "prompt": string_prop("Task prompt."),
+            "agent_id": string_prop("Optional agent id."),
+        }, ["prompt"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="sessions_yield",
+        category="sessions",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Yield control back to parent/session controller.",
+        input_schema=obj_schema({"message": string_prop("Yield message.")}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="session_status",
+        category="sessions",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Get current session status.",
+        input_schema=obj_schema({}),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Memory / RAG / Knowledge
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="memory_search",
+        category="memory",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Search durable memory.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "limit": int_prop("Maximum results.", default=5, minimum=1),
+        }, ["query"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="memory_get",
+        category="memory",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Get one memory item by key.",
+        input_schema=obj_schema({"key": string_prop("Memory key.")}, ["key"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="memory_put",
+        category="memory",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Save one memory item by key.",
+        input_schema=obj_schema({
+            "key": string_prop("Memory key."),
+            "value": {"description": "JSON-serializable memory value."},
+        }, ["key", "value"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="vector_search",
+        category="memory",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Search a vector database/index.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "collection": string_prop("Collection/index name."),
+            "limit": int_prop("Maximum results.", default=5, minimum=1),
+        }, ["query", "collection"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="database_query",
+        category="database",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Run a read-only database query.",
+        input_schema=obj_schema({
+            "connection": string_prop("Connection/profile id."),
+            "query": string_prop("SQL or query expression."),
+            "read_only": bool_prop("Must remain read-only.", default=True),
+        }, ["connection", "query"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Automation / Gateway / Nodes
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="cron",
+        category="automation",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Create, list, update, or delete scheduled jobs.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["create", "list", "update", "delete"]},
+            "job_id": string_prop("Job id for update/delete."),
+            "schedule": string_prop("Cron or iCal schedule."),
+            "prompt": string_prop("Prompt/task to run."),
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="heartbeat_respond",
+        category="automation",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Respond to heartbeat/background task ping.",
+        input_schema=obj_schema({"status": string_prop("Heartbeat status.")}, ["status"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="gateway",
+        category="gateway",
+        risk="high",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Inspect or operate local gateway state.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["status", "config", "restart", "logs"]},
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="nodes",
+        category="nodes",
+        risk="high",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Inspect or control paired devices/nodes.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["list", "status", "send", "command"]},
+            "node_id": string_prop("Node id."),
+            "payload": {"description": "Node-specific payload."},
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Messaging / Channels / Personal productivity
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="message",
+        category="messaging",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Send a message through an active channel.",
+        input_schema=obj_schema({
+            "channel": string_prop("Channel id/name."),
+            "to": string_prop("Recipient/channel target."),
+            "text": string_prop("Message body."),
+        }, ["channel", "to", "text"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="send_email",
+        category="productivity",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Send an email.",
+        input_schema=obj_schema({
+            "to": array_prop("Recipients.", {"type": "string"}),
+            "subject": string_prop("Subject."),
+            "body": string_prop("Body."),
+            "cc": array_prop("CC recipients.", {"type": "string"}),
+        }, ["to", "subject", "body"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="draft_email",
+        category="productivity",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Create an email draft.",
+        input_schema=obj_schema({
+            "to": array_prop("Recipients.", {"type": "string"}),
+            "subject": string_prop("Subject."),
+            "body": string_prop("Body."),
+        }, ["to", "subject", "body"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="calendar_create_event",
+        category="productivity",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Create a calendar event.",
+        input_schema=obj_schema({
+            "title": string_prop("Event title."),
+            "start": string_prop("ISO start datetime."),
+            "end": string_prop("ISO end datetime."),
+            "attendees": array_prop("Attendee emails.", {"type": "string"}),
+            "location": string_prop("Location."),
+        }, ["title", "start", "end"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="slack_send_message",
+        category="productivity",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Send a Slack message.",
+        input_schema=obj_schema({
+            "channel": string_prop("Slack channel/user id."),
+            "text": string_prop("Message text."),
+        }, ["channel", "text"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Git / GitHub / DevOps
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="clone_repository",
+        category="git",
+        risk="medium",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Clone a git repository into the workspace.",
+        input_schema=obj_schema({
+            "url": string_prop("Repository URL."),
+            "directory": string_prop("Target directory."),
+        }, ["url"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="git_status",
+        category="git",
+        risk="low",
+        source_family="universal",
+        enabled_by_default=True,
+        description="Run git status.",
+        input_schema=obj_schema({"path": string_prop("Repo path.", default=".")}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="git_diff",
+        category="git",
+        risk="low",
+        source_family="universal",
+        enabled_by_default=True,
+        description="Run git diff.",
+        input_schema=obj_schema({"path": string_prop("Repo path.", default=".")}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="git_commit",
+        category="git",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Commit current repo changes.",
+        input_schema=obj_schema({
+            "path": string_prop("Repo path.", default="."),
+            "message": string_prop("Commit message."),
+        }, ["message"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="github_create_issue",
+        category="devops",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Create a GitHub issue.",
+        input_schema=obj_schema({
+            "repo": string_prop("owner/repo."),
+            "title": string_prop("Issue title."),
+            "body": string_prop("Issue body."),
+        }, ["repo", "title", "body"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="github_create_pr",
+        category="devops",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Create a GitHub pull request.",
+        input_schema=obj_schema({
+            "repo": string_prop("owner/repo."),
+            "title": string_prop("PR title."),
+            "body": string_prop("PR body."),
+            "head": string_prop("Head branch."),
+            "base": string_prop("Base branch."),
+        }, ["repo", "title", "head", "base"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="run_tests",
+        category="devops",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Run a test command.",
+        input_schema=obj_schema({
+            "command": string_prop("Test command."),
+            "timeout_sec": int_prop("Timeout seconds.", default=120, minimum=1),
+        }, ["command"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="run_build",
+        category="devops",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Run a build command.",
+        input_schema=obj_schema({
+            "command": string_prop("Build command."),
+            "timeout_sec": int_prop("Timeout seconds.", default=300, minimum=1),
+        }, ["command"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="deploy_service",
+        category="devops",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        requires_approval=True,
+        description="Deploy a service through configured provider.",
+        input_schema=obj_schema({
+            "provider": string_prop("Deployment provider/profile."),
+            "service": string_prop("Service name."),
+            "environment": string_prop("Environment name."),
+        }, ["provider", "service", "environment"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Media / Canvas / Multimodal
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="canvas",
+        category="ui",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        description="Render or update an agent-controlled canvas.",
+        input_schema=obj_schema({
+            "action": {"type": "string", "enum": ["render", "update", "clear"]},
+            "payload": {"description": "Canvas payload."},
+        }, ["action"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="image",
+        category="media",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        description="Analyze image/media input.",
+        input_schema=obj_schema({
+            "path": string_prop("Image path or media reference."),
+            "prompt": string_prop("Analysis prompt."),
+        }, ["path"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="image_generate",
+        category="media",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Generate an image.",
+        input_schema=obj_schema({
+            "prompt": string_prop("Image prompt."),
+            "size": string_prop("Image size.", default="1024x1024"),
+        }, ["prompt"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="generate_image",
+        category="media",
+        risk="medium",
+        source_family="autogpt",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="AutoGPT-style image generation.",
+        input_schema=obj_schema({"prompt": string_prop("Image prompt.")}, ["prompt"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="music_generate",
+        category="media",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Generate music/audio from prompt.",
+        input_schema=obj_schema({
+            "prompt": string_prop("Music prompt."),
+            "duration_sec": int_prop("Duration in seconds.", default=30, minimum=1),
+        }, ["prompt"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="video_generate",
+        category="media",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Generate video from prompt.",
+        input_schema=obj_schema({
+            "prompt": string_prop("Video prompt."),
+            "duration_sec": int_prop("Duration in seconds.", default=5, minimum=1),
+        }, ["prompt"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="tts",
+        category="media",
+        risk="medium",
+        source_family="openclaw",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Text-to-speech generation.",
+        input_schema=obj_schema({
+            "text": string_prop("Text to speak."),
+            "voice": string_prop("Voice id/profile."),
+        }, ["text"]),
+        output_schema=result_schema(),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Tool Discovery / MCP / Plugins
+    # -------------------------------------------------------------------------
+    ToolDef(
+        name="tool_search",
+        category="tool_catalog",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Search available tool catalog by query/category.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "category": string_prop("Optional category filter."),
+        }, ["query"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="tool_search_code",
+        category="tool_catalog",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Search tool catalog and return code-oriented signatures.",
+        input_schema=obj_schema({
+            "query": string_prop("Search query."),
+            "language": {"type": "string", "enum": ["python", "typescript", "json"]},
+        }, ["query"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="tool_describe",
+        category="tool_catalog",
+        risk="low",
+        source_family="openclaw",
+        enabled_by_default=True,
+        description="Describe one tool by name.",
+        input_schema=obj_schema({"name": string_prop("Tool name.")}, ["name"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="mcp_list_servers",
+        category="mcp",
+        risk="low",
+        source_family="mcp",
+        enabled_by_default=True,
+        description="List configured MCP servers.",
+        input_schema=obj_schema({}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="mcp_list_tools",
+        category="mcp",
+        risk="low",
+        source_family="mcp",
+        enabled_by_default=True,
+        description="List tools exposed by MCP servers.",
+        input_schema=obj_schema({"server": string_prop("Optional MCP server id.")}),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="mcp_call_tool",
+        category="mcp",
+        risk="high",
+        source_family="mcp",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Call a tool exposed by an MCP server.",
+        input_schema=obj_schema({
+            "server": string_prop("MCP server id."),
+            "tool": string_prop("Tool name."),
+            "arguments": {"description": "Tool arguments object."},
+        }, ["server", "tool", "arguments"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="llm_task",
+        category="llm",
+        risk="medium",
+        source_family="openclaw_plugin",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Run a structured JSON-only LLM task.",
+        input_schema=obj_schema({
+            "prompt": string_prop("Task prompt."),
+            "schema": {"description": "Expected JSON schema."},
+        }, ["prompt"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="structured_extract",
+        category="llm",
+        risk="medium",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_auth=True,
+        description="Extract structured data from text using a model.",
+        input_schema=obj_schema({
+            "text": string_prop("Input text."),
+            "schema": {"description": "Extraction schema."},
+        }, ["text", "schema"]),
+        output_schema=result_schema(),
+    ),
+    ToolDef(
+        name="http_request",
+        category="api",
+        risk="high",
+        source_family="universal",
+        enabled_by_default=False,
+        requires_approval=True,
+        description="Make an HTTP request to an external API.",
+        input_schema=obj_schema({
+            "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+            "url": string_prop("Request URL."),
+            "headers": {"description": "Headers object."},
+            "body": {"description": "Request body."},
+        }, ["method", "url"]),
+        output_schema=result_schema(),
+    ),
+]
+
+
+# =============================================================================
+# REGISTRY
+# =============================================================================
+
+class ToolRegistry:
+    def __init__(self, tool_defs: Optional[List[ToolDef]] = None):
+        self.tool_defs: Dict[str, ToolDef] = {t.name: t for t in (tool_defs or TOOL_DEFS)}
+        self.handlers: Dict[str, ToolHandler] = {}
+
+    def register_handler(self, name: str, handler: ToolHandler) -> None:
+        if name not in self.tool_defs:
+            raise KeyError(f"Unknown tool: {name}")
+        self.handlers[name] = handler
+
+    def register_default_handlers(self) -> None:
+        for name in ["read", "read_file", "open_file"]:
+            self.register_handler(name, handle_read)
+        for name in ["write", "write_file"]:
+            self.register_handler(name, handle_write)
+        for name in ["list_folder", "list_directory", "open_folder"]:
+            self.register_handler(name, handle_list_directory)
+
+        self.register_handler("edit", handle_edit)
+        self.register_handler("file_exists", handle_file_exists)
+        self.register_handler("search_files", handle_search_files)
+        self.register_handler("grep_files", handle_grep_files)
+        self.register_handler("make_directory", handle_make_directory)
+        self.register_handler("delete_path", handle_delete_path)
+        self.register_handler("calculator", handle_calculator)
+
+        self.register_handler("memory_get", handle_memory_get)
+        self.register_handler("memory_put", handle_memory_put)
+        self.register_handler("memory_search", handle_memory_search)
+
+        self.register_handler("tool_search", self.handle_tool_search)
+        self.register_handler("tool_search_code", self.handle_tool_search_code)
+        self.register_handler("tool_describe", self.handle_tool_describe)
+
+        self.register_handler("finish", handle_finish)
+        self.register_handler("ask_user", handle_ask_user)
+        self.register_handler("update_plan", handle_update_plan)
+        self.register_handler("session_status", handle_session_status)
+
+        for name in [
+            "exec",
+            "bash",
+            "execute_shell",
+            "execute_shell_popen",
+            "execute_python_code",
+            "execute_python_file",
+            "run_tests",
+            "run_build",
+            "git_status",
+            "git_diff",
+        ]:
+            self.register_handler(name, handle_shell_gated)
+
+        for name in self.tool_defs:
+            if name not in self.handlers:
+                self.handlers[name] = handle_not_configured
+
+    def list_tools(self, category: Optional[str] = None, enabled_only: bool = False) -> List[Dict[str, Any]]:
+        tools = list(self.tool_defs.values())
+        if category:
+            tools = [t for t in tools if t.category == category]
+        if enabled_only:
+            tools = [t for t in tools if t.enabled_by_default]
+        return [asdict(t) for t in tools]
+
+    def describe(self, name: str) -> Dict[str, Any]:
+        tool = self.tool_defs.get(name)
+        if not tool:
+            return {"ok": False, "error": "unknown_tool", "message": f"No tool named {name}"}
+        return {"ok": True, "data": asdict(tool)}
+
+    def invoke(self, name: str, args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+        tool = self.tool_defs.get(name)
+        if not tool:
+            return {"ok": False, "error": "unknown_tool", "message": f"No tool named {name}"}
+
+        if tool.risk == "destructive" and not ctx.allow_destructive:
+            return {"ok": False, "error": "destructive_tool_blocked", "message": f"{name} requires destructive approval."}
+
+        if tool.category == "runtime" and tool.risk in {"high", "destructive"} and not ctx.allow_shell:
+            return {"ok": False, "error": "shell_blocked", "message": f"{name} requires allow_shell=True."}
+
+        if tool.category in {"web", "api"} and not ctx.allow_network:
+            return {"ok": False, "error": "network_blocked", "message": f"{name} requires allow_network=True."}
+
+        ctx.log("tool_call", {"name": name, "args": safe_log_args(args), "risk": tool.risk, "category": tool.category})
+        result = self.handlers.get(name, handle_not_configured)(args, ctx)
+        ctx.log("tool_result", {"name": name, "ok": result.get("ok"), "error": result.get("error")})
+        return result
+
+    def handle_tool_search(self, args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+        query = str(args.get("query", "")).lower()
+        category = args.get("category")
+        matches = []
+        for tool in self.tool_defs.values():
+            haystack = f"{tool.name} {tool.category} {tool.description} {tool.source_family}".lower()
+            if query in haystack and (not category or category == tool.category):
+                matches.append(asdict(tool))
+        return {"ok": True, "data": matches, "message": f"Found {len(matches)} tools."}
+
+    def handle_tool_search_code(self, args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+        query = str(args.get("query", "")).lower()
+        language = args.get("language", "json")
+        matches = []
+        for tool in self.tool_defs.values():
+            haystack = f"{tool.name} {tool.category} {tool.description} {tool.source_family}".lower()
+            if query in haystack:
+                if language == "python":
+                    matches.append(f"def {tool.name}(args: dict) -> dict: ...")
+                elif language == "typescript":
+                    matches.append(f"async function {tool.name}(args: Record<string, unknown>): Promise<ToolResult> {{ /* ... */ }}")
+                else:
+                    matches.append(asdict(tool))
+        return {"ok": True, "data": matches, "message": f"Found {len(matches)} signatures."}
+
+    def handle_tool_describe(self, args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+        return self.describe(str(args.get("name", "")))
+
+
+# =============================================================================
+# SAFE LOCAL HANDLERS
+# =============================================================================
+
+def safe_log_args(args: Dict[str, Any]) -> Dict[str, Any]:
+    redacted = {}
+    for key, value in args.items():
+        if re.search(r"token|secret|password|api[_-]?key|authorization", key, re.I):
+            redacted[key] = "***REDACTED***"
+        else:
+            redacted[key] = value
+    return redacted
+
+
+def resolve_workspace_path(ctx: ToolContext, raw_path: str) -> Path:
+    base = ctx.workspace.resolve()
+    target = (base / raw_path).resolve()
+    if not str(target).startswith(str(base)):
+        raise PermissionError(f"Path escapes workspace: {raw_path}")
+    return target
+
+
+def handle_read(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    path = resolve_workspace_path(ctx, args["path"])
+    if not path.exists():
+        return {"ok": False, "error": "not_found", "message": str(path)}
+    if not path.is_file():
+        return {"ok": False, "error": "not_file", "message": str(path)}
+    return {"ok": True, "data": path.read_text(encoding="utf-8", errors="replace"), "message": str(path)}
+
+
+def handle_write(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    path = resolve_workspace_path(ctx, args["path"])
+    overwrite = bool(args.get("overwrite", False))
+    if path.exists() and not overwrite:
+        return {"ok": False, "error": "exists", "message": "Set overwrite=true to replace existing file."}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(args["content"]), encoding="utf-8")
+    return {"ok": True, "data": {"path": str(path), "bytes": path.stat().st_size}, "message": "written"}
+
+
+def handle_edit(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    path = resolve_workspace_path(ctx, args["path"])
+    text = path.read_text(encoding="utf-8", errors="replace")
+    old = str(args["old_text"])
+    new = str(args["new_text"])
+    if old not in text:
+        return {"ok": False, "error": "old_text_not_found", "message": "Exact text not found."}
+    updated = text.replace(old, new, 1)
+    path.write_text(updated, encoding="utf-8")
+    return {"ok": True, "data": {"path": str(path), "replacements": 1}, "message": "edited"}
+
+
+def handle_list_directory(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    path = resolve_workspace_path(ctx, args.get("path", "."))
+    if not path.exists():
+        return {"ok": False, "error": "not_found", "message": str(path)}
+    if not path.is_dir():
+        return {"ok": False, "error": "not_directory", "message": str(path)}
+    items = []
+    for p in sorted(path.iterdir()):
+        items.append({"name": p.name, "type": "dir" if p.is_dir() else "file", "size": p.stat().st_size})
+    return {"ok": True, "data": items, "message": f"{len(items)} items"}
+
+
+def handle_file_exists(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    path = resolve_workspace_path(ctx, args["path"])
+    return {"ok": True, "data": {"exists": path.exists(), "is_file": path.is_file(), "is_dir": path.is_dir()}, "message": str(path)}
+
+
+def handle_search_files(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    root = resolve_workspace_path(ctx, args.get("path", "."))
+    pattern = args["pattern"]
+    matches = [str(p.relative_to(ctx.workspace.resolve())) for p in root.glob(pattern)]
+    return {"ok": True, "data": matches, "message": f"{len(matches)} matches"}
+
+
+def handle_grep_files(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    root = resolve_workspace_path(ctx, args.get("path", "."))
+    regex = re.compile(args["pattern"])
+    glob_pat = args.get("glob", "**/*")
+    max_matches = int(args.get("max_matches", 100))
+    matches = []
+    for p in root.glob(glob_pat):
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if regex.search(line):
+                matches.append({"path": str(p.relative_to(ctx.workspace.resolve())), "line": lineno, "text": line[:500]})
+                if len(matches) >= max_matches:
+                    return {"ok": True, "data": matches, "message": f"{len(matches)} matches"}
+    return {"ok": True, "data": matches, "message": f"{len(matches)} matches"}
+
+
+def handle_make_directory(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    path = resolve_workspace_path(ctx, args["path"])
+    path.mkdir(parents=True, exist_ok=True)
+    return {"ok": True, "data": {"path": str(path)}, "message": "directory_created"}
+
+
+def handle_delete_path(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    if not ctx.allow_destructive:
+        return {"ok": False, "error": "destructive_blocked", "message": "Deletion requires allow_destructive=True."}
+    path = resolve_workspace_path(ctx, args["path"])
+    if not path.exists():
+        return {"ok": False, "error": "not_found", "message": str(path)}
+    if path.is_dir():
+        path.rmdir()
+    else:
+        path.unlink()
+    return {"ok": True, "data": {"path": str(path)}, "message": "deleted"}
+
+
+def handle_calculator(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    expr = str(args["expression"])
+    if not re.fullmatch(r"[0-9+\-*/(). %]+", expr):
+        return {"ok": False, "error": "unsafe_expression", "message": "Only arithmetic characters are allowed."}
+    try:
+        value = eval(expr, {"__builtins__": {}}, {})
+    except Exception as exc:
+        return {"ok": False, "error": exc.__class__.__name__, "message": str(exc)}
+    return {"ok": True, "data": value, "message": str(value)}
+
+
+def handle_memory_get(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    key = args["key"]
+    return {"ok": True, "data": ctx.memory.get(key), "message": key}
+
+
+def handle_memory_put(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    key = args["key"]
+    ctx.memory[key] = args.get("value")
+    return {"ok": True, "data": {"key": key, "saved": True}, "message": "saved"}
+
+
+def handle_memory_search(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    query = str(args["query"]).lower()
+    limit = int(args.get("limit", 5))
+    results = []
+    for key, value in ctx.memory.items():
+        haystack = f"{key} {json.dumps(value, ensure_ascii=False)}".lower()
+        if query in haystack:
+            results.append({"key": key, "value": value})
+            if len(results) >= limit:
+                break
+    return {"ok": True, "data": results, "message": f"{len(results)} matches"}
+
+
+def handle_shell_gated(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    if not ctx.allow_shell:
+        return {"ok": False, "error": "shell_blocked", "message": "Shell execution requires allow_shell=True."}
+
+    command = args.get("command")
+    if not command and "path" in args:
+        command = f"python {args['path']}"
+        if args.get("args"):
+            command += " " + " ".join(map(str, args["args"]))
+    if not command and "code" in args:
+        tmp = ctx.workspace / f".agent_tmp_{uuid.uuid4().hex}.py"
+        tmp.write_text(str(args["code"]), encoding="utf-8")
+        command = f"python {tmp.name}"
+
+    timeout = int(args.get("timeout_sec", 30))
+
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(ctx.workspace),
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, **ctx.env},
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "timeout", "message": f"Timed out after {timeout}s"}
+
+    return {
+        "ok": proc.returncode == 0,
+        "data": {"stdout": proc.stdout, "stderr": proc.stderr, "returncode": proc.returncode},
+        "message": "command_completed" if proc.returncode == 0 else "command_failed",
+        "error": None if proc.returncode == 0 else "nonzero_exit",
+    }
+
+
+def handle_finish(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    return {"ok": True, "data": {"final": args["answer"]}, "message": "finished"}
+
+
+def handle_ask_user(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    return {"ok": True, "data": {"question": args["question"], "options": args.get("options", [])}, "message": "user_input_required"}
+
+
+def handle_update_plan(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    ctx.memory["_current_plan"] = args["steps"]
+    return {"ok": True, "data": {"steps": args["steps"]}, "message": "plan_updated"}
+
+
+def handle_session_status(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    return {"ok": True, "data": {"workspace": str(ctx.workspace), "audit_events": len(ctx.audit)}, "message": "ok"}
+
+
+def handle_not_configured(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "error": "not_configured",
+        "message": "This tool is declared but not wired. Add a real handler with credentials, policy, and verification.",
+        "data": {"args_received": safe_log_args(args)},
+    }
+
+
+# =============================================================================
+# QUICK DEMO
+# =============================================================================
+
+if __name__ == "__main__":
+    workspace = Path.cwd() / "agent_workspace"
+    workspace.mkdir(exist_ok=True)
+
+    ctx = ToolContext(workspace=workspace)
+    registry = ToolRegistry()
+    registry.register_default_handlers()
+
+    print(json.dumps(registry.invoke("tool_search", {"query": "web"}, ctx), indent=2))
+    print(json.dumps(registry.invoke("calculator", {"expression": "2 + 2 * 10"}, ctx), indent=2))
+    print(json.dumps(registry.invoke("write", {"path": "hello.txt", "content": "hello", "overwrite": True}, ctx), indent=2))
+    print(json.dumps(registry.invoke("read", {"path": "hello.txt"}, ctx), indent=2))
+```
+
+---
+
+# TypeScript — Universal Agent Tool Catalog
+
+Paste this into:
+
+```text
+toolCatalog.ts
+```
+
+```typescript
+import * as fs from "fs";
+import * as path from "path";
+import * as childProcess from "child_process";
+
+
+type Risk = "low" | "medium" | "high" | "destructive";
+type ToolCategory =
+  | "runtime"
+  | "fs"
+  | "context"
+  | "web"
+  | "browser"
+  | "control"
+  | "agents"
+  | "sessions"
+  | "memory"
+  | "database"
+  | "automation"
+  | "gateway"
+  | "nodes"
+  | "messaging"
+  | "productivity"
+  | "git"
+  | "devops"
+  | "ui"
+  | "media"
+  | "tool_catalog"
+  | "mcp"
+  | "llm"
+  | "api";
+
+type SourceFamily =
+  | "openclaw"
+  | "openclaw_alias"
+  | "openclaw_plugin"
+  | "autogpt"
+  | "mcp"
+  | "universal";
+
+export interface ToolResult {
+  ok: boolean;
+  data?: unknown;
+  message?: string;
+  error?: string | null;
+}
+
+export interface ToolDef {
+  name: string;
+  category: ToolCategory;
+  risk: Risk;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  requiresAuth?: boolean;
+  requiresApproval?: boolean;
+  enabledByDefault?: boolean;
+  sourceFamily: SourceFamily;
+}
+
+export interface ToolContext {
+  workspace: string;
+  allowNetwork: boolean;
+  allowShell: boolean;
+  allowDestructive: boolean;
+  env: Record<string, string>;
+  memory: Record<string, unknown>;
+  audit: Array<Record<string, unknown>>;
+}
+
+export type ToolHandler = (
+  args: Record<string, unknown>,
+  ctx: ToolContext
+) => Promise<ToolResult> | ToolResult;
+
+
+function objSchema(
+  properties: Record<string, unknown>,
+  required: string[] = []
+): Record<string, unknown> {
+  return {
+    type: "object",
+    properties,
+    required,
+    additionalProperties: false,
+  };
+}
+
+function resultSchema(): Record<string, unknown> {
+  return objSchema(
+    {
+      ok: { type: "boolean" },
+      data: { description: "Tool-specific result payload" },
+      message: { type: "string" },
+      error: { type: ["string", "null"] },
+    },
+    ["ok"]
+  );
+}
+
+function s(description: string, defaultValue?: string): Record<string, unknown> {
+  const out: Record<string, unknown> = { type: "string", description };
+  if (defaultValue !== undefined) out.default = defaultValue;
+  return out;
+}
+
+function b(description: string, defaultValue?: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = { type: "boolean", description };
+  if (defaultValue !== undefined) out.default = defaultValue;
+  return out;
+}
+
+function i(description: string, defaultValue?: number): Record<string, unknown> {
+  const out: Record<string, unknown> = { type: "integer", description };
+  if (defaultValue !== undefined) out.default = defaultValue;
+  return out;
+}
+
+function arr(description: string, itemSchema: Record<string, unknown>): Record<string, unknown> {
+  return { type: "array", description, items: itemSchema };
+}
+
+function tool(
+  name: string,
+  category: ToolCategory,
+  risk: Risk,
+  sourceFamily: SourceFamily,
+  description: string,
+  inputSchema: Record<string, unknown>,
+  options: Partial<ToolDef> = {}
+): ToolDef {
+  return {
+    name,
+    category,
+    risk,
+    sourceFamily,
+    description,
+    inputSchema,
+    outputSchema: resultSchema(),
+    requiresAuth: false,
+    requiresApproval: false,
+    enabledByDefault: false,
+    ...options,
+  };
+}
+
+
+export const TOOL_DEFS: ToolDef[] = [
+  tool("exec", "runtime", "high", "openclaw", "Run a bounded shell command.", objSchema({ command: s("Command."), timeout_sec: i("Timeout.", 30) }, ["command"]), { requiresApproval: true }),
+  tool("bash", "runtime", "high", "openclaw_alias", "Alias for exec.", objSchema({ command: s("Command."), timeout_sec: i("Timeout.", 30) }, ["command"]), { requiresApproval: true }),
+  tool("process", "runtime", "high", "openclaw", "Start/status/kill process.", objSchema({ action: { type: "string", enum: ["start", "status", "kill"] }, command: s("Command."), process_id: s("Process id.") }, ["action"]), { requiresApproval: true }),
+  tool("code_execution", "runtime", "high", "openclaw", "Execute code in a controlled runtime.", objSchema({ language: { type: "string", enum: ["python", "javascript", "typescript", "bash"] }, code: s("Code."), timeout_sec: i("Timeout.", 30) }, ["language", "code"]), { requiresApproval: true }),
+  tool("execute_shell", "runtime", "high", "autogpt", "AutoGPT shell execution.", objSchema({ command: s("Command."), timeout_sec: i("Timeout.", 30) }, ["command"]), { requiresApproval: true }),
+  tool("execute_shell_popen", "runtime", "high", "autogpt", "AutoGPT popen shell execution.", objSchema({ command: s("Command."), timeout_sec: i("Timeout.", 30) }, ["command"]), { requiresApproval: true }),
+  tool("execute_python_code", "runtime", "high", "autogpt", "Execute Python code.", objSchema({ code: s("Python code."), timeout_sec: i("Timeout.", 30) }, ["code"]), { requiresApproval: true }),
+  tool("execute_python_file", "runtime", "high", "autogpt", "Execute Python file.", objSchema({ path: s("Python file."), args: arr("Args.", { type: "string" }), timeout_sec: i("Timeout.", 30) }, ["path"]), { requiresApproval: true }),
+  tool("calculator", "runtime", "low", "universal", "Evaluate arithmetic.", objSchema({ expression: s("Arithmetic expression.") }, ["expression"]), { enabledByDefault: true }),
+
+  tool("read", "fs", "low", "openclaw", "Read workspace file.", objSchema({ path: s("Path.") }, ["path"]), { enabledByDefault: true }),
+  tool("write", "fs", "medium", "openclaw", "Write workspace file.", objSchema({ path: s("Path."), content: s("Content."), overwrite: b("Overwrite.", false) }, ["path", "content"]), { requiresApproval: true }),
+  tool("edit", "fs", "medium", "openclaw", "Replace exact text in file.", objSchema({ path: s("Path."), old_text: s("Old text."), new_text: s("New text.") }, ["path", "old_text", "new_text"]), { requiresApproval: true }),
+  tool("apply_patch", "fs", "medium", "openclaw", "Apply unified diff patch.", objSchema({ patch: s("Patch.") }, ["patch"]), { requiresApproval: true }),
+  tool("read_file", "fs", "low", "autogpt", "Read file.", objSchema({ path: s("Path.") }, ["path"]), { enabledByDefault: true }),
+  tool("write_file", "fs", "medium", "autogpt", "Write file.", objSchema({ path: s("Path."), content: s("Content."), overwrite: b("Overwrite.", false) }, ["path", "content"]), { requiresApproval: true }),
+  tool("list_folder", "fs", "low", "autogpt", "List folder.", objSchema({ path: s("Path.", ".") }), { enabledByDefault: true }),
+  tool("list_directory", "fs", "low", "universal", "List directory.", objSchema({ path: s("Path.", ".") }), { enabledByDefault: true }),
+  tool("search_files", "fs", "low", "universal", "Find files by glob.", objSchema({ pattern: s("Glob pattern."), path: s("Root.", ".") }, ["pattern"]), { enabledByDefault: true }),
+  tool("grep_files", "fs", "low", "universal", "Search file contents.", objSchema({ pattern: s("Regex."), path: s("Root.", "."), glob: s("Glob.", "**/*"), max_matches: i("Max.", 100) }, ["pattern"]), { enabledByDefault: true }),
+  tool("file_exists", "fs", "low", "universal", "Check path exists.", objSchema({ path: s("Path.") }, ["path"]), { enabledByDefault: true }),
+  tool("make_directory", "fs", "medium", "universal", "Create directory.", objSchema({ path: s("Path.") }, ["path"]), { requiresApproval: true }),
+  tool("delete_path", "fs", "destructive", "universal", "Delete file or empty dir.", objSchema({ path: s("Path.") }, ["path"]), { requiresApproval: true }),
+
+  tool("open_file", "context", "low", "autogpt", "Open file into context.", objSchema({ path: s("Path.") }, ["path"]), { enabledByDefault: true }),
+  tool("open_folder", "context", "low", "autogpt", "Open folder into context.", objSchema({ path: s("Path.") }, ["path"]), { enabledByDefault: true }),
+  tool("close_context_item", "context", "low", "autogpt", "Close context item.", objSchema({ key: s("Key.") }, ["key"]), { enabledByDefault: true }),
+  tool("diff_render", "fs", "low", "openclaw_plugin", "Render diff.", objSchema({ before: s("Before."), after: s("After.") }, ["before", "after"]), { enabledByDefault: true }),
+
+  tool("web_search", "web", "medium", "openclaw", "Search web.", objSchema({ query: s("Query."), max_results: i("Max results.", 5) }, ["query"]), { requiresAuth: true }),
+  tool("x_search", "web", "medium", "openclaw", "Search X/Twitter.", objSchema({ query: s("Query."), max_results: i("Max results.", 5) }, ["query"]), { requiresAuth: true }),
+  tool("web_fetch", "web", "medium", "openclaw", "Fetch readable URL content.", objSchema({ url: s("URL."), max_chars: i("Max chars.", 20000) }, ["url"])),
+  tool("search_web", "web", "medium", "autogpt", "AutoGPT web search.", objSchema({ query: s("Query."), max_results: i("Max results.", 5) }, ["query"])),
+  tool("google", "web", "medium", "autogpt", "Google Custom Search.", objSchema({ query: s("Query."), max_results: i("Max results.", 5) }, ["query"]), { requiresAuth: true }),
+  tool("read_website", "web", "medium", "autogpt", "Read website.", objSchema({ url: s("URL."), question: s("Question.") }, ["url"])),
+  tool("browser", "browser", "high", "openclaw", "Operate browser session.", objSchema({ action: { type: "string", enum: ["open", "click", "type", "screenshot", "evaluate", "close"] }, url: s("URL."), selector: s("Selector."), text: s("Text."), script: s("Script.") }, ["action"]), { requiresApproval: true }),
+  tool("playwright_open", "browser", "high", "universal", "Open URL with Playwright.", objSchema({ url: s("URL.") }, ["url"]), { requiresApproval: true }),
+  tool("playwright_click", "browser", "high", "universal", "Click selector.", objSchema({ selector: s("Selector.") }, ["selector"]), { requiresApproval: true }),
+  tool("playwright_screenshot", "browser", "medium", "universal", "Browser screenshot.", objSchema({ path: s("Path.") }, ["path"])),
+
+  tool("finish", "control", "low", "autogpt", "Finish current task.", objSchema({ answer: s("Final answer.") }, ["answer"]), { enabledByDefault: true }),
+  tool("ask_user", "control", "low", "autogpt", "Ask user a question.", objSchema({ question: s("Question."), options: arr("Options.", { type: "string" }) }, ["question"]), { enabledByDefault: true }),
+  tool("update_plan", "agents", "low", "openclaw", "Update visible plan.", objSchema({ steps: arr("Steps.", objSchema({ step: s("Step."), status: { type: "string", enum: ["pending", "in_progress", "completed"] } }, ["step", "status"])) }, ["steps"]), { enabledByDefault: true }),
+  tool("goal", "agents", "low", "openclaw", "Set/get goal.", objSchema({ action: { type: "string", enum: ["set", "get"] }, goal: s("Goal.") }, ["action"]), { enabledByDefault: true }),
+  tool("steer", "agents", "low", "openclaw", "Steer an ongoing run.", objSchema({ instruction: s("Instruction.") }, ["instruction"]), { enabledByDefault: true }),
+  tool("agents_list", "agents", "low", "openclaw", "List agents.", objSchema({}), { enabledByDefault: true }),
+  tool("agent_send", "agents", "medium", "openclaw", "Send task/message to agent.", objSchema({ agent_id: s("Agent id."), message: s("Message.") }, ["agent_id", "message"])),
+  tool("subagents", "agents", "medium", "openclaw", "Spawn/list/cancel subagents.", objSchema({ action: { type: "string", enum: ["spawn", "list", "cancel"] }, task: s("Task."), agent_id: s("Agent id.") }, ["action"])),
+  tool("sessions_list", "sessions", "low", "openclaw", "List sessions.", objSchema({}), { enabledByDefault: true }),
+  tool("sessions_history", "sessions", "medium", "openclaw", "Read session history.", objSchema({ session_id: s("Session id."), limit: i("Limit.", 50) }, ["session_id"])),
+  tool("sessions_send", "sessions", "medium", "openclaw", "Send to session.", objSchema({ session_id: s("Session id."), message: s("Message.") }, ["session_id", "message"])),
+  tool("sessions_spawn", "sessions", "medium", "openclaw", "Spawn session/subagent.", objSchema({ prompt: s("Prompt."), agent_id: s("Agent id.") }, ["prompt"])),
+  tool("sessions_yield", "sessions", "low", "openclaw", "Yield control.", objSchema({ message: s("Message.") }), { enabledByDefault: true }),
+  tool("session_status", "sessions", "low", "openclaw", "Current session status.", objSchema({}), { enabledByDefault: true }),
+
+  tool("memory_search", "memory", "low", "openclaw", "Search memory.", objSchema({ query: s("Query."), limit: i("Limit.", 5) }, ["query"]), { enabledByDefault: true }),
+  tool("memory_get", "memory", "low", "openclaw", "Get memory.", objSchema({ key: s("Key.") }, ["key"]), { enabledByDefault: true }),
+  tool("memory_put", "memory", "medium", "universal", "Put memory.", objSchema({ key: s("Key."), value: { description: "JSON value." } }, ["key", "value"]), { requiresApproval: true }),
+  tool("vector_search", "memory", "medium", "universal", "Vector search.", objSchema({ query: s("Query."), collection: s("Collection."), limit: i("Limit.", 5) }, ["query", "collection"]), { requiresAuth: true }),
+  tool("database_query", "database", "high", "universal", "Read-only database query.", objSchema({ connection: s("Connection."), query: s("Query."), read_only: b("Read only.", true) }, ["connection", "query"]), { requiresAuth: true, requiresApproval: true }),
+
+  tool("cron", "automation", "medium", "openclaw", "Create/list/update/delete jobs.", objSchema({ action: { type: "string", enum: ["create", "list", "update", "delete"] }, job_id: s("Job id."), schedule: s("Schedule."), prompt: s("Prompt.") }, ["action"]), { requiresApproval: true }),
+  tool("heartbeat_respond", "automation", "low", "openclaw", "Respond to heartbeat.", objSchema({ status: s("Status.") }, ["status"]), { enabledByDefault: true }),
+  tool("gateway", "gateway", "high", "openclaw", "Gateway status/config/restart/logs.", objSchema({ action: { type: "string", enum: ["status", "config", "restart", "logs"] } }, ["action"]), { requiresApproval: true }),
+  tool("nodes", "nodes", "high", "openclaw", "Control paired nodes/devices.", objSchema({ action: { type: "string", enum: ["list", "status", "send", "command"] }, node_id: s("Node id."), payload: { description: "Payload." } }, ["action"]), { requiresApproval: true }),
+
+  tool("message", "messaging", "medium", "openclaw", "Send channel message.", objSchema({ channel: s("Channel."), to: s("Target."), text: s("Text.") }, ["channel", "to", "text"]), { requiresAuth: true, requiresApproval: true }),
+  tool("send_email", "productivity", "high", "universal", "Send email.", objSchema({ to: arr("Recipients.", { type: "string" }), subject: s("Subject."), body: s("Body."), cc: arr("CC.", { type: "string" }) }, ["to", "subject", "body"]), { requiresAuth: true, requiresApproval: true }),
+  tool("draft_email", "productivity", "medium", "universal", "Draft email.", objSchema({ to: arr("Recipients.", { type: "string" }), subject: s("Subject."), body: s("Body.") }, ["to", "subject", "body"]), { requiresAuth: true }),
+  tool("calendar_create_event", "productivity", "high", "universal", "Create calendar event.", objSchema({ title: s("Title."), start: s("Start ISO."), end: s("End ISO."), attendees: arr("Attendees.", { type: "string" }), location: s("Location.") }, ["title", "start", "end"]), { requiresAuth: true, requiresApproval: true }),
+  tool("slack_send_message", "productivity", "medium", "universal", "Send Slack message.", objSchema({ channel: s("Channel."), text: s("Text.") }, ["channel", "text"]), { requiresAuth: true, requiresApproval: true }),
+
+  tool("clone_repository", "git", "medium", "autogpt", "Clone git repository.", objSchema({ url: s("URL."), directory: s("Directory.") }, ["url"]), { requiresApproval: true }),
+  tool("git_status", "git", "low", "universal", "Git status.", objSchema({ path: s("Repo path.", ".") }), { enabledByDefault: true }),
+  tool("git_diff", "git", "low", "universal", "Git diff.", objSchema({ path: s("Repo path.", ".") }), { enabledByDefault: true }),
+  tool("git_commit", "git", "medium", "universal", "Git commit.", objSchema({ path: s("Repo path.", "."), message: s("Message.") }, ["message"]), { requiresApproval: true }),
+  tool("github_create_issue", "devops", "medium", "universal", "Create GitHub issue.", objSchema({ repo: s("owner/repo."), title: s("Title."), body: s("Body.") }, ["repo", "title", "body"]), { requiresAuth: true, requiresApproval: true }),
+  tool("github_create_pr", "devops", "high", "universal", "Create GitHub PR.", objSchema({ repo: s("owner/repo."), title: s("Title."), body: s("Body."), head: s("Head."), base: s("Base.") }, ["repo", "title", "head", "base"]), { requiresAuth: true, requiresApproval: true }),
+  tool("run_tests", "devops", "medium", "universal", "Run tests.", objSchema({ command: s("Command."), timeout_sec: i("Timeout.", 120) }, ["command"]), { requiresApproval: true }),
+  tool("run_build", "devops", "medium", "universal", "Run build.", objSchema({ command: s("Command."), timeout_sec: i("Timeout.", 300) }, ["command"]), { requiresApproval: true }),
+  tool("deploy_service", "devops", "high", "universal", "Deploy service.", objSchema({ provider: s("Provider."), service: s("Service."), environment: s("Environment.") }, ["provider", "service", "environment"]), { requiresAuth: true, requiresApproval: true }),
+
+  tool("canvas", "ui", "medium", "openclaw", "Update canvas.", objSchema({ action: { type: "string", enum: ["render", "update", "clear"] }, payload: { description: "Payload." } }, ["action"])),
+  tool("image", "media", "medium", "openclaw", "Analyze image.", objSchema({ path: s("Path."), prompt: s("Prompt.") }, ["path"])),
+  tool("image_generate", "media", "medium", "openclaw", "Generate image.", objSchema({ prompt: s("Prompt."), size: s("Size.", "1024x1024") }, ["prompt"]), { requiresAuth: true }),
+  tool("generate_image", "media", "medium", "autogpt", "Generate image.", objSchema({ prompt: s("Prompt.") }, ["prompt"]), { requiresAuth: true }),
+  tool("music_generate", "media", "medium", "openclaw", "Generate music.", objSchema({ prompt: s("Prompt."), duration_sec: i("Duration.", 30) }, ["prompt"]), { requiresAuth: true }),
+  tool("video_generate", "media", "medium", "openclaw", "Generate video.", objSchema({ prompt: s("Prompt."), duration_sec: i("Duration.", 5) }, ["prompt"]), { requiresAuth: true }),
+  tool("tts", "media", "medium", "openclaw", "Text to speech.", objSchema({ text: s("Text."), voice: s("Voice.") }, ["text"]), { requiresAuth: true }),
+
+  tool("tool_search", "tool_catalog", "low", "openclaw", "Search tools.", objSchema({ query: s("Query."), category: s("Category.") }, ["query"]), { enabledByDefault: true }),
+  tool("tool_search_code", "tool_catalog", "low", "openclaw", "Search tool signatures.", objSchema({ query: s("Query."), language: { type: "string", enum: ["python", "typescript", "json"] } }, ["query"]), { enabledByDefault: true }),
+  tool("tool_describe", "tool_catalog", "low", "openclaw", "Describe tool.", objSchema({ name: s("Name.") }, ["name"]), { enabledByDefault: true }),
+  tool("mcp_list_servers", "mcp", "low", "mcp", "List MCP servers.", objSchema({}), { enabledByDefault: true }),
+  tool("mcp_list_tools", "mcp", "low", "mcp", "List MCP tools.", objSchema({ server: s("Server.") }), { enabledByDefault: true }),
+  tool("mcp_call_tool", "mcp", "high", "mcp", "Call MCP tool.", objSchema({ server: s("Server."), tool: s("Tool."), arguments: { description: "Arguments." } }, ["server", "tool", "arguments"]), { requiresApproval: true }),
+  tool("llm_task", "llm", "medium", "openclaw_plugin", "Structured LLM task.", objSchema({ prompt: s("Prompt."), schema: { description: "Schema." } }, ["prompt"]), { requiresAuth: true }),
+  tool("structured_extract", "llm", "medium", "universal", "Extract structured data.", objSchema({ text: s("Text."), schema: { description: "Schema." } }, ["text", "schema"]), { requiresAuth: true }),
+  tool("http_request", "api", "high", "universal", "HTTP request.", objSchema({ method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] }, url: s("URL."), headers: { description: "Headers." }, body: { description: "Body." } }, ["method", "url"]), { requiresApproval: true }),
+];
+
+
+function safeLogArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (/token|secret|password|api[_-]?key|authorization/i.test(key)) {
+      out[key] = "***REDACTED***";
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function resolveWorkspacePath(ctx: ToolContext, rawPath: string): string {
+  const base = path.resolve(ctx.workspace);
+  const target = path.resolve(base, rawPath);
+  if (!target.startsWith(base)) {
+    throw new Error(`Path escapes workspace: ${rawPath}`);
+  }
+  return target;
+}
+
+function ok(data?: unknown, message = "ok"): ToolResult {
+  return { ok: true, data, message, error: null };
+}
+
+function fail(error: string, message: string, data?: unknown): ToolResult {
+  return { ok: false, error, message, data };
+}
+
+
+export class ToolRegistry {
+  private toolDefs: Map<string, ToolDef>;
+  private handlers: Map<string, ToolHandler>;
+
+  constructor(toolDefs: ToolDef[] = TOOL_DEFS) {
+    this.toolDefs = new Map(toolDefs.map((t) => [t.name, t]));
+    this.handlers = new Map();
+  }
+
+  registerHandler(name: string, handler: ToolHandler): void {
+    if (!this.toolDefs.has(name)) {
+      throw new Error(`Unknown tool: ${name}`);
+    }
+    this.handlers.set(name, handler);
+  }
+
+  registerDefaultHandlers(): void {
+    for (const name of ["read", "read_file", "open_file"]) this.registerHandler(name, handleRead);
+    for (const name of ["write", "write_file"]) this.registerHandler(name, handleWrite);
+    for (const name of ["list_folder", "list_directory", "open_folder"]) this.registerHandler(name, handleListDirectory);
+
+    this.registerHandler("edit", handleEdit);
+    this.registerHandler("file_exists", handleFileExists);
+    this.registerHandler("search_files", handleSearchFiles);
+    this.registerHandler("grep_files", handleGrepFiles);
+    this.registerHandler("make_directory", handleMakeDirectory);
+    this.registerHandler("delete_path", handleDeletePath);
+    this.registerHandler("calculator", handleCalculator);
+
+    this.registerHandler("memory_get", handleMemoryGet);
+    this.registerHandler("memory_put", handleMemoryPut);
+    this.registerHandler("memory_search", handleMemorySearch);
+
+    this.registerHandler("tool_search", (args, ctx) => this.handleToolSearch(args, ctx));
+    this.registerHandler("tool_search_code", (args, ctx) => this.handleToolSearchCode(args, ctx));
+    this.registerHandler("tool_describe", (args, ctx) => this.handleToolDescribe(args, ctx));
+
+    this.registerHandler("finish", handleFinish);
+    this.registerHandler("ask_user", handleAskUser);
+    this.registerHandler("update_plan", handleUpdatePlan);
+    this.registerHandler("session_status", handleSessionStatus);
+
+    for (const name of ["exec", "bash", "execute_shell", "execute_shell_popen", "execute_python_code", "execute_python_file", "run_tests", "run_build", "git_status", "git_diff"]) {
+      this.registerHandler(name, handleShellGated);
+    }
+
+    for (const name of this.toolDefs.keys()) {
+      if (!this.handlers.has(name)) {
+        this.handlers.set(name, handleNotConfigured);
+      }
+    }
+  }
+
+  listTools(category?: ToolCategory, enabledOnly = false): ToolDef[] {
+    let tools = Array.from(this.toolDefs.values());
+    if (category) tools = tools.filter((t) => t.category === category);
+    if (enabledOnly) tools = tools.filter((t) => t.enabledByDefault);
+    return tools;
+  }
+
+  describe(name: string): ToolResult {
+    const toolDef = this.toolDefs.get(name);
+    if (!toolDef) return fail("unknown_tool", `No tool named ${name}`);
+    return ok(toolDef);
+  }
+
+  async invoke(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+    const toolDef = this.toolDefs.get(name);
+    if (!toolDef) return fail("unknown_tool", `No tool named ${name}`);
+
+    if (toolDef.risk === "destructive" && !ctx.allowDestructive) {
+      return fail("destructive_tool_blocked", `${name} requires destructive approval.`);
+    }
+
+    if (toolDef.category === "runtime" && ["high", "destructive"].includes(toolDef.risk) && !ctx.allowShell) {
+      return fail("shell_blocked", `${name} requires allowShell=true.`);
+    }
+
+    if (["web", "api"].includes(toolDef.category) && !ctx.allowNetwork) {
+      return fail("network_blocked", `${name} requires allowNetwork=true.`);
+    }
+
+    ctx.audit.push({
+      ts: Date.now(),
+      event_type: "tool_call",
+      payload: {
+        name,
+        args: safeLogArgs(args),
+        risk: toolDef.risk,
+        category: toolDef.category,
+      },
+    });
+
+    const handler = this.handlers.get(name) || handleNotConfigured;
+    const result = await handler(args, ctx);
+
+    ctx.audit.push({
+      ts: Date.now(),
+      event_type: "tool_result",
+      payload: {
+        name,
+        ok: result.ok,
+        error: result.error,
+      },
+    });
+
+    return result;
+  }
+
+  private handleToolSearch(args: Record<string, unknown>, _ctx: ToolContext): ToolResult {
+    const query = String(args.query || "").toLowerCase();
+    const category = args.category ? String(args.category) : undefined;
+    const matches = Array.from(this.toolDefs.values()).filter((t) => {
+      const haystack = `${t.name} ${t.category} ${t.description} ${t.sourceFamily}`.toLowerCase();
+      return haystack.includes(query) && (!category || t.category === category);
+    });
+    return ok(matches, `Found ${matches.length} tools.`);
+  }
+
+  private handleToolSearchCode(args: Record<string, unknown>, _ctx: ToolContext): ToolResult {
+    const query = String(args.query || "").toLowerCase();
+    const language = String(args.language || "json");
+    const matches = Array.from(this.toolDefs.values())
+      .filter((t) => `${t.name} ${t.category} ${t.description} ${t.sourceFamily}`.toLowerCase().includes(query))
+      .map((t) => {
+        if (language === "python") return `def ${t.name}(args: dict) -> dict: ...`;
+        if (language === "typescript") return `async function ${t.name}(args: Record<string, unknown>): Promise<ToolResult> { /* ... */ }`;
+        return t;
+      });
+    return ok(matches, `Found ${matches.length} signatures.`);
+  }
+
+  private handleToolDescribe(args: Record<string, unknown>, _ctx: ToolContext): ToolResult {
+    return this.describe(String(args.name || ""));
+  }
+}
+
+
+function handleRead(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const filePath = resolveWorkspacePath(ctx, String(args.path));
+  if (!fs.existsSync(filePath)) return fail("not_found", filePath);
+  if (!fs.statSync(filePath).isFile()) return fail("not_file", filePath);
+  return ok(fs.readFileSync(filePath, "utf-8"), filePath);
+}
+
+function handleWrite(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const filePath = resolveWorkspacePath(ctx, String(args.path));
+  const overwrite = Boolean(args.overwrite);
+  if (fs.existsSync(filePath) && !overwrite) {
+    return fail("exists", "Set overwrite=true to replace existing file.");
+  }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, String(args.content || ""), "utf-8");
+  return ok({ path: filePath, bytes: fs.statSync(filePath).size }, "written");
+}
+
+function handleEdit(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const filePath = resolveWorkspacePath(ctx, String(args.path));
+  const oldText = String(args.old_text);
+  const newText = String(args.new_text);
+  const text = fs.readFileSync(filePath, "utf-8");
+  if (!text.includes(oldText)) return fail("old_text_not_found", "Exact text not found.");
+  fs.writeFileSync(filePath, text.replace(oldText, newText), "utf-8");
+  return ok({ path: filePath, replacements: 1 }, "edited");
+}
+
+function handleListDirectory(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const dirPath = resolveWorkspacePath(ctx, String(args.path || "."));
+  if (!fs.existsSync(dirPath)) return fail("not_found", dirPath);
+  if (!fs.statSync(dirPath).isDirectory()) return fail("not_directory", dirPath);
+
+  const items = fs.readdirSync(dirPath).map((name) => {
+    const full = path.join(dirPath, name);
+    const stat = fs.statSync(full);
+    return {
+      name,
+      type: stat.isDirectory() ? "dir" : "file",
+      size: stat.size,
+    };
+  });
+
+  return ok(items, `${items.length} items`);
+}
+
+function handleFileExists(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const target = resolveWorkspacePath(ctx, String(args.path));
+  const exists = fs.existsSync(target);
+  return ok({
+    exists,
+    is_file: exists ? fs.statSync(target).isFile() : false,
+    is_dir: exists ? fs.statSync(target).isDirectory() : false,
+  }, target);
+}
+
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+
+  for (const name of fs.readdirSync(root)) {
+    const full = path.join(root, name);
+    const stat = fs.statSync(full);
+    if (stat.isDirectory()) out.push(...walkFiles(full));
+    else out.push(full);
+  }
+
+  return out;
+}
+
+function handleSearchFiles(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const root = resolveWorkspacePath(ctx, String(args.path || "."));
+  const pattern = String(args.pattern || "").replace(/\*/g, "");
+  const files = walkFiles(root).filter((file) => file.includes(pattern));
+  return ok(files.map((f) => path.relative(ctx.workspace, f)), `${files.length} matches`);
+}
+
+function handleGrepFiles(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const root = resolveWorkspacePath(ctx, String(args.path || "."));
+  const regex = new RegExp(String(args.pattern));
+  const max = Number(args.max_matches || 100);
+  const matches: Array<Record<string, unknown>> = [];
+
+  for (const file of walkFiles(root)) {
+    const text = fs.readFileSync(file, "utf-8");
+    const lines = text.split(/\r?\n/);
+    for (let idx = 0; idx < lines.length; idx++) {
+      if (regex.test(lines[idx])) {
+        matches.push({
+          path: path.relative(ctx.workspace, file),
+          line: idx + 1,
+          text: lines[idx].slice(0, 500),
+        });
+        if (matches.length >= max) return ok(matches, `${matches.length} matches`);
+      }
+    }
+  }
+
+  return ok(matches, `${matches.length} matches`);
+}
+
+function handleMakeDirectory(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const dirPath = resolveWorkspacePath(ctx, String(args.path));
+  fs.mkdirSync(dirPath, { recursive: true });
+  return ok({ path: dirPath }, "directory_created");
+}
+
+function handleDeletePath(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  if (!ctx.allowDestructive) return fail("destructive_blocked", "Deletion requires allowDestructive=true.");
+  const target = resolveWorkspacePath(ctx, String(args.path));
+  if (!fs.existsSync(target)) return fail("not_found", target);
+  const stat = fs.statSync(target);
+  if (stat.isDirectory()) fs.rmdirSync(target);
+  else fs.unlinkSync(target);
+  return ok({ path: target }, "deleted");
+}
+
+function handleCalculator(args: Record<string, unknown>, _ctx: ToolContext): ToolResult {
+  const expr = String(args.expression || "");
+  if (!/^[0-9+\-*/(). %]+$/.test(expr)) {
+    return fail("unsafe_expression", "Only arithmetic characters are allowed.");
+  }
+
+  try {
+    const value = Function(`"use strict"; return (${expr});`)();
+    return ok(value, String(value));
+  } catch (err) {
+    return fail("calculation_error", String(err));
+  }
+}
+
+function handleMemoryGet(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const key = String(args.key);
+  return ok(ctx.memory[key], key);
+}
+
+function handleMemoryPut(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const key = String(args.key);
+  ctx.memory[key] = args.value;
+  return ok({ key, saved: true }, "saved");
+}
+
+function handleMemorySearch(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  const query = String(args.query || "").toLowerCase();
+  const limit = Number(args.limit || 5);
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const [key, value] of Object.entries(ctx.memory)) {
+    const haystack = `${key} ${JSON.stringify(value)}`.toLowerCase();
+    if (haystack.includes(query)) {
+      results.push({ key, value });
+      if (results.length >= limit) break;
+    }
+  }
+
+  return ok(results, `${results.length} matches`);
+}
+
+function handleShellGated(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  if (!ctx.allowShell) return fail("shell_blocked", "Shell execution requires allowShell=true.");
+
+  let command = String(args.command || "");
+
+  if (!command && args.path) {
+    command = `python ${String(args.path)}`;
+  }
+
+  if (!command) return fail("missing_command", "No command provided.");
+
+  const timeoutSec = Number(args.timeout_sec || 30);
+
+  try {
+    const output = childProcess.execSync(command, {
+      cwd: ctx.workspace,
+      timeout: timeoutSec * 1000,
+      encoding: "utf-8",
+      env: { ...process.env, ...ctx.env },
+      stdio: "pipe",
+    });
+
+    return ok({ stdout: output, stderr: "", returncode: 0 }, "command_completed");
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: "command_failed",
+      message: err.message || "Command failed.",
+      data: {
+        stdout: err.stdout?.toString?.() || "",
+        stderr: err.stderr?.toString?.() || "",
+        returncode: err.status ?? 1,
+      },
+    };
+  }
+}
+
+function handleFinish(args: Record<string, unknown>, _ctx: ToolContext): ToolResult {
+  return ok({ final: args.answer }, "finished");
+}
+
+function handleAskUser(args: Record<string, unknown>, _ctx: ToolContext): ToolResult {
+  return ok({ question: args.question, options: args.options || [] }, "user_input_required");
+}
+
+function handleUpdatePlan(args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  ctx.memory["_current_plan"] = args.steps;
+  return ok({ steps: args.steps }, "plan_updated");
+}
+
+function handleSessionStatus(_args: Record<string, unknown>, ctx: ToolContext): ToolResult {
+  return ok({ workspace: ctx.workspace, audit_events: ctx.audit.length }, "ok");
+}
+
+function handleNotConfigured(args: Record<string, unknown>, _ctx: ToolContext): ToolResult {
+  return fail(
+    "not_configured",
+    "This tool is declared but not wired. Add a real handler with credentials, policy, and verification.",
+    { args_received: safeLogArgs(args) }
+  );
+}
+
+
+// Demo
+if (require.main === module) {
+  const workspace = path.join(process.cwd(), "agent_workspace_ts");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  const ctx: ToolContext = {
+    workspace,
+    allowNetwork: false,
+    allowShell: false,
+    allowDestructive: false,
+    env: {},
+    memory: {},
+    audit: [],
+  };
+
+  const registry = new ToolRegistry();
+  registry.registerDefaultHandlers();
+
+  registry.invoke("tool_search", { query: "web" }, ctx).then((res) => console.log(JSON.stringify(res, null, 2)));
+  registry.invoke("calculator", { expression: "2 + 2 * 10" }, ctx).then((res) => console.log(JSON.stringify(res, null, 2)));
+}
+```
+
+---
+
+## What this gives you
+
+This is not just a list. It gives you a **real tool layer**:
+
+```text
+ToolDef
+→ schema
+→ risk level
+→ approval flag
+→ auth flag
+→ source family
+→ handler registry
+→ gated execution
+→ audit log
+→ safe local file/memory/calculator handlers
+→ external tool placeholders
+```
+
+The strongest base set is:
+
+```text
+runtime:
+  exec, bash, process, code_execution,
+  execute_shell, execute_shell_popen,
+  execute_python_code, execute_python_file,
+  calculator
+
+filesystem:
+  read, write, edit, apply_patch,
+  read_file, write_file, list_folder,
+  list_directory, search_files, grep_files,
+  file_exists, make_directory, delete_path
+
+web:
+  web_search, x_search, web_fetch,
+  search_web, google, read_website
+
+browser:
+  browser, playwright_open, playwright_click, playwright_screenshot
+
+agent control:
+  finish, ask_user, update_plan, goal, steer,
+  agents_list, agent_send, subagents
+
+sessions:
+  sessions_list, sessions_history, sessions_send,
+  sessions_spawn, sessions_yield, session_status
+
+memory:
+  memory_search, memory_get, memory_put,
+  vector_search, database_query
+
+automation:
+  cron, heartbeat_respond
+
+gateway/nodes:
+  gateway, nodes
+
+messaging/productivity:
+  message, send_email, draft_email,
+  calendar_create_event, slack_send_message
+
+git/devops:
+  clone_repository, git_status, git_diff,
+  git_commit, github_create_issue, github_create_pr,
+  run_tests, run_build, deploy_service
+
+media/ui:
+  canvas, image, image_generate,
+  generate_image, music_generate,
+  video_generate, tts
+
+tool discovery/MCP/plugins:
+  tool_search, tool_search_code, tool_describe,
+  mcp_list_servers, mcp_list_tools, mcp_call_tool,
+  llm_task, structured_extract, http_request
+```
+
+## Real or bullshit?
+
+**Real:** this is the correct production shape.
+
+**Bullshit:** calling external systems “done” before wiring the real handler, credentials, permissions, and verification.
+
+The critical rule is this:
+
+```text
+A declared tool is not a working tool.
+A wired handler is not a safe tool.
+A safe tool is one with:
+schema + auth + permission gate + sandbox + audit + verification.
+```
+
+[1]: https://docs.openclaw.ai/tools "Overview - OpenClaw"
+[2]: https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/forge/components/built-in-components.md "AutoGPT/docs/content/forge/components/built-in-components.md at master · Significant-Gravitas/AutoGPT · GitHub"
+[3]: https://docs.langchain.com/oss/python/langchain/tools "Tools - Docs by LangChain"
+[4]: https://github.com/VoltAgent/awesome-openclaw-skills "GitHub - VoltAgent/awesome-openclaw-skills: The awesome collection of OpenClaw skills. 5,400+ skills filtered and categorized from the official OpenClaw Skills Registry. · GitHub"

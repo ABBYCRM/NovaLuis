@@ -2283,5 +2283,198 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
   else boot();
 })();
 </script>
+<style>
+#attach-chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 0 0 8px; max-width: 760px; margin: 0 auto;
+}
+.attach-chip {
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(139,92,246,0.12); border: 1px solid rgba(139,92,246,0.28);
+  border-radius: 7px; padding: 4px 9px 4px 8px;
+  font-size: 11.5px; color: #c4b5fd; max-width: 200px;
+  animation: fadeIn 0.15s ease;
+}
+.attach-chip-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0;
+}
+.attach-chip-del {
+  background: none; border: none; color: #c4b5fd; cursor: pointer;
+  padding: 0 0 0 3px; font-size: 15px; line-height: 1; flex-shrink: 0;
+  opacity: 0.7; transition: opacity 0.12s, color 0.12s;
+}
+.attach-chip-del:hover { opacity: 1; color: var(--danger); }
+.del-msg-btn:hover {
+  background: rgba(239,68,68,0.15) !important;
+  color: var(--danger) !important;
+  border-color: rgba(239,68,68,0.3) !important;
+}
+</style>
+<script>
+(function () {
+  'use strict';
+  /* ── Feature 1: File attachment chips + content injection ────────────── */
+  var pendingFiles = [];
+  var attachInput = document.getElementById('attach-file-input');
+  var userInput   = document.getElementById('user-input');
+  var sendBtn     = document.getElementById('send-btn');
+  var inputArea   = document.getElementById('input-area');
+  var inputInner  = document.getElementById('input-inner');
+
+  var chipBar = document.createElement('div');
+  chipBar.id = 'attach-chips';
+  if (inputArea && inputInner) inputArea.insertBefore(chipBar, inputInner);
+
+  function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = (s == null) ? '' : String(s);
+    return d.innerHTML;
+  }
+
+  function renderChips() {
+    chipBar.innerHTML = '';
+    pendingFiles.forEach(function (f, i) {
+      var chip = document.createElement('div');
+      chip.className = 'attach-chip';
+      chip.innerHTML =
+        '<span class="attach-chip-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+        '<button class="attach-chip-del" title="Remove attachment">×</button>';
+      chip.querySelector('.attach-chip-del').addEventListener('click', function () {
+        pendingFiles.splice(i, 1);
+        renderChips();
+      });
+      chipBar.appendChild(chip);
+    });
+  }
+
+  function readFileAsText(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload  = function (e) { resolve(e.target.result || ''); };
+      reader.onerror = function ()  { reject(new Error('read failed')); };
+      reader.readAsText(file);
+    });
+  }
+
+  if (attachInput) {
+    // Capture phase fires before bob.js bubble-phase handler — we own the files
+    attachInput.addEventListener('change', function (e) {
+      e.stopPropagation();
+      var files = Array.from(attachInput.files || []);
+      attachInput.value = '';
+      if (!files.length) return;
+      var MAX = 12000;
+      var promises = files.map(function (file) {
+        if (file.type.startsWith('image/')) {
+          return Promise.resolve({ name: file.name, content: '[Image: ' + file.name + ']' });
+        }
+        return readFileAsText(file).then(function (text) {
+          var body = text.length > MAX ? text.slice(0, MAX) + '\n...[truncated at 12 000 chars]' : text;
+          return { name: file.name, content: body };
+        }).catch(function () {
+          return { name: file.name, content: '[Binary file: ' + file.name + ']' };
+        });
+      });
+      Promise.all(promises).then(function (results) {
+        results.forEach(function (r) { pendingFiles.push(r); });
+        renderChips();
+      });
+    }, true);
+  }
+
+  function injectAndClear() {
+    if (!pendingFiles.length || !userInput) return;
+    var prefix = pendingFiles.map(function (f) {
+      return '[Attached: ' + f.name + ']\n' + f.content;
+    }).join('\n\n---\n\n') + '\n\n---\n\n';
+    userInput.value = prefix + userInput.value;
+    userInput.dispatchEvent(new Event('input', { bubbles: true }));
+    pendingFiles = [];
+    renderChips();
+  }
+
+  if (sendBtn) sendBtn.addEventListener('mousedown', injectAndClear, true);
+  if (userInput) {
+    userInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) injectAndClear();
+    }, true);
+  }
+
+  /* ── Feature 2: Per-message delete button ────────────────────────────── */
+  var LS_CHATS   = 'bob-chats';
+  var LS_CURRENT = 'bob-current-chat-id';
+
+  function deleteFromStorage(row) {
+    try {
+      var chatId = localStorage.getItem(LS_CURRENT);
+      if (!chatId) return;
+      var chats = JSON.parse(localStorage.getItem(LS_CHATS) || '[]');
+      var chat = null;
+      for (var ci = 0; ci < chats.length; ci++) {
+        if (chats[ci].id === chatId) { chat = chats[ci]; break; }
+      }
+      if (!chat || !Array.isArray(chat.messages)) return;
+      var allRows = Array.from(document.querySelectorAll('#chat-inner .msg-row'));
+      var idx = allRows.indexOf(row);
+      if (idx >= 0 && idx < chat.messages.length) {
+        chat.messages.splice(idx, 1);
+        localStorage.setItem(LS_CHATS, JSON.stringify(chats));
+      }
+    } catch (_) {}
+  }
+
+  function makeTrashSvg() {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.innerHTML =
+      '<polyline points="3 6 5 6 21 6"/>' +
+      '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+      '<path d="M10 11v6"/><path d="M14 11v6"/>' +
+      '<path d="M9 6V4h6v2"/>';
+    return svg;
+  }
+
+  function injectDeleteBtn(row) {
+    if (row.dataset.novaDelInjected) return;
+    var actions = row.querySelector('.msg-actions');
+    if (!actions) return;
+    row.dataset.novaDelInjected = '1';
+    var btn = document.createElement('button');
+    btn.className = 'action-btn del-msg-btn';
+    btn.title = 'Delete message';
+    btn.appendChild(makeTrashSvg());
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      deleteFromStorage(row);
+      row.style.transition = 'opacity 0.18s, transform 0.18s';
+      row.style.opacity = '0';
+      row.style.transform = 'translateY(-3px)';
+      setTimeout(function () { if (row.parentNode) row.remove(); }, 200);
+    });
+    actions.appendChild(btn);
+  }
+
+  function processAllRows() {
+    document.querySelectorAll('#chat-inner .msg-row').forEach(injectDeleteBtn);
+  }
+
+  var chatInner = document.getElementById('chat-inner');
+  var mo = new MutationObserver(processAllRows);
+
+  function boot() {
+    processAllRows();
+    mo.observe(chatInner || document.body, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
 </body>
 </html>
