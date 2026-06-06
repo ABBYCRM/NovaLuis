@@ -185,27 +185,35 @@ export async function chatComplete({
     stream: false,
   };
 
-  // Retry on 503 / 429 (overload / rate-limit) with exponential back-off.
-  // After MAX_RETRIES failures on gemini, fall back to bitdeer so a capacity
-  // spike on Google never kills an entire run.
-  const MAX_RETRIES = 3;
+  // Fallback chain on 503/429 (overload / rate-limit):
+  //   attempt 0   — primary provider + model (gemini-2.5-flash via gemini)
+  //   attempt 1   — same, after 2 s back-off
+  //   attempt 2   — same, after 4 s back-off
+  //   attempt 3   — gemini-2.5-pro via gemini (separate quota bucket), 8 s back-off
+  //   attempt 4   — bitdeer + BITDEER_FALLBACK_MODEL (true last resort), 16 s back-off
+  // Non-503/429 errors are thrown immediately (no point retrying a 400/401/404).
+  const MAX_ATTEMPTS = 5;
   let lastErr = null;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
-      const delayMs = Math.min(1000 * 2 ** (attempt - 1), 16_000);
+      const delayMs = Math.min(2000 * 2 ** (attempt - 1), 16_000);
       await new Promise((ok) => setTimeout(ok, delayMs));
-      // Final retry: fall back to bitdeer when the primary provider is gemini.
-      if (attempt === MAX_RETRIES && r.providerName !== "bitdeer") {
+
+      if (attempt === 3 && r.providerName === "gemini") {
+        // Switch to gemini-2.5-pro — same provider, different quota bucket.
+        console.warn(`router(${role}): gemini-2.5-flash overloaded — trying gemini-2.5-pro`);
+        body.model = "gemini-2.5-pro";
+      } else if (attempt === 4 && r.providerName !== "bitdeer") {
+        // Last resort: bitdeer with a non-gemini model.
+        const fallbackModel = process.env.BITDEER_FALLBACK_MODEL || "deepseek-ai/DeepSeek-V3";
         console.warn(
-          `router(${role}): ${r.providerName} overloaded — falling back to bitdeer`,
+          `router(${role}): all gemini attempts failed — falling back to bitdeer/${fallbackModel}`,
         );
         r.providerName = "bitdeer";
         r.provider = PROVIDERS.bitdeer;
         if (!r.provider.key) throw lastErr;
         headers.Authorization = `Bearer ${r.provider.key}`;
-        if (body.model.startsWith("gemini-")) {
-          body.model = process.env.BITDEER_FALLBACK_MODEL || "moonshotai/Kimi-K2.6";
-        }
+        body.model = fallbackModel;
       }
     }
 
@@ -223,9 +231,10 @@ export async function chatComplete({
         const err = new Error(
           `router(${role}/${r.providerName}) HTTP ${res.status}: ${t.slice(0, 300)}`,
         );
-        if ((res.status === 503 || res.status === 429) && attempt < MAX_RETRIES) {
+        // Only retry on transient overload; hard errors (400/401/404) throw immediately.
+        if ((res.status === 503 || res.status === 429) && attempt < MAX_ATTEMPTS - 1) {
           lastErr = err;
-          continue; // retry after delay
+          continue;
         }
         throw err;
       }
@@ -247,7 +256,7 @@ export async function chatComplete({
       clearTimeout(timer);
     }
   }
-  throw lastErr || new Error(`router(${role}): all retries exhausted`);
+  throw lastErr || new Error(`router(${role}): all attempts exhausted`);
 }
 
 // One-line-per-role summary for startup logging (no secrets).
