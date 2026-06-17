@@ -68,12 +68,30 @@ function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
+// Server-to-server bypass: a trusted peer (Supernova) may call gated endpoints
+// with the shared API key instead of the operator PIN cookie. This is the same
+// key Supernova validates inbound dispatches with, so it's a symmetric trust.
+function hasValidPeerKey(req: Request): boolean {
+  const shared = process.env.SUPERNOVA_API_KEY || process.env.OPENCLAW_API_KEY || "";
+  if (!shared) return false;
+  const auth = req.headers.authorization || "";
+  const m = /^Bearer\s+(.+)$/i.exec(auth);
+  if (!m) return false;
+  const supplied = m[1]!.trim();
+  if (supplied.length !== shared.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(supplied), Buffer.from(shared));
+  } catch {
+    return false;
+  }
+}
+
 export function requireWtAuth(
   req: Request,
   res: Response,
   next: NextFunction,
 ): void {
-  if (isValid(readCookie(req, COOKIE))) {
+  if (isValid(readCookie(req, COOKIE)) || hasValidPeerKey(req)) {
     next();
     return;
   }

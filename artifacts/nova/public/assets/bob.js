@@ -1719,9 +1719,11 @@ function appendStreamingRow() {
     <div class="msg-body">
       <div class="bubble">
         <div class="typing-indicator">
-          <div class="typing-dot"></div>
-          <div class="typing-dot"></div>
-          <div class="typing-dot"></div>
+          <div class="cube3d"><div class="cube3d-c">
+            <span class="cube3d-f"></span><span class="cube3d-f"></span><span class="cube3d-f"></span>
+            <span class="cube3d-f"></span><span class="cube3d-f"></span><span class="cube3d-f"></span>
+          </div></div>
+          <span class="think-label">Thinking…</span>
         </div>
         <div class="md-content" id="stream-content" style="display:none;"></div>
       </div>
