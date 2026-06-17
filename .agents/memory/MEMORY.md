@@ -1,0 +1,8 @@
+- [GitHub PAT git push](github-pat-push.md) — classic-PAT push fails with bearer extraheader; use the x-access-token URL form.
+- [Render API deploy](render-deploy.md) — service create returns 402 until a card is on the account, even for the free plan; create-service body shape that worked.
+- [Replit DB external reachability](replit-db-external-reachability.md) — Replit DATABASE_URL host is `helium` (internal-only); external hosts (Render/Fly) cannot reach it, need a separate external Postgres URL.
+- [Render Postgres connect](render-postgres-connect.md) — external conn needs IP allowlist opened (defaults null) + `sslmode=no-verify`; app uses internal string, Replit daemon distills via SCRATCHPAD_DATABASE_URL.
+- [GLOBAL_STATE stripper](global-state-stripper.md) — anchor every marker to line-start, gate block removal on an explicit opener; balances leak vs over-strip.
+- [Super Nova tool registry](super-nova-tools.md) — SSRF-safe fetch must pin DNS at connect-time (node:http lookup), stream-cap body; web_search must fall through providers on per-key failure.
+- [api-server authz model](api-authz.md) — no per-user auth; the Work Tree PIN gate is the ONLY authz, so any new secret/private-data route must mount behind requireWtAuth.
+- [Super Nova model router](super-nova-router.md) — central role→provider router; on a failed provider override, drop the provider-specific model on bitdeer fallback or the run breaks.

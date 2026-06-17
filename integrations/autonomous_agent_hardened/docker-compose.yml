@@ -1,9 +1,0 @@
-services:
-  autonomous-agent:
-    build: .
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-    environment:
-      AGENT_WORKSPACE: /workspace
-    command: ["run", "--target", "/workspace", "--dry-run"]

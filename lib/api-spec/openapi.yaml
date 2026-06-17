@@ -1,0 +1,271 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: work-tree
+    description: Recursive Work Tree planner operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /work-tree/runs:
+    get:
+      operationId: listWorkTreeRuns
+      tags: [work-tree]
+      summary: List Work Tree runs
+      description: Returns all planner runs, newest first.
+      responses:
+        "200":
+          description: Runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkTreeRunList"
+    post:
+      operationId: createWorkTreeRun
+      tags: [work-tree]
+      summary: Create a Work Tree run
+      description: Queues a goal for recursive decomposition and execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkTreeRun"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkTreeRun"
+  /work-tree/runs/{id}:
+    get:
+      operationId: getWorkTreeRun
+      tags: [work-tree]
+      summary: Get a Work Tree run with its node tree
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Run detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkTreeRunDetail"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /work-tree/runs/{id}/cancel:
+    post:
+      operationId: cancelWorkTreeRun
+      tags: [work-tree]
+      summary: Cancel a Work Tree run
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Cancelled run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkTreeRun"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /work-tree/nodes/{id}/retry:
+    post:
+      operationId: retryWorkTreeNode
+      tags: [work-tree]
+      summary: Retry a failed Work Tree node
+      description: >-
+        Resets a failed node to pending, re-opens its ancestor composites and the
+        run, and clears the run report so the worker re-executes the node.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Run the node belongs to, reopened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkTreeRun"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Node is not in a retryable (failed) state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+    CreateWorkTreeRun:
+      type: object
+      properties:
+        goal:
+          type: string
+          minLength: 1
+        model:
+          type: string
+      required:
+        - goal
+    WorkTreeRun:
+      type: object
+      properties:
+        id:
+          type: integer
+        goal:
+          type: string
+        status:
+          type: string
+        model:
+          type: string
+        report:
+          type: string
+        error:
+          type: string
+        stageTrace:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - goal
+        - status
+        - model
+        - report
+        - error
+        - stageTrace
+        - createdAt
+        - updatedAt
+    WorkTreeRunList:
+      type: object
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkTreeRun"
+      required:
+        - runs
+    WorkTreeNode:
+      type: object
+      properties:
+        id:
+          type: integer
+        runId:
+          type: integer
+        parentId:
+          type: integer
+          nullable: true
+        title:
+          type: string
+        detail:
+          type: string
+        kind:
+          type: string
+        status:
+          type: string
+        depth:
+          type: integer
+        position:
+          type: integer
+        result:
+          type: string
+        verification:
+          type: string
+        attempts:
+          type: integer
+        trace:
+          type: string
+        role:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - runId
+        - parentId
+        - title
+        - detail
+        - kind
+        - status
+        - depth
+        - position
+        - result
+        - verification
+        - attempts
+        - trace
+        - role
+        - createdAt
+        - updatedAt
+    WorkTreeRunDetail:
+      type: object
+      properties:
+        run:
+          $ref: "#/components/schemas/WorkTreeRun"
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkTreeNode"
+      required:
+        - run
+        - nodes

@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "hello": "tsx ./src/hello.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "deep-worker": "node deep-worker.mjs",
+    "poll-events": "node poll-events.mjs",
+    "scratchpad-daemon": "node scratchpad-daemon.mjs",
+    "work-tree-worker": "node work-tree-worker.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:"
+  }
+}

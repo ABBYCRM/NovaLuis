@@ -1,6 +1,6 @@
 # HEARTBEAT.md — autonomous heartbeat mission
 
-OpenClaw loads this file as dynamic context on every scheduled
+Nova loads this file as dynamic context on every scheduled
 heartbeat run. Follow it exactly, then stop. SOUL.md, AGENTS.md,
 DIRECTIVE.md and TOOLS.md still apply in full.
 

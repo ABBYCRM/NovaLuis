@@ -1,0 +1,2103 @@
+Absolutely. Here is the **entire thing directly here** — **Python first**, then **TypeScript**.
+
+This is a real agentic runtime skeleton: planning, tools, memory, audit logs, verification, reflection, replanning, bounded autonomy.
+
+It is **real agent architecture**. It becomes truly useful when wired to real APIs, browser tools, file tools, databases, CRM, email, etc. Without real tools/model access, it is still a controlled simulation — not magic. ⚙️🧠
+
+---
+
+# 1. Python Version
+
+Save as:
+
+```text
+agentic_runtime.py
+```
+
+```python
+#!/usr/bin/env python3
+
+"""
+Agentic Runtime - Python Version
+
+A deeper agentic AI skeleton with:
+
+- Goal intake
+- Planning
+- Tool registry
+- Tool execution
+- Observation
+- Verification
+- Reflection
+- Replanning
+- Durable memory
+- Audit logging
+- Bounded autonomy
+
+Run:
+
+    python agentic_runtime.py --goal "research and summarize agentic AI"
+
+No external packages required.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import re
+import textwrap
+import uuid
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+# =============================================================================
+# ENUMS
+# =============================================================================
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    DESTRUCTIVE = "destructive"
+
+
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class RunStatus(str, Enum):
+    READY = "ready"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    ABORTED = "aborted"
+
+
+# =============================================================================
+# DATA MODELS
+# =============================================================================
+
+@dataclass
+class ToolResult:
+    ok: bool
+    data: Any = None
+    message: str = ""
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ToolSpec:
+    name: str
+    description: str
+    risk: RiskLevel
+    fn: Callable[..., ToolResult]
+
+
+@dataclass
+class Task:
+    id: str
+    description: str
+    tool_name: str
+    args: Dict[str, Any]
+    depends_on: List[str] = field(default_factory=list)
+    status: TaskStatus = TaskStatus.PENDING
+    result_key: Optional[str] = None
+    retries: int = 0
+    max_retries: int = 1
+    failure_reason: Optional[str] = None
+
+
+@dataclass
+class AgentConfig:
+    max_steps: int = 20
+    max_failures: int = 5
+    allow_high_risk: bool = False
+    allow_destructive: bool = False
+    run_dir: str = "agent_runs"
+
+
+@dataclass
+class AgentState:
+    run_id: str
+    goal: str
+    status: RunStatus = RunStatus.READY
+    steps_taken: int = 0
+    failures: int = 0
+    context: Dict[str, Any] = field(default_factory=dict)
+    tasks: List[Task] = field(default_factory=list)
+    final_answer: Optional[str] = None
+
+
+# =============================================================================
+# UTILS
+# =============================================================================
+
+def now_iso() -> str:
+    return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def slugify(text: str, max_len: int = 60) -> str:
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    text = re.sub(r"-+", "-", text).strip("-")
+    return text[:max_len] or "untitled"
+
+
+def task_id(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def compact_json(value: Any) -> str:
+    return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+def resolve_placeholders(value: Any, context: Dict[str, Any]) -> Any:
+    """
+    Resolves strings like "{{goal}}" or "{{summary}}" from context.
+
+    Works recursively through dicts/lists.
+    """
+    if isinstance(value, str):
+        exact = re.fullmatch(r"\{\{([a-zA-Z0-9_]+)\}\}", value.strip())
+        if exact:
+            return context.get(exact.group(1))
+
+        def replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            found = context.get(key)
+            if found is None:
+                return ""
+            if isinstance(found, str):
+                return found
+            return json.dumps(found, ensure_ascii=False)
+
+        return re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}", replace, value)
+
+    if isinstance(value, list):
+        return [resolve_placeholders(item, context) for item in value]
+
+    if isinstance(value, dict):
+        return {k: resolve_placeholders(v, context) for k, v in value.items()}
+
+    return value
+
+
+def sentence_split(text: str) -> List[str]:
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+# =============================================================================
+# AUDIT LOG
+# =============================================================================
+
+class AuditLog:
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(self, event_type: str, payload: Dict[str, Any]) -> None:
+        record = {
+            "ts": now_iso(),
+            "event_type": event_type,
+            "payload": payload,
+        }
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+# =============================================================================
+# MEMORY STORE
+# =============================================================================
+
+class MemoryStore:
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.data: Dict[str, Any] = {}
+        self.load()
+
+    def load(self) -> None:
+        if not self.path.exists():
+            self.data = {
+                "created_at": now_iso(),
+                "items": {},
+                "runs": [],
+            }
+            self.save()
+            return
+
+        try:
+            self.data = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            self.data = {
+                "created_at": now_iso(),
+                "items": {},
+                "runs": [],
+                "recovered_from_corruption": True,
+            }
+            self.save()
+
+    def save(self) -> None:
+        self.path.write_text(json.dumps(self.data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def put(self, key: str, value: Any) -> None:
+        self.data.setdefault("items", {})[key] = {
+            "updated_at": now_iso(),
+            "value": value,
+        }
+        self.save()
+
+    def get(self, key: str) -> Any:
+        item = self.data.get("items", {}).get(key)
+        if not item:
+            return None
+        return item.get("value")
+
+    def append_run(self, run_summary: Dict[str, Any]) -> None:
+        self.data.setdefault("runs", []).append(run_summary)
+        self.save()
+
+
+# =============================================================================
+# TOOL IMPLEMENTATIONS
+# =============================================================================
+
+class BuiltInTools:
+    """
+    Built-in local tools.
+
+    These are intentionally safe. They do not browse the internet,
+    mutate external systems, send email, or delete anything.
+    """
+
+    def __init__(self, memory: MemoryStore, output_dir: Path):
+        self.memory = memory
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.local_corpus = [
+            {
+                "title": "Agentic AI Control Loop",
+                "text": (
+                    "Agentic AI systems operate through a control loop: receive a goal, "
+                    "create a plan, choose tools, execute actions, observe results, verify "
+                    "whether the action worked, reflect on errors, and replan when needed. "
+                    "The agent is not merely generating text; it is coordinating action."
+                ),
+            },
+            {
+                "title": "Bounded Autonomy",
+                "text": (
+                    "Reliable agents need bounds. They should have step budgets, risk gates, "
+                    "permission checks, audit logs, failure limits, and deterministic fallbacks. "
+                    "Without bounds, autonomy can become unsafe or chaotic."
+                ),
+            },
+            {
+                "title": "Tool Use",
+                "text": (
+                    "Tools allow an agent to affect the world: search APIs, browsers, file systems, "
+                    "databases, code execution, calendars, email, CRM systems, and deployment platforms. "
+                    "Tool outputs must be verified because tool failure is common."
+                ),
+            },
+            {
+                "title": "Memory",
+                "text": (
+                    "Agent memory can be short-term context, long-term persistent storage, vector stores, "
+                    "structured databases, event logs, or knowledge graphs. Good agents separate facts, "
+                    "assumptions, preferences, and audit history."
+                ),
+            },
+            {
+                "title": "Verification",
+                "text": (
+                    "Verification is the difference between agentic theater and operational agency. "
+                    "A coding agent should run tests. A browser agent should inspect the page. "
+                    "A research agent should cite sources. A file agent should confirm files exist."
+                ),
+            },
+        ]
+
+    def search_knowledge(self, query: str, limit: int = 5) -> ToolResult:
+        if not query or not isinstance(query, str):
+            return ToolResult(ok=False, error="query_missing", message="No query provided.")
+
+        terms = set(re.findall(r"[a-zA-Z0-9]+", query.lower()))
+        scored: List[Tuple[int, Dict[str, str]]] = []
+
+        for item in self.local_corpus:
+            haystack = f"{item['title']} {item['text']}".lower()
+            score = sum(1 for t in terms if t in haystack)
+            if score > 0:
+                scored.append((score, item))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = [item for _, item in scored[:limit]]
+
+        if not results:
+            return ToolResult(
+                ok=True,
+                data=[],
+                message="No exact local matches found.",
+                metadata={"query": query, "count": 0},
+            )
+
+        return ToolResult(
+            ok=True,
+            data=results,
+            message=f"Found {len(results)} local knowledge results.",
+            metadata={"query": query, "count": len(results)},
+        )
+
+    def summarize_text(self, text: Any, max_sentences: int = 5) -> ToolResult:
+        if isinstance(text, list):
+            joined = "\n".join(
+                f"{item.get('title', 'Untitled')}: {item.get('text', '')}"
+                for item in text
+                if isinstance(item, dict)
+            )
+        else:
+            joined = str(text or "")
+
+        joined = joined.strip()
+        if len(joined) < 20:
+            return ToolResult(ok=False, error="insufficient_text", message="Not enough text to summarize.")
+
+        sentences = sentence_split(joined)
+        selected = sentences[:max_sentences]
+        summary = " ".join(selected)
+
+        return ToolResult(
+            ok=True,
+            data=summary,
+            message="Summary generated.",
+            metadata={"sentence_count": len(selected), "source_chars": len(joined)},
+        )
+
+    def save_memory(self, key: str, value: Any) -> ToolResult:
+        if not key:
+            return ToolResult(ok=False, error="missing_key", message="Memory key missing.")
+        if value is None or value == "":
+            return ToolResult(ok=False, error="missing_value", message="Memory value missing.")
+
+        self.memory.put(key, value)
+
+        return ToolResult(
+            ok=True,
+            data={"key": key, "saved": True},
+            message=f"Saved memory under key '{key}'.",
+        )
+
+    def generate_report(self, title: str, content: Any, filename: Optional[str] = None) -> ToolResult:
+        if not title:
+            return ToolResult(ok=False, error="missing_title", message="Report title missing.")
+        if not content:
+            return ToolResult(ok=False, error="missing_content", message="Report content missing.")
+
+        filename = filename or f"{slugify(title)}.md"
+        path = self.output_dir / filename
+
+        report = f"""# {title}
+
+Generated: {now_iso()}
+
+## Summary
+
+{content}
+
+## Agentic Notes
+
+This report was generated through a bounded agent loop:
+
+1. Plan
+2. Tool execution
+3. Observation
+4. Verification
+5. Reflection
+6. Memory write
+7. Report generation
+
+"""
+
+        path.write_text(report, encoding="utf-8")
+
+        return ToolResult(
+            ok=True,
+            data={"path": str(path), "content": report},
+            message=f"Report written to {path}",
+            metadata={"filename": filename},
+        )
+
+    def verify_context(self, required_keys: List[str], context: Dict[str, Any]) -> ToolResult:
+        missing = [key for key in required_keys if not context.get(key)]
+
+        if missing:
+            return ToolResult(
+                ok=False,
+                error="missing_context_keys",
+                message=f"Missing required context keys: {missing}",
+                data={"missing": missing},
+            )
+
+        return ToolResult(
+            ok=True,
+            data={"verified": True, "required_keys": required_keys},
+            message="Required context keys verified.",
+        )
+
+
+# =============================================================================
+# AGENT RUNTIME
+# =============================================================================
+
+class AgenticRuntime:
+    def __init__(self, config: Optional[AgentConfig] = None):
+        self.config = config or AgentConfig()
+
+        self.run_id = uuid.uuid4().hex[:12]
+        self.base_dir = Path(self.config.run_dir) / self.run_id
+        self.output_dir = self.base_dir / "outputs"
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+        self.audit = AuditLog(self.base_dir / "audit.jsonl")
+        self.memory = MemoryStore(self.base_dir / "memory.json")
+
+        builtins = BuiltInTools(memory=self.memory, output_dir=self.output_dir)
+
+        self.tools: Dict[str, ToolSpec] = {
+            "search_knowledge": ToolSpec(
+                name="search_knowledge",
+                description="Search local knowledge corpus.",
+                risk=RiskLevel.LOW,
+                fn=builtins.search_knowledge,
+            ),
+            "summarize_text": ToolSpec(
+                name="summarize_text",
+                description="Summarize provided text or search results.",
+                risk=RiskLevel.LOW,
+                fn=builtins.summarize_text,
+            ),
+            "save_memory": ToolSpec(
+                name="save_memory",
+                description="Persist information in local JSON memory.",
+                risk=RiskLevel.LOW,
+                fn=builtins.save_memory,
+            ),
+            "generate_report": ToolSpec(
+                name="generate_report",
+                description="Create a markdown report file.",
+                risk=RiskLevel.LOW,
+                fn=builtins.generate_report,
+            ),
+            "verify_context": ToolSpec(
+                name="verify_context",
+                description="Verify that required context keys exist.",
+                risk=RiskLevel.LOW,
+                fn=builtins.verify_context,
+            ),
+        }
+
+    # -------------------------------------------------------------------------
+    # ACCEPTANCE CRITERIA
+    # -------------------------------------------------------------------------
+
+    def acceptance_criteria(self, goal: str) -> List[str]:
+        return [
+            "A plan must be created from the user goal.",
+            "Every action must be executed through a registered tool.",
+            "Each tool result must be observed and verified.",
+            "Failures must trigger bounded retry or replanning.",
+            "Important output must be stored in memory.",
+            "A final report must be generated.",
+            "The run must stop when success, failure budget, or step budget is reached.",
+            f"The final output must be relevant to the goal: {goal}",
+        ]
+
+    # -------------------------------------------------------------------------
+    # PLANNING
+    # -------------------------------------------------------------------------
+
+    def plan(self, goal: str) -> List[Task]:
+        """
+        Simple deterministic planner.
+
+        A production system would replace or augment this with an LLM planner,
+        policy engine, planner/verifier split, or task graph solver.
+        """
+        clean_goal = goal.strip()
+        goal_slug = slugify(clean_goal)
+
+        search = Task(
+            id=task_id("search"),
+            description=f"Gather knowledge for goal: {clean_goal}",
+            tool_name="search_knowledge",
+            args={"query": "{{goal}}", "limit": 5},
+            result_key="search_results",
+        )
+
+        summarize = Task(
+            id=task_id("summarize"),
+            description="Condense gathered information into a usable summary.",
+            tool_name="summarize_text",
+            args={"text": "{{search_results}}", "max_sentences": 5},
+            depends_on=[search.id],
+            result_key="summary",
+        )
+
+        verify_summary = Task(
+            id=task_id("verify"),
+            description="Verify that summary exists before saving/reporting.",
+            tool_name="verify_context",
+            args={"required_keys": ["summary"], "context": "{{context}}"},
+            depends_on=[summarize.id],
+            result_key="summary_verification",
+        )
+
+        save = Task(
+            id=task_id("memory"),
+            description="Save summary to durable memory.",
+            tool_name="save_memory",
+            args={"key": f"summary:{goal_slug}", "value": "{{summary}}"},
+            depends_on=[verify_summary.id],
+            result_key="memory_save",
+        )
+
+        report = Task(
+            id=task_id("report"),
+            description="Generate final report.",
+            tool_name="generate_report",
+            args={
+                "title": f"Agentic Report - {clean_goal}",
+                "content": "{{summary}}",
+                "filename": f"{goal_slug}.md",
+            },
+            depends_on=[save.id],
+            result_key="final_report",
+        )
+
+        return [search, summarize, verify_summary, save, report]
+
+    # -------------------------------------------------------------------------
+    # RISK GATE
+    # -------------------------------------------------------------------------
+
+    def risk_allowed(self, tool: ToolSpec) -> bool:
+        if tool.risk == RiskLevel.DESTRUCTIVE:
+            return self.config.allow_destructive
+        if tool.risk == RiskLevel.HIGH:
+            return self.config.allow_high_risk
+        return True
+
+    # -------------------------------------------------------------------------
+    # TASK SELECTION
+    # -------------------------------------------------------------------------
+
+    def next_ready_task(self, state: AgentState) -> Optional[Task]:
+        done_ids = {task.id for task in state.tasks if task.status == TaskStatus.DONE}
+
+        for task in state.tasks:
+            if task.status != TaskStatus.PENDING:
+                continue
+
+            dependencies_met = all(dep in done_ids for dep in task.depends_on)
+            if dependencies_met:
+                return task
+
+        return None
+
+    # -------------------------------------------------------------------------
+    # TOOL EXECUTION
+    # -------------------------------------------------------------------------
+
+    def execute_task(self, task: Task, state: AgentState) -> ToolResult:
+        tool = self.tools.get(task.tool_name)
+        if not tool:
+            return ToolResult(
+                ok=False,
+                error="unknown_tool",
+                message=f"Unknown tool: {task.tool_name}",
+            )
+
+        if not self.risk_allowed(tool):
+            return ToolResult(
+                ok=False,
+                error="risk_not_allowed",
+                message=f"Tool risk blocked: {tool.risk.value}",
+            )
+
+        args_context = dict(state.context)
+        args_context["goal"] = state.goal
+        args_context["context"] = state.context
+
+        resolved_args = resolve_placeholders(task.args, args_context)
+
+        self.audit.write("tool_call", {
+            "task_id": task.id,
+            "tool_name": task.tool_name,
+            "args": resolved_args,
+            "risk": tool.risk.value,
+        })
+
+        try:
+            result = tool.fn(**resolved_args)
+        except Exception as exc:
+            result = ToolResult(
+                ok=False,
+                error=exc.__class__.__name__,
+                message=str(exc),
+            )
+
+        self.audit.write("tool_result", {
+            "task_id": task.id,
+            "tool_name": task.tool_name,
+            "ok": result.ok,
+            "message": result.message,
+            "error": result.error,
+            "metadata": result.metadata,
+        })
+
+        return result
+
+    # -------------------------------------------------------------------------
+    # VERIFICATION
+    # -------------------------------------------------------------------------
+
+    def verify_task_result(self, task: Task, result: ToolResult) -> Tuple[bool, str]:
+        if not result.ok:
+            return False, result.error or result.message or "tool_failed"
+
+        if task.tool_name == "search_knowledge":
+            if result.data is None:
+                return False, "search_returned_none"
+            return True, "search_verified"
+
+        if task.tool_name == "summarize_text":
+            if not isinstance(result.data, str) or len(result.data.strip()) < 20:
+                return False, "summary_too_short"
+            return True, "summary_verified"
+
+        if task.tool_name == "save_memory":
+            if not isinstance(result.data, dict) or not result.data.get("saved"):
+                return False, "memory_not_saved"
+            return True, "memory_verified"
+
+        if task.tool_name == "generate_report":
+            path = None
+            if isinstance(result.data, dict):
+                path = result.data.get("path")
+            if not path or not Path(path).exists():
+                return False, "report_file_missing"
+            return True, "report_verified"
+
+        if task.tool_name == "verify_context":
+            if not isinstance(result.data, dict) or not result.data.get("verified"):
+                return False, "context_verification_failed"
+            return True, "context_verified"
+
+        return True, "generic_verified"
+
+    # -------------------------------------------------------------------------
+    # REFLECTION AND REPLANNING
+    # -------------------------------------------------------------------------
+
+    def reflect(self, task: Task, result: ToolResult, verified: bool, reason: str, state: AgentState) -> Dict[str, Any]:
+        reflection = {
+            "task_id": task.id,
+            "task_description": task.description,
+            "tool_name": task.tool_name,
+            "verified": verified,
+            "reason": reason,
+            "decision": "continue",
+            "new_tasks": [],
+        }
+
+        if verified:
+            reflection["decision"] = "continue"
+            return reflection
+
+        # Replanning rule 1:
+        # If search returns nothing, retry once with a broader query.
+        if task.tool_name == "search_knowledge" and task.retries < task.max_retries:
+            task.retries += 1
+            task.status = TaskStatus.PENDING
+            task.args["query"] = "agentic AI autonomous planning tools verification memory"
+            reflection["decision"] = "retry_broadened_search"
+            return reflection
+
+        # Replanning rule 2:
+        # If summary failed but search results exist, inject fallback text.
+        if task.tool_name == "summarize_text" and task.retries < task.max_retries:
+            task.retries += 1
+            fallback = (
+                "Agentic AI means a system that pursues a goal through a loop of planning, "
+                "tool use, observation, verification, reflection, and replanning. "
+                "A reliable agent must be bounded by risk controls, audit logs, memory, "
+                "and explicit stopping criteria."
+            )
+            state.context["search_results"] = fallback
+            task.status = TaskStatus.PENDING
+            reflection["decision"] = "retry_with_fallback_text"
+            return reflection
+
+        # Replanning rule 3:
+        # If final report fails, add a simpler report task.
+        if task.tool_name == "generate_report" and task.retries < task.max_retries:
+            task.retries += 1
+            task.args = {
+                "title": "Fallback Agentic Report",
+                "content": "{{summary}}",
+                "filename": "fallback-agentic-report.md",
+            }
+            task.status = TaskStatus.PENDING
+            reflection["decision"] = "retry_simple_report"
+            return reflection
+
+        reflection["decision"] = "fail_task"
+        return reflection
+
+    # -------------------------------------------------------------------------
+    # RUN LOOP
+    # -------------------------------------------------------------------------
+
+    def run(self, goal: str) -> AgentState:
+        state = AgentState(
+            run_id=self.run_id,
+            goal=goal,
+            status=RunStatus.RUNNING,
+            context={
+                "goal": goal,
+                "acceptance_criteria": self.acceptance_criteria(goal),
+            },
+            tasks=self.plan(goal),
+        )
+
+        self.audit.write("run_started", {
+            "run_id": state.run_id,
+            "goal": goal,
+            "acceptance_criteria": state.context["acceptance_criteria"],
+            "tasks": [asdict(task) for task in state.tasks],
+        })
+
+        while state.status == RunStatus.RUNNING:
+            if state.steps_taken >= self.config.max_steps:
+                state.status = RunStatus.ABORTED
+                state.final_answer = "Aborted: step budget exceeded."
+                break
+
+            if state.failures >= self.config.max_failures:
+                state.status = RunStatus.FAILED
+                state.final_answer = "Failed: failure budget exceeded."
+                break
+
+            task = self.next_ready_task(state)
+
+            if not task:
+                all_done = all(task.status == TaskStatus.DONE for task in state.tasks)
+                if all_done:
+                    state.status = RunStatus.DONE
+                    state.final_answer = "Goal satisfied."
+                else:
+                    state.status = RunStatus.FAILED
+                    state.final_answer = "Failed: no runnable tasks remain."
+                break
+
+            state.steps_taken += 1
+            task.status = TaskStatus.RUNNING
+
+            self.audit.write("task_started", {
+                "task_id": task.id,
+                "description": task.description,
+                "tool_name": task.tool_name,
+            })
+
+            result = self.execute_task(task, state)
+            verified, reason = self.verify_task_result(task, result)
+
+            self.audit.write("verification", {
+                "task_id": task.id,
+                "verified": verified,
+                "reason": reason,
+            })
+
+            if verified:
+                task.status = TaskStatus.DONE
+                task.failure_reason = None
+
+                if task.result_key:
+                    state.context[task.result_key] = result.data
+
+                self.audit.write("task_done", {
+                    "task_id": task.id,
+                    "result_key": task.result_key,
+                })
+
+            else:
+                state.failures += 1
+                task.failure_reason = reason
+                task.status = TaskStatus.FAILED
+
+                reflection = self.reflect(task, result, verified, reason, state)
+
+                self.audit.write("reflection", reflection)
+
+                if reflection["decision"].startswith("retry"):
+                    self.audit.write("task_retry_scheduled", {
+                        "task_id": task.id,
+                        "decision": reflection["decision"],
+                        "retries": task.retries,
+                    })
+                    continue
+
+                self.audit.write("task_failed", {
+                    "task_id": task.id,
+                    "reason": reason,
+                })
+
+        final_report = state.context.get("final_report")
+        if isinstance(final_report, dict):
+            state.final_answer = final_report.get("path") or state.final_answer
+
+        self.memory.append_run({
+            "run_id": state.run_id,
+            "goal": goal,
+            "status": state.status.value,
+            "steps_taken": state.steps_taken,
+            "failures": state.failures,
+            "completed_tasks": [
+                task.description for task in state.tasks if task.status == TaskStatus.DONE
+            ],
+            "final_answer": state.final_answer,
+            "ended_at": now_iso(),
+        })
+
+        self.audit.write("run_finished", {
+            "run_id": state.run_id,
+            "status": state.status.value,
+            "steps_taken": state.steps_taken,
+            "failures": state.failures,
+            "final_answer": state.final_answer,
+            "context_keys": list(state.context.keys()),
+        })
+
+        return state
+
+
+# =============================================================================
+# CLI
+# =============================================================================
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bounded Agentic Runtime")
+    parser.add_argument(
+        "--goal",
+        required=True,
+        help='Example: "research and summarize agentic AI"',
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=20,
+        help="Maximum agent loop steps.",
+    )
+    parser.add_argument(
+        "--max-failures",
+        type=int,
+        default=5,
+        help="Maximum verified failures before aborting.",
+    )
+
+    args = parser.parse_args()
+
+    runtime = AgenticRuntime(
+        AgentConfig(
+            max_steps=args.max_steps,
+            max_failures=args.max_failures,
+        )
+    )
+
+    state = runtime.run(args.goal)
+
+    output = {
+        "run_id": state.run_id,
+        "status": state.status.value,
+        "goal": state.goal,
+        "steps_taken": state.steps_taken,
+        "failures": state.failures,
+        "final_answer": state.final_answer,
+        "context_keys": list(state.context.keys()),
+        "run_directory": str(runtime.base_dir),
+    }
+
+    print(compact_json(output))
+
+    if state.status not in {RunStatus.DONE}:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run it:
+
+```bash
+python agentic_runtime.py --goal "research and summarize agentic AI"
+```
+
+---
+
+# 2. TypeScript Version
+
+Save as:
+
+```text
+agentic-runtime.ts
+```
+
+```typescript
+#!/usr/bin/env ts-node
+
+/**
+ * Agentic Runtime - TypeScript Version
+ *
+ * A deeper agentic AI skeleton with:
+ *
+ * - Goal intake
+ * - Planning
+ * - Tool registry
+ * - Tool execution
+ * - Observation
+ * - Verification
+ * - Reflection
+ * - Replanning
+ * - Durable memory
+ * - Audit logging
+ * - Bounded autonomy
+ *
+ * Run with ts-node:
+ *
+ *    npx ts-node agentic-runtime.ts --goal "research and summarize agentic AI"
+ *
+ * Or compile:
+ *
+ *    tsc agentic-runtime.ts --target ES2020 --module commonjs
+ *    node agentic-runtime.js --goal "research and summarize agentic AI"
+ */
+
+import * as fs from "fs";
+import * as path from "path";
+import * as crypto from "crypto";
+
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
+type RiskLevel = "low" | "medium" | "high" | "destructive";
+type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped";
+type RunStatus = "ready" | "running" | "done" | "failed" | "aborted";
+
+interface ToolResult {
+  ok: boolean;
+  data?: any;
+  message?: string;
+  error?: string;
+  metadata?: Record<string, any>;
+}
+
+interface ToolSpec {
+  name: string;
+  description: string;
+  risk: RiskLevel;
+  fn: (args: Record<string, any>) => Promise<ToolResult>;
+}
+
+interface Task {
+  id: string;
+  description: string;
+  toolName: string;
+  args: Record<string, any>;
+  dependsOn: string[];
+  status: TaskStatus;
+  resultKey?: string;
+  retries: number;
+  maxRetries: number;
+  failureReason?: string;
+}
+
+interface AgentConfig {
+  maxSteps: number;
+  maxFailures: number;
+  allowHighRisk: boolean;
+  allowDestructive: boolean;
+  runDir: string;
+}
+
+interface AgentState {
+  runId: string;
+  goal: string;
+  status: RunStatus;
+  stepsTaken: number;
+  failures: number;
+  context: Record<string, any>;
+  tasks: Task[];
+  finalAnswer?: string;
+}
+
+interface Reflection {
+  taskId: string;
+  taskDescription: string;
+  toolName: string;
+  verified: boolean;
+  reason: string;
+  decision: string;
+  newTasks: Task[];
+}
+
+
+// =============================================================================
+// UTILS
+// =============================================================================
+
+function nowIso(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function randomId(prefix: string): string {
+  return `${prefix}-${crypto.randomBytes(4).toString("hex")}`;
+}
+
+function runId(): string {
+  return crypto.randomBytes(6).toString("hex");
+}
+
+function slugify(input: string, maxLen: number = 60): string {
+  const slug = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return slug.slice(0, maxLen) || "untitled";
+}
+
+function ensureDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function writeJson(filePath: string, value: any): void {
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
+}
+
+function readJsonSafe(filePath: string, fallback: any): any {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function sentenceSplit(text: string): string[] {
+  return text
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function resolvePlaceholders(value: any, context: Record<string, any>): any {
+  if (typeof value === "string") {
+    const exact = value.trim().match(/^\{\{([a-zA-Z0-9_]+)\}\}$/);
+    if (exact) {
+      return context[exact[1]];
+    }
+
+    return value.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_match, key) => {
+      const found = context[key];
+      if (found === undefined || found === null) return "";
+      if (typeof found === "string") return found;
+      return JSON.stringify(found);
+    });
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => resolvePlaceholders(item, context));
+  }
+
+  if (value && typeof value === "object") {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = resolvePlaceholders(v, context);
+    }
+    return out;
+  }
+
+  return value;
+}
+
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+
+class AuditLog {
+  private filePath: string;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+    ensureDir(path.dirname(filePath));
+  }
+
+  write(eventType: string, payload: Record<string, any>): void {
+    const record = {
+      ts: nowIso(),
+      eventType,
+      payload,
+    };
+
+    fs.appendFileSync(this.filePath, JSON.stringify(record) + "\n", "utf-8");
+  }
+}
+
+
+// =============================================================================
+// MEMORY STORE
+// =============================================================================
+
+class MemoryStore {
+  private filePath: string;
+  private data: Record<string, any>;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+    ensureDir(path.dirname(filePath));
+
+    this.data = readJsonSafe(filePath, {
+      createdAt: nowIso(),
+      items: {},
+      runs: [],
+    });
+
+    this.save();
+  }
+
+  save(): void {
+    writeJson(this.filePath, this.data);
+  }
+
+  put(key: string, value: any): void {
+    if (!this.data.items) this.data.items = {};
+
+    this.data.items[key] = {
+      updatedAt: nowIso(),
+      value,
+    };
+
+    this.save();
+  }
+
+  get(key: string): any {
+    const item = this.data.items?.[key];
+    return item?.value;
+  }
+
+  appendRun(summary: Record<string, any>): void {
+    if (!this.data.runs) this.data.runs = [];
+    this.data.runs.push(summary);
+    this.save();
+  }
+}
+
+
+// =============================================================================
+// BUILT-IN TOOLS
+// =============================================================================
+
+class BuiltInTools {
+  private memory: MemoryStore;
+  private outputDir: string;
+
+  private localCorpus: Array<{ title: string; text: string }>;
+
+  constructor(memory: MemoryStore, outputDir: string) {
+    this.memory = memory;
+    this.outputDir = outputDir;
+    ensureDir(outputDir);
+
+    this.localCorpus = [
+      {
+        title: "Agentic AI Control Loop",
+        text:
+          "Agentic AI systems operate through a control loop: receive a goal, create a plan, choose tools, execute actions, observe results, verify whether the action worked, reflect on errors, and replan when needed. The agent is not merely generating text; it is coordinating action.",
+      },
+      {
+        title: "Bounded Autonomy",
+        text:
+          "Reliable agents need bounds. They should have step budgets, risk gates, permission checks, audit logs, failure limits, and deterministic fallbacks. Without bounds, autonomy can become unsafe or chaotic.",
+      },
+      {
+        title: "Tool Use",
+        text:
+          "Tools allow an agent to affect the world: search APIs, browsers, file systems, databases, code execution, calendars, email, CRM systems, and deployment platforms. Tool outputs must be verified because tool failure is common.",
+      },
+      {
+        title: "Memory",
+        text:
+          "Agent memory can be short-term context, long-term persistent storage, vector stores, structured databases, event logs, or knowledge graphs. Good agents separate facts, assumptions, preferences, and audit history.",
+      },
+      {
+        title: "Verification",
+        text:
+          "Verification is the difference between agentic theater and operational agency. A coding agent should run tests. A browser agent should inspect the page. A research agent should cite sources. A file agent should confirm files exist.",
+      },
+    ];
+  }
+
+  async searchKnowledge(args: Record<string, any>): Promise<ToolResult> {
+    const query = String(args.query || "");
+    const limit = Number(args.limit || 5);
+
+    if (!query.trim()) {
+      return {
+        ok: false,
+        error: "query_missing",
+        message: "No query provided.",
+      };
+    }
+
+    const terms = new Set(
+      query
+        .toLowerCase()
+        .match(/[a-zA-Z0-9]+/g) || []
+    );
+
+    const scored: Array<{ score: number; item: { title: string; text: string } }> = [];
+
+    for (const item of this.localCorpus) {
+      const haystack = `${item.title} ${item.text}`.toLowerCase();
+      let score = 0;
+
+      for (const term of terms) {
+        if (haystack.includes(term)) score += 1;
+      }
+
+      if (score > 0) scored.push({ score, item });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const results = scored.slice(0, limit).map((x) => x.item);
+
+    return {
+      ok: true,
+      data: results,
+      message: `Found ${results.length} local knowledge results.`,
+      metadata: {
+        query,
+        count: results.length,
+      },
+    };
+  }
+
+  async summarizeText(args: Record<string, any>): Promise<ToolResult> {
+    const raw = args.text;
+    const maxSentences = Number(args.maxSentences || 5);
+
+    let joined = "";
+
+    if (Array.isArray(raw)) {
+      joined = raw
+        .map((item) => {
+          if (!item || typeof item !== "object") return "";
+          return `${item.title || "Untitled"}: ${item.text || ""}`;
+        })
+        .join("\n");
+    } else {
+      joined = String(raw || "");
+    }
+
+    joined = joined.trim();
+
+    if (joined.length < 20) {
+      return {
+        ok: false,
+        error: "insufficient_text",
+        message: "Not enough text to summarize.",
+      };
+    }
+
+    const sentences = sentenceSplit(joined);
+    const summary = sentences.slice(0, maxSentences).join(" ");
+
+    return {
+      ok: true,
+      data: summary,
+      message: "Summary generated.",
+      metadata: {
+        sentenceCount: Math.min(sentences.length, maxSentences),
+        sourceChars: joined.length,
+      },
+    };
+  }
+
+  async saveMemory(args: Record<string, any>): Promise<ToolResult> {
+    const key = String(args.key || "");
+    const value = args.value;
+
+    if (!key) {
+      return {
+        ok: false,
+        error: "missing_key",
+        message: "Memory key missing.",
+      };
+    }
+
+    if (value === undefined || value === null || value === "") {
+      return {
+        ok: false,
+        error: "missing_value",
+        message: "Memory value missing.",
+      };
+    }
+
+    this.memory.put(key, value);
+
+    return {
+      ok: true,
+      data: {
+        key,
+        saved: true,
+      },
+      message: `Saved memory under key '${key}'.`,
+    };
+  }
+
+  async generateReport(args: Record<string, any>): Promise<ToolResult> {
+    const title = String(args.title || "");
+    const content = args.content;
+    const filename = String(args.filename || `${slugify(title)}.md`);
+
+    if (!title) {
+      return {
+        ok: false,
+        error: "missing_title",
+        message: "Report title missing.",
+      };
+    }
+
+    if (!content) {
+      return {
+        ok: false,
+        error: "missing_content",
+        message: "Report content missing.",
+      };
+    }
+
+    const filePath = path.join(this.outputDir, filename);
+
+    const report = `# ${title}
+
+Generated: ${nowIso()}
+
+## Summary
+
+${String(content)}
+
+## Agentic Notes
+
+This report was generated through a bounded agent loop:
+
+1. Plan
+2. Tool execution
+3. Observation
+4. Verification
+5. Reflection
+6. Memory write
+7. Report generation
+`;
+
+    fs.writeFileSync(filePath, report, "utf-8");
+
+    return {
+      ok: true,
+      data: {
+        path: filePath,
+        content: report,
+      },
+      message: `Report written to ${filePath}`,
+      metadata: {
+        filename,
+      },
+    };
+  }
+
+  async verifyContext(args: Record<string, any>): Promise<ToolResult> {
+    const requiredKeys: string[] = Array.isArray(args.requiredKeys)
+      ? args.requiredKeys
+      : [];
+
+    const context = args.context || {};
+
+    const missing = requiredKeys.filter((key) => !context[key]);
+
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error: "missing_context_keys",
+        message: `Missing required context keys: ${missing.join(", ")}`,
+        data: {
+          missing,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        verified: true,
+        requiredKeys,
+      },
+      message: "Required context keys verified.",
+    };
+  }
+}
+
+
+// =============================================================================
+// AGENTIC RUNTIME
+// =============================================================================
+
+class AgenticRuntime {
+  private config: AgentConfig;
+  private runIdValue: string;
+  private baseDir: string;
+  private outputDir: string;
+  private audit: AuditLog;
+  private memory: MemoryStore;
+  private tools: Record<string, ToolSpec>;
+
+  constructor(config?: Partial<AgentConfig>) {
+    this.config = {
+      maxSteps: config?.maxSteps ?? 20,
+      maxFailures: config?.maxFailures ?? 5,
+      allowHighRisk: config?.allowHighRisk ?? false,
+      allowDestructive: config?.allowDestructive ?? false,
+      runDir: config?.runDir ?? "agent_runs_ts",
+    };
+
+    this.runIdValue = runId();
+    this.baseDir = path.join(this.config.runDir, this.runIdValue);
+    this.outputDir = path.join(this.baseDir, "outputs");
+
+    ensureDir(this.baseDir);
+    ensureDir(this.outputDir);
+
+    this.audit = new AuditLog(path.join(this.baseDir, "audit.jsonl"));
+    this.memory = new MemoryStore(path.join(this.baseDir, "memory.json"));
+
+    const builtins = new BuiltInTools(this.memory, this.outputDir);
+
+    this.tools = {
+      search_knowledge: {
+        name: "search_knowledge",
+        description: "Search local knowledge corpus.",
+        risk: "low",
+        fn: (args) => builtins.searchKnowledge(args),
+      },
+      summarize_text: {
+        name: "summarize_text",
+        description: "Summarize provided text or search results.",
+        risk: "low",
+        fn: (args) => builtins.summarizeText(args),
+      },
+      save_memory: {
+        name: "save_memory",
+        description: "Persist information in local JSON memory.",
+        risk: "low",
+        fn: (args) => builtins.saveMemory(args),
+      },
+      generate_report: {
+        name: "generate_report",
+        description: "Create a markdown report file.",
+        risk: "low",
+        fn: (args) => builtins.generateReport(args),
+      },
+      verify_context: {
+        name: "verify_context",
+        description: "Verify that required context keys exist.",
+        risk: "low",
+        fn: (args) => builtins.verifyContext(args),
+      },
+    };
+  }
+
+  private acceptanceCriteria(goal: string): string[] {
+    return [
+      "A plan must be created from the user goal.",
+      "Every action must be executed through a registered tool.",
+      "Each tool result must be observed and verified.",
+      "Failures must trigger bounded retry or replanning.",
+      "Important output must be stored in memory.",
+      "A final report must be generated.",
+      "The run must stop when success, failure budget, or step budget is reached.",
+      `The final output must be relevant to the goal: ${goal}`,
+    ];
+  }
+
+  private createTask(input: {
+    idPrefix: string;
+    description: string;
+    toolName: string;
+    args: Record<string, any>;
+    dependsOn?: string[];
+    resultKey?: string;
+    maxRetries?: number;
+  }): Task {
+    return {
+      id: randomId(input.idPrefix),
+      description: input.description,
+      toolName: input.toolName,
+      args: input.args,
+      dependsOn: input.dependsOn || [],
+      status: "pending",
+      resultKey: input.resultKey,
+      retries: 0,
+      maxRetries: input.maxRetries ?? 1,
+    };
+  }
+
+  private plan(goal: string): Task[] {
+    const cleanGoal = goal.trim();
+    const goalSlug = slugify(cleanGoal);
+
+    const search = this.createTask({
+      idPrefix: "search",
+      description: `Gather knowledge for goal: ${cleanGoal}`,
+      toolName: "search_knowledge",
+      args: {
+        query: "{{goal}}",
+        limit: 5,
+      },
+      resultKey: "search_results",
+    });
+
+    const summarize = this.createTask({
+      idPrefix: "summarize",
+      description: "Condense gathered information into a usable summary.",
+      toolName: "summarize_text",
+      args: {
+        text: "{{search_results}}",
+        maxSentences: 5,
+      },
+      dependsOn: [search.id],
+      resultKey: "summary",
+    });
+
+    const verifySummary = this.createTask({
+      idPrefix: "verify",
+      description: "Verify that summary exists before saving/reporting.",
+      toolName: "verify_context",
+      args: {
+        requiredKeys: ["summary"],
+        context: "{{context}}",
+      },
+      dependsOn: [summarize.id],
+      resultKey: "summary_verification",
+    });
+
+    const save = this.createTask({
+      idPrefix: "memory",
+      description: "Save summary to durable memory.",
+      toolName: "save_memory",
+      args: {
+        key: `summary:${goalSlug}`,
+        value: "{{summary}}",
+      },
+      dependsOn: [verifySummary.id],
+      resultKey: "memory_save",
+    });
+
+    const report = this.createTask({
+      idPrefix: "report",
+      description: "Generate final report.",
+      toolName: "generate_report",
+      args: {
+        title: `Agentic Report - ${cleanGoal}`,
+        content: "{{summary}}",
+        filename: `${goalSlug}.md`,
+      },
+      dependsOn: [save.id],
+      resultKey: "final_report",
+    });
+
+    return [search, summarize, verifySummary, save, report];
+  }
+
+  private riskAllowed(tool: ToolSpec): boolean {
+    if (tool.risk === "destructive") return this.config.allowDestructive;
+    if (tool.risk === "high") return this.config.allowHighRisk;
+    return true;
+  }
+
+  private nextReadyTask(state: AgentState): Task | undefined {
+    const doneIds = new Set(
+      state.tasks.filter((task) => task.status === "done").map((task) => task.id)
+    );
+
+    return state.tasks.find((task) => {
+      if (task.status !== "pending") return false;
+      return task.dependsOn.every((dep) => doneIds.has(dep));
+    });
+  }
+
+  private async executeTask(task: Task, state: AgentState): Promise<ToolResult> {
+    const tool = this.tools[task.toolName];
+
+    if (!tool) {
+      return {
+        ok: false,
+        error: "unknown_tool",
+        message: `Unknown tool: ${task.toolName}`,
+      };
+    }
+
+    if (!this.riskAllowed(tool)) {
+      return {
+        ok: false,
+        error: "risk_not_allowed",
+        message: `Tool risk blocked: ${tool.risk}`,
+      };
+    }
+
+    const argsContext = {
+      ...state.context,
+      goal: state.goal,
+      context: state.context,
+    };
+
+    const resolvedArgs = resolvePlaceholders(task.args, argsContext);
+
+    this.audit.write("tool_call", {
+      taskId: task.id,
+      toolName: task.toolName,
+      args: resolvedArgs,
+      risk: tool.risk,
+    });
+
+    try {
+      const result = await tool.fn(resolvedArgs);
+
+      this.audit.write("tool_result", {
+        taskId: task.id,
+        toolName: task.toolName,
+        ok: result.ok,
+        message: result.message,
+        error: result.error,
+        metadata: result.metadata,
+      });
+
+      return result;
+    } catch (err: any) {
+      const result: ToolResult = {
+        ok: false,
+        error: err?.name || "Exception",
+        message: err?.message || String(err),
+      };
+
+      this.audit.write("tool_result", {
+        taskId: task.id,
+        toolName: task.toolName,
+        ok: false,
+        message: result.message,
+        error: result.error,
+      });
+
+      return result;
+    }
+  }
+
+  private verifyTaskResult(task: Task, result: ToolResult): [boolean, string] {
+    if (!result.ok) {
+      return [false, result.error || result.message || "tool_failed"];
+    }
+
+    if (task.toolName === "search_knowledge") {
+      if (result.data === undefined || result.data === null) {
+        return [false, "search_returned_none"];
+      }
+      return [true, "search_verified"];
+    }
+
+    if (task.toolName === "summarize_text") {
+      if (typeof result.data !== "string" || result.data.trim().length < 20) {
+        return [false, "summary_too_short"];
+      }
+      return [true, "summary_verified"];
+    }
+
+    if (task.toolName === "save_memory") {
+      if (!result.data || result.data.saved !== true) {
+        return [false, "memory_not_saved"];
+      }
+      return [true, "memory_verified"];
+    }
+
+    if (task.toolName === "generate_report") {
+      const filePath = result.data?.path;
+      if (!filePath || !fs.existsSync(filePath)) {
+        return [false, "report_file_missing"];
+      }
+      return [true, "report_verified"];
+    }
+
+    if (task.toolName === "verify_context") {
+      if (!result.data || result.data.verified !== true) {
+        return [false, "context_verification_failed"];
+      }
+      return [true, "context_verified"];
+    }
+
+    return [true, "generic_verified"];
+  }
+
+  private reflect(
+    task: Task,
+    result: ToolResult,
+    verified: boolean,
+    reason: string,
+    state: AgentState
+  ): Reflection {
+    const reflection: Reflection = {
+      taskId: task.id,
+      taskDescription: task.description,
+      toolName: task.toolName,
+      verified,
+      reason,
+      decision: "continue",
+      newTasks: [],
+    };
+
+    if (verified) {
+      reflection.decision = "continue";
+      return reflection;
+    }
+
+    if (task.toolName === "search_knowledge" && task.retries < task.maxRetries) {
+      task.retries += 1;
+      task.status = "pending";
+      task.args.query = "agentic AI autonomous planning tools verification memory";
+      reflection.decision = "retry_broadened_search";
+      return reflection;
+    }
+
+    if (task.toolName === "summarize_text" && task.retries < task.maxRetries) {
+      task.retries += 1;
+      state.context.search_results =
+        "Agentic AI means a system that pursues a goal through a loop of planning, tool use, observation, verification, reflection, and replanning. A reliable agent must be bounded by risk controls, audit logs, memory, and explicit stopping criteria.";
+      task.status = "pending";
+      reflection.decision = "retry_with_fallback_text";
+      return reflection;
+    }
+
+    if (task.toolName === "generate_report" && task.retries < task.maxRetries) {
+      task.retries += 1;
+      task.args = {
+        title: "Fallback Agentic Report",
+        content: "{{summary}}",
+        filename: "fallback-agentic-report.md",
+      };
+      task.status = "pending";
+      reflection.decision = "retry_simple_report";
+      return reflection;
+    }
+
+    reflection.decision = "fail_task";
+    return reflection;
+  }
+
+  async run(goal: string): Promise<AgentState> {
+    const state: AgentState = {
+      runId: this.runIdValue,
+      goal,
+      status: "running",
+      stepsTaken: 0,
+      failures: 0,
+      context: {
+        goal,
+        acceptance_criteria: this.acceptanceCriteria(goal),
+      },
+      tasks: this.plan(goal),
+    };
+
+    this.audit.write("run_started", {
+      runId: state.runId,
+      goal,
+      acceptanceCriteria: state.context.acceptance_criteria,
+      tasks: state.tasks,
+    });
+
+    while (state.status === "running") {
+      if (state.stepsTaken >= this.config.maxSteps) {
+        state.status = "aborted";
+        state.finalAnswer = "Aborted: step budget exceeded.";
+        break;
+      }
+
+      if (state.failures >= this.config.maxFailures) {
+        state.status = "failed";
+        state.finalAnswer = "Failed: failure budget exceeded.";
+        break;
+      }
+
+      const task = this.nextReadyTask(state);
+
+      if (!task) {
+        const allDone = state.tasks.every((t) => t.status === "done");
+
+        if (allDone) {
+          state.status = "done";
+          state.finalAnswer = "Goal satisfied.";
+        } else {
+          state.status = "failed";
+          state.finalAnswer = "Failed: no runnable tasks remain.";
+        }
+
+        break;
+      }
+
+      state.stepsTaken += 1;
+      task.status = "running";
+
+      this.audit.write("task_started", {
+        taskId: task.id,
+        description: task.description,
+        toolName: task.toolName,
+      });
+
+      const result = await this.executeTask(task, state);
+      const [verified, reason] = this.verifyTaskResult(task, result);
+
+      this.audit.write("verification", {
+        taskId: task.id,
+        verified,
+        reason,
+      });
+
+      if (verified) {
+        task.status = "done";
+        task.failureReason = undefined;
+
+        if (task.resultKey) {
+          state.context[task.resultKey] = result.data;
+        }
+
+        this.audit.write("task_done", {
+          taskId: task.id,
+          resultKey: task.resultKey,
+        });
+      } else {
+        state.failures += 1;
+        task.failureReason = reason;
+        task.status = "failed";
+
+        const reflection = this.reflect(task, result, verified, reason, state);
+
+        this.audit.write("reflection", reflection);
+
+        if (reflection.decision.startsWith("retry")) {
+          this.audit.write("task_retry_scheduled", {
+            taskId: task.id,
+            decision: reflection.decision,
+            retries: task.retries,
+          });
+          continue;
+        }
+
+        this.audit.write("task_failed", {
+          taskId: task.id,
+          reason,
+        });
+      }
+    }
+
+    const finalReport = state.context.final_report;
+
+    if (finalReport && typeof finalReport === "object" && finalReport.path) {
+      state.finalAnswer = finalReport.path;
+    }
+
+    this.memory.appendRun({
+      runId: state.runId,
+      goal,
+      status: state.status,
+      stepsTaken: state.stepsTaken,
+      failures: state.failures,
+      completedTasks: state.tasks
+        .filter((task) => task.status === "done")
+        .map((task) => task.description),
+      finalAnswer: state.finalAnswer,
+      endedAt: nowIso(),
+    });
+
+    this.audit.write("run_finished", {
+      runId: state.runId,
+      status: state.status,
+      stepsTaken: state.stepsTaken,
+      failures: state.failures,
+      finalAnswer: state.finalAnswer,
+      contextKeys: Object.keys(state.context),
+    });
+
+    return state;
+  }
+
+  getRunDirectory(): string {
+    return this.baseDir;
+  }
+}
+
+
+// =============================================================================
+// CLI
+// =============================================================================
+
+function parseCliArgs(argv: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+
+  for (let i = 0; i < argv.length; i++) {
+    const current = argv[i];
+
+    if (current.startsWith("--")) {
+      const key = current.slice(2);
+      const next = argv[i + 1];
+
+      if (!next || next.startsWith("--")) {
+        out[key] = "true";
+      } else {
+        out[key] = next;
+        i += 1;
+      }
+    }
+  }
+
+  return out;
+}
+
+async function main(): Promise<void> {
+  const args = parseCliArgs(process.argv.slice(2));
+
+  const goal = args.goal;
+
+  if (!goal) {
+    console.error("Missing --goal");
+    console.error('Example: npx ts-node agentic-runtime.ts --goal "research and summarize agentic AI"');
+    process.exit(1);
+  }
+
+  const runtime = new AgenticRuntime({
+    maxSteps: Number(args["max-steps"] || 20),
+    maxFailures: Number(args["max-failures"] || 5),
+  });
+
+  const state = await runtime.run(goal);
+
+  const output = {
+    runId: state.runId,
+    status: state.status,
+    goal: state.goal,
+    stepsTaken: state.stepsTaken,
+    failures: state.failures,
+    finalAnswer: state.finalAnswer,
+    contextKeys: Object.keys(state.context),
+    runDirectory: runtime.getRunDirectory(),
+  };
+
+  console.log(JSON.stringify(output, null, 2));
+
+  if (state.status !== "done") {
+    process.exit(1);
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+Run it:
+
+```bash
+npx ts-node agentic-runtime.ts --goal "research and summarize agentic AI"
+```
+
+Or compile:
+
+```bash
+tsc agentic-runtime.ts --target ES2020 --module commonjs
+node agentic-runtime.js --goal "research and summarize agentic AI"
+```
+
+---
+
+# Real or Bullshit?
+
+## Real
+
+This is real **agentic architecture**:
+
+```text
+GOAL
+→ ACCEPTANCE CRITERIA
+→ PLAN
+→ TOOL CALL
+→ OBSERVE
+→ VERIFY
+→ REFLECT
+→ RETRY / REPLAN
+→ MEMORY
+→ REPORT
+→ STOP CONDITION
+```
+
+## Bullshit
+
+It becomes bullshit if someone claims this alone is a “fully autonomous AI worker.”
+
+Right now it has **agent bones** but not the full muscle. To become serious, wire in:
+
+```text
+LLM planner
+real web search
+browser automation
+filesystem patching
+database tools
+email/calendar/CRM tools
+test runners
+Playwright validation
+deployment tools
+policy/permission system
+human approval gate for risky actions
+```
+
+The key truth:
+
+```text
+Agentic AI is not “chat with confidence.”
+
+Agentic AI is:
+controlled action + verified results + bounded replanning.
+```

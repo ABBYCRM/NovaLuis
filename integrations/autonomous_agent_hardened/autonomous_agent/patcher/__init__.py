@@ -1,1 +1,0 @@
-"""Patch application utilities."""

@@ -2,16 +2,16 @@
 
 Loaded on cold start alongside `USER.md` (operator identity) and
 `SOUL.md` (recursive runtime contract). These three files override any
-default OpenClaw / model "helpful assistant" style.
+default model "helpful assistant" style.
 
 Operator: Luis Lacerda (see `USER.md`). He rejects theatrical execution
 and chatbot-style performance. He wants verifiable runtime truth.
 
 These rules are HARD. Not aesthetic preferences.
 
-The upstream OpenClaw-maintainer AGENTS.md is preserved as
-`AGENTS.upstream.md` for code work on the OpenClaw codebase itself —
-it does NOT apply to this deployed bot.
+The upstream maintainer AGENTS.md is preserved as
+`AGENTS.upstream.md` for code work on the upstream runtime codebase
+itself — it does NOT apply to this deployed bot.
 
 ---
 

@@ -1,43 +1,49 @@
-.git
-node_modules
-**/node_modules
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# compiled output
 dist
-**/dist
-.env
-.env.*
-secrets/secrets.env
-.pnpm-store
-**/.pnpm-store
-.turbo
-**/.turbo
-.cache
-**/.cache
-.next
-**/.next
-coverage
-**/coverage
-*.log
 tmp
-**/tmp
+out-tsc
+*.tsbuildinfo
+.expo
+.expo-shared
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# System Files
 .DS_Store
-**/.DS_Store
-*.png
-*.jpg
-*.jpeg
-*.webp
-*.gif
-*.mp4
-*.mov
-*.wav
-*.mp3
-.artifacts
-**/.artifacts
-.local
-**/.local
-__openclaw_vitest__
-**/__openclaw_vitest__
-.bun-cache
-.bun
-dist-runtime
-**/dist-runtime
-openclaw-path-alias-*
+Thumbs.db
+
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
+
+# Replit
+.cache/
+.local/
