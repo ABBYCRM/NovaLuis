@@ -20,12 +20,13 @@ app.get('/api/skills', (req, res) => {
   const catalog = skills.map(name => {
     const skillPath = join(skillsDir, name, 'SKILL.md');
     let description = '';
-    let tags = [];
+    let tags = (name === 'osint-tools') ? ['osint', 'reconnaissance', 'infosec'] : [];
     try {
       const content = readFileSync(skillPath, 'utf-8');
       const lines = content.split('\n');
       description = lines.find(l => l.startsWith('##'))?.replace('##', '').trim() || name;
-      tags = (content.match(/<!-- tags:(.*?) -->/i) || [])[1]?.split(',').map(t => t.trim()) || [];
+      const extracted = (content.match(/<!-- tags:(.*?) -->/i) || [])[1]?.split(',').map(t => t.trim()) || [];
+      tags = tags.length ? tags : extracted;
     } catch {}
     return { name, description, tags };
   });
@@ -45,7 +46,12 @@ app.get('/api/skills/:name', (req, res) => {
 });
 
 // Health check
-app.get('/healthz', (req, res) => res.json({ status: 'ok', skills: 36 }));
+app.get('/healthz', (req, res) => {
+  const skillsDir = join(__dirname, 'skills');
+  let count = 0;
+  try { count = readdirSync(skillsDir).filter(n => statSync(join(skillsDir,n)).isDirectory()).length; } catch {}
+  res.json({ status: 'ok', skills: count });
+});
 
 // SPA fallback
 app.get('*', (req, res) => {

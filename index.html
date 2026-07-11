@@ -11,6 +11,12 @@
     header h1 { font-size: 28px; font-weight: 700; color: #58a6ff; }
     header p { color: #8b949e; margin-top: 6px; font-size: 15px; }
     .badge { display: inline-block; background: #238636; color: #fff; border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-top: 8px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 28px; flex-wrap: wrap; }
+    .tab { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 8px 18px; font-size: 13px; color: #8b949e; cursor: pointer; transition: all 0.15s; }
+    .tab:hover { border-color: #58a6ff; color: #e6edf3; }
+    .tab.active { background: #238636; border-color: #238636; color: #fff; font-weight: 600; }
+    .tab.osint { border-color: #f0883e; color: #f0883e; }
+    .tab.osint.active { background: #9e6a03; border-color: #f0883e; }
     main { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
     .stats { display: flex; gap: 24px; margin-bottom: 40px; }
     .stat { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px 28px; }
@@ -36,8 +42,15 @@
     <span class="badge" id="skill-count">Loading…</span>
   </header>
   <main>
+    <div class="tabs">
+      <button class="tab active" onclick="setTab('all')">All Skills</button>
+      <button class="tab osint" onclick="setTab('osint')">🕵️ OSINT Tools</button>
+      <button class="tab" onclick="setTab('composio')">⚡ Composio (800+)</button>
+      <button class="tab" onclick="setTab('voltagent')">🔌 VoltAgent (1000+)</button>
+    </div>
     <div class="stats">
       <div class="stat"><div class="num" id="total-skills">—</div><div class="label">Total Skills</div></div>
+      <div class="stat"><div class="num" id="total-osint">7</div><div class="label">OSINT Tools</div></div>
       <div class="stat"><div class="num">v6.1.1</div><div class="label">Version</div></div>
       <div class="stat"><div class="num">Claude Code</div><div class="label">Platform</div></div>
     </div>
@@ -50,14 +63,55 @@
     </div>
   </main>
   <script>
+    let allSkills = [];
+    let activeTab = 'all';
+
     async function loadSkills() {
       const res = await fetch('/api/skills');
       const data = await res.json();
+      allSkills = data.skills;
       document.getElementById('skill-count').textContent = `${data.count} Skills`;
       document.getElementById('total-skills').textContent = data.count;
+      renderSkills();
+    }
+
+    function setTab(tab) {
+      activeTab = tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab[onclick="setTab('${tab}')"]`).classList.add('active');
+      renderSkills();
+    }
+
+    function renderSkills() {
       const grid = document.getElementById('skills-grid');
       grid.innerHTML = '';
-      data.skills.forEach(skill => {
+      let skills = allSkills;
+      if (activeTab === 'osint') {
+        skills = allSkills.filter(s => s.tags && s.tags.includes('osint'));
+        if (!skills.length) {
+          skills = allSkills.filter(s => s.name.includes('osint'));
+        }
+        if (!skills.length) {
+          skills = [
+            { name: 'osint-tools', description: 'OSINT tools collection: theHarvester, SpiderFoot, Amass, Sherlock, WhatsMyName, Sublist3r, OSINT-Framework' }
+          ];
+        }
+        document.getElementById('total-osint').textContent = skills.length;
+      } else if (activeTab === 'composio') {
+        skills = allSkills.filter(s => s.name.includes('composio') || s.tags && s.tags.includes('composio'));
+        if (!skills.length) {
+          grid.innerHTML = '<div class="loading">Composio skills (800+) — use <code>skills/composiohq-awesome-claude-skills-catalog.md</code></div>';
+          return;
+        }
+      } else if (activeTab === 'voltagent') {
+        skills = allSkills.filter(s => s.name.includes('voltagent'));
+        if (!skills.length) {
+          grid.innerHTML = '<div class="loading">VoltAgent skills (1000+) — use <code>skills/voltagent-awesome-agent-skills-catalog.md</code></div>';
+          return;
+        }
+      }
+      if (!skills.length) { grid.innerHTML = '<div class="loading">No skills in this category</div>'; return; }
+      skills.forEach(skill => {
         const card = document.createElement('div');
         card.className = 'card';
         card.innerHTML = `<h3>${skill.name}</h3><p>${skill.description || 'No description'}</p>
@@ -66,6 +120,7 @@
         grid.appendChild(card);
       });
     }
+
     async function loadDetail(name, card) {
       const res = await fetch(`/api/skills/${name}`);
       const data = await res.json();
