@@ -1,40 +1,57 @@
-FROM node:24-slim AS builder
+# Nova-Aura-Tools — Production Dockerfile
+# Multi-stage: builds API server, serves React app + skills catalog
 
-RUN npm install -g pnpm@9
+# ── Builder stage ──────────────────────────────────────────────────────────
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json tsconfig.json ./
-COPY lib ./lib
-COPY artifacts/api-server ./artifacts/api-server
-COPY scripts ./scripts
+# Install pnpm v9 to match lockfileVersion 9.0
+RUN npm install -g pnpm@9
 
+# Copy lockfile + package manifests only (cache layer)
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json ./
+
+# Install all workspace deps
 RUN pnpm install --frozen-lockfile
 
+# Copy remaining source
+COPY lib/ ./lib/
+COPY artifacts/api-server/ ./artifacts/api-server/
+COPY artifacts/nova/ ./artifacts/nova/
+COPY scripts/ ./scripts/
+
+# Build the API server
 RUN pnpm --filter @workspace/api-server run build
 
-# Deploy the scripts package with only its production deps (pg).
-# --legacy is required for pnpm v10 to deploy without inject-workspace-packages.
-RUN pnpm --filter @workspace/scripts deploy --legacy --prod /app/scripts-deploy
-
-FROM node:24-slim AS runtime
+# ── Runtime stage ───────────────────────────────────────────────────────────
+FROM node:22-slim AS runtime
 
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV PORT=8080
 ENV NOVA_STATIC_DIR=/app/nova-static
 
+# Copy built API server
 COPY --from=builder /app/artifacts/api-server/dist ./dist
-# Worker: lean production bundle (pg node_modules + all .mjs scripts)
-COPY --from=builder /app/scripts-deploy ./scripts
-COPY artifacts/nova/index.html ./nova-static/index.html
-COPY artifacts/nova/skills.html ./nova-static/skills.html
-COPY artifacts/nova/public ./nova-static
-COPY skills ./skills
-COPY SOUL.md AGENTS.md DIRECTIVE.md IDENTITY.md USER.md HEARTBEAT.md TOOLS.md TASKS.md GOVERNANCE.json ./
+
+# Copy static UI + skills catalog
+COPY --from=builder /app/artifacts/nova/index.html ./nova-static/index.html
+COPY --from=builder /app/artifacts/nova/skills.html ./nova-static/skills.html
+COPY --from=builder /app/artifacts/nova/public ./nova-static/
+COPY --from=builder /app/skills ./skills
+
+# Copy identity files
+COPY SOUL.md AGENTS.md DIRECTIVE.md IDENTITY.md USER.md \
+      HEARTBEAT.md TOOLS.md TASKS.md GOVERNANCE.json ./
+
+# Copy scripts (work-tree worker)
+COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 8080
 
-# Run the work-tree worker in the background, then exec the API server as PID 1.
-# Both share DATABASE_URL and BITDEER_API_KEY injected by Render at runtime.
-CMD ["/bin/sh", "-c", "node scripts/work-tree-worker.mjs & exec node --enable-source-maps ./dist/index.mjs"]
+# Start: background worker + API server
+CMD ["/bin/sh", "-c", \
+  "node scripts/work-tree-worker.mjs & exec node --enable-source-maps ./dist/index.mjs"]
