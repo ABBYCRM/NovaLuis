@@ -14,7 +14,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY package.json ./
 
 # Install all workspace deps
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # Copy remaining source
 COPY lib/ ./lib/
