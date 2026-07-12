@@ -15,10 +15,12 @@ COPY package.json ./
 COPY .npmrc ./
 
 # Install all workspace deps (devDependencies included for build).
-# --shamefully-hoist: makes all packages accessible from root node_modules/
-#   so Node.js can resolve them when running build scripts from subdirectories.
-# No NODE_ENV=production in builder — devDeps (esbuild) are needed here.
-RUN pnpm install --shamefully-hoist
+# --shamefully-hoist: hoists all packages to root node_modules/ so Node.js
+#   can resolve them regardless of cwd.
+# NODE_PATH: fallback path for packages that might be in pnpm's virtual store.
+RUN pnpm install --shamefully-hoist && \
+    echo "=== esbuild check ===" && \
+    ls /app/node_modules/esbuild/package.json 2>/dev/null && echo "ESBUILD OK" || echo "ESBUILD MISSING"
 
 # Copy remaining source
 COPY lib/ ./lib/
@@ -28,8 +30,9 @@ COPY scripts/ ./scripts/
 COPY skills/ ./skills/
 
 # Build the api-server.
-# --shamefully-hoist makes esbuild available at /app/node_modules/esbuild/,
-# which Node.js finds via standard module resolution.
+# If --shamefully-hoist worked, esbuild is at /app/node_modules/esbuild/
+# If it didn't, NODE_PATH points to the pnpm virtual store.
+ENV NODE_PATH=/app/node_modules/.pnpm/esbuild@0.27.3/node_modules:/app/node_modules
 RUN node ./artifacts/api-server/build.mjs
 
 # ── Runtime stage ───────────────────────────────────────────────────────────
