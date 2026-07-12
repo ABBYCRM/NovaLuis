@@ -6,6 +6,10 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 
+ENV PORT=8080
+ENV BASE_PATH=/
+ENV NODE_ENV=production
+
 # Install pnpm v9 to match lockfileVersion 9.0
 RUN npm install -g pnpm@9
 
@@ -21,6 +25,8 @@ COPY lib/ ./lib/
 COPY artifacts/api-server/ ./artifacts/api-server/
 COPY artifacts/nova/ ./artifacts/nova/
 COPY scripts/ ./scripts/
+COPY skills/ ./skills/
+COPY skills-catalog/ ./skills-catalog/
 
 # Build the API server
 RUN pnpm --filter @workspace/api-server run build
