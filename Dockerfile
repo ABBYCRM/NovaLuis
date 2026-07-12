@@ -23,7 +23,7 @@ COPY package.json ./
 # pnpm install returns 1 if the lockfile is stale (new dirs added after lockfile
 # was generated). Using --prefer-frozen-lockfile avoids the exit-1 issue by
 # treating missing optional deps as non-fatal.
-RUN NODE_OPTIONS="--max-old-space-size=384" pnpm install --ignore-scripts --prefer-frozen-lockfile
+RUN NODE_OPTIONS="--max-old-space-size=384" pnpm install --ignore-scripts --prefer-frozen-lockfile --reporter=silent
 
 # Copy remaining source
 COPY lib/ ./lib/
