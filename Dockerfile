@@ -13,8 +13,9 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY package.json ./
 
-# Install all workspace deps (devDependencies included for build)
-RUN npm install -g pnpm@9 && pnpm install
+# Install all workspace deps (devDependencies included for build).
+# --reporter=silent: default reporter exits 1 in Render's Docker env (confirmed).
+RUN npm install -g pnpm@9 && pnpm install --reporter=silent
 
 # Copy remaining source
 COPY lib/ ./lib/
