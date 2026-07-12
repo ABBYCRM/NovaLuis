@@ -6,24 +6,15 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 
-ENV PORT=8080
-ENV BASE_PATH=/
-ENV NODE_ENV=production
-
-# Install pnpm v9 to match lockfileVersion 9.0
-RUN npm install -g pnpm@9
+# NOTE: Do NOT set NODE_ENV=production here — devDependencies (esbuild, etc.)
+# are needed for building. NODE_ENV is set only in the runtime stage.
 
 # Copy lockfile + package manifests only (cache layer)
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY package.json ./
 
-# Install all workspace deps.
-# --ignore-scripts: skip postinstall/prepare hooks (no native compilation needed).
-# NODE_OPTIONS: cap V8 heap so linking doesn't OOM inside Docker on 512 MB.
-# pnpm install returns 1 if the lockfile is stale (new dirs added after lockfile
-# was generated). Using --prefer-frozen-lockfile avoids the exit-1 issue by
-# treating missing optional deps as non-fatal.
-RUN NODE_OPTIONS="--max-old-space-size=384" pnpm install --ignore-scripts --prefer-frozen-lockfile
+# Install all workspace deps (devDependencies included for build)
+RUN npm install -g pnpm@9 && pnpm install
 
 # Copy remaining source
 COPY lib/ ./lib/
@@ -32,7 +23,7 @@ COPY artifacts/nova/ ./artifacts/nova/
 COPY scripts/ ./scripts/
 COPY skills/ ./skills/
 
-# Build the API server
+# Build only the api-server (devDependencies available: esbuild is installed)
 RUN pnpm --filter @workspace/api-server run build
 
 # ── Runtime stage ───────────────────────────────────────────────────────────
