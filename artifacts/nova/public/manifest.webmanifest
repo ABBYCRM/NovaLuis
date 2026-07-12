@@ -1,0 +1,29 @@
+{
+  "name": "NovaLuis — AI Workspace",
+  "short_name": "NovaLuis",
+  "description": "AI workspace with work-tree, knowledge base, and 2,000+ skills",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0a",
+  "theme_color": "#ff6b35",
+  "categories": ["productivity", "utilities", "developer"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Skills",
+      "short_name": "Skills",
+      "url": "/skills"
+    },
+    {
+      "name": "Open Super Nova",
+      "short_name": "Super Nova",
+      "url": "https://supernova-luis.onrender.com",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

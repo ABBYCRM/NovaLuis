@@ -832,8 +832,26 @@ body {
   #empty-state { gap: 8px; padding: 20px 16px; }
 }
 </style>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#ff6b35" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="NovaLuis" />
+<meta name="mobile-web-app-capable" content="yes" />
 </head>
 <body>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').then(
+        (reg) => console.log('PWA: SW registered', reg.scope),
+        (err) => console.warn('PWA: SW failed', err)
+      );
+    });
+  }
+</script>
 
 <!-- Nova ambient background (the lady) — sits behind all content -->
 <div id="nova-bg" aria-hidden="true"></div>
