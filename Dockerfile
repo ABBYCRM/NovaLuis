@@ -18,10 +18,12 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY package.json ./
 
 # Install all workspace deps.
-# --prefer-offline: use cached packages if available, reduces network I/O.
-# --ignore-scripts: skip postinstall/prepare scripts that may fail in Docker.
-# NODE_OPTIONS: cap V8 heap so install doesn't OOM inside Docker on 512 MB.
-RUN NODE_OPTIONS="--max-old-space-size=384" pnpm install --prefer-offline --ignore-scripts
+# --ignore-scripts: skip postinstall/prepare hooks (no native compilation needed).
+# NODE_OPTIONS: cap V8 heap so linking doesn't OOM inside Docker on 512 MB.
+# pnpm install returns 1 if the lockfile is stale (new dirs added after lockfile
+# was generated). Using --prefer-frozen-lockfile avoids the exit-1 issue by
+# treating missing optional deps as non-fatal.
+RUN NODE_OPTIONS="--max-old-space-size=384" pnpm install --ignore-scripts --prefer-frozen-lockfile
 
 # Copy remaining source
 COPY lib/ ./lib/
