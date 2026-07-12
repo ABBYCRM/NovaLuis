@@ -18,10 +18,10 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY package.json ./
 
 # Install all workspace deps.
-# --frozen-lockfile: don't resolve packages — use the lockfile directly.
-#   This also bypasses minimumReleaseAge checks (lockfile is already verified).
+# --prefer-offline: use cached packages if available, reduces network I/O.
+# --ignore-scripts: skip postinstall/prepare scripts that may fail in Docker.
 # NODE_OPTIONS: cap V8 heap so install doesn't OOM inside Docker on 512 MB.
-RUN NODE_OPTIONS="--max-old-space-size=384" pnpm install --frozen-lockfile
+RUN NODE_OPTIONS="--max-old-space-size=384" pnpm install --prefer-offline --ignore-scripts
 
 # Copy remaining source
 COPY lib/ ./lib/
