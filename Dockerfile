@@ -24,7 +24,7 @@ COPY scripts/ ./scripts/
 COPY skills/ ./skills/
 COPY openclaw/ ./openclaw/
 COPY SOUL.md AGENTS.md DIRECTIVE.md IDENTITY.md USER.md \
-     HEARTBEAT.md TOOLS.md TASKS.md GOVERNANCE.json ./
+     HEARTBEAT.md TOOLS.md TASKS.md GOVERNANCE.md ./
 
 RUN node ./artifacts/api-server/build.mjs
 
@@ -54,7 +54,7 @@ COPY --from=builder /app/artifacts/nova/public ./nova-static/
 COPY --from=builder /app/skills ./skills
 COPY --from=builder /app/openclaw ./openclaw
 COPY --from=builder /app/SOUL.md /app/AGENTS.md /app/DIRECTIVE.md /app/IDENTITY.md \
-     /app/USER.md /app/HEARTBEAT.md /app/TOOLS.md /app/TASKS.md /app/GOVERNANCE.json ./
+     /app/USER.md /app/HEARTBEAT.md /app/TOOLS.md /app/TASKS.md /app/GOVERNANCE.md ./
 COPY --from=builder /app/SOUL.md /app/AGENTS.md /app/IDENTITY.md /app/USER.md \
      /app/HEARTBEAT.md /app/TOOLS.md ./openclaw/workspace/
 COPY --from=builder /app/scripts ./scripts
