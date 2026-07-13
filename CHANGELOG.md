@@ -21,6 +21,20 @@ Verification:
 - The production Docker image built and booted successfully.
 - `/api/healthz`, `/api/openclaw/status`, the NOVA UI and `/assets/bob.js` passed live-container smoke checks.
 
+## 2026-07-13 — Repair repository integrity defects exposed by CI
+
+Summary:
+- Renamed the Markdown governance design from `GOVERNANCE.json` to `GOVERNANCE.md` and repaired its workspace link.
+- Renamed the commented TypeScript configuration reference from `tsconfig-strict.json` to `tsconfig-strict.jsonc`.
+- Extracted the complete runnable Python body from the Markdown-wrapped `scripts/agentic_demo.py` paste without changing its runtime implementation.
+- Improved repository verification so invalid JSON and Python syntax failures preserve exact diagnostics.
+- Restricted Python compilation to every Git-tracked `.py` source rather than generated dependency files.
+
+Verification:
+- Every real JSON file parsed successfully.
+- All 1,014 Git-tracked Python files compiled successfully.
+- Both Repository Verification and OpenClaw Backend CI passed on the clean committed tree.
+
 ## 2026-07-13 — Repair frozen dependency installation and add CI verification
 
 Summary:
