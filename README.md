@@ -66,6 +66,10 @@ pnpm run typecheck
 pnpm --filter @workspace/api-server run build
 ```
 
+GitHub verification also parses every real `.json` file, compiles every Git-tracked `.py` file, validates the pinned OpenClaw configuration and `nova-services` skill, builds the production image, starts the container, and checks `/api/healthz`, `/api/openclaw/status`, the UI, and `/assets/bob.js`.
+
+Documentation and templates use accurate extensions: the governance design is `GOVERNANCE.md`, and the commented strict TypeScript template is `tsconfig-strict.jsonc`. `scripts/agentic_demo.py` is stored as runnable Python rather than a Markdown-fenced paste.
+
 The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At startup, `scripts/start-openclaw.mjs` generates missing internal secrets in memory, starts the loopback Gateway, waits for `/readyz`, and starts the API only after the Gateway is ready.
 
 ## Important environment variables
