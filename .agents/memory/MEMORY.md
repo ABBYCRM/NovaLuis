@@ -1765,13 +1765,327 @@ The final state must be based on external evidence.
 ---
 
 **END OF SPEC**
+The parser is treating the individual link descriptions as YAML keys. They must be placed inside a list and written as quoted or block-scalar values.
 
-[1]: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens?utm_source=chatgpt.com "Managing your personal access tokens"
-[2]: https://api-docs.render.com/reference/create-service?utm_source=chatgpt.com "Create service - API Reference - Render"
-[3]: https://render.com/docs/your-first-deploy?utm_source=chatgpt.com "Your First Render Deploy"
-[4]: https://api-docs.render.com/reference/create-service "Create service"
-[5]: https://api-docs.render.com/reference/create-deploy?utm_source=chatgpt.com "Trigger deploy - API Reference"
-[6]: https://docs.replit.com/references/data-and-storage/database-upgrade?utm_source=chatgpt.com "Database Upgrade"
-[7]: https://render.com/docs/postgresql-creating-connecting?utm_source=chatgpt.com "Create and Connect to Render Postgres"
-[8]: https://render.com/docs/inbound-ip-rules?utm_source=chatgpt.com "Inbound IP Rules"
-[9]: https://nodejs.org/api/https.html?utm_source=chatgpt.com "HTTPS | Node.js v26.5.0 Documentation"
+```yaml
+---
+name: "ABBYCLAW runtime integration links"
+description: >-
+  Operational rules for GitHub authentication, Render deployment,
+  cross-platform PostgreSQL connectivity, GLOBAL_STATE stripping,
+  SSRF-safe tools, API authorization, and provider-aware model routing.
+
+links:
+  - id: "github-pat-git-push"
+    name: "GitHub PAT Git Push"
+    summary: >-
+      A classic GitHub personal access token may fail when supplied through
+      an incompatible bearer extraheader flow. Use Git's credential interface
+      rather than embedding the token directly in the repository URL.
+    observed_failure:
+      mechanism: "http.extraHeader"
+      authorization_scheme: "Bearer"
+      result: "Authentication failed"
+    required_behavior:
+      preferred_methods:
+        - "GitHub CLI credential helper"
+        - "Git Credential Manager"
+        - "Ephemeral GIT_ASKPASS"
+      username: "x-access-token"
+      password_source: "GITHUB_TOKEN environment variable"
+      remote_format: "https://github.com/<owner>/<repository>.git"
+      push_refspec: "HEAD:refs/heads/<target-branch>"
+    security_rules:
+      - "Never store the PAT in .git/config."
+      - "Never print the PAT in logs."
+      - "Never expose the PAT through shell tracing."
+      - "Never rely on regex redaction as the primary secret control."
+      - "Never force-push without explicit operator authorization."
+    verification:
+      - "The git push command exits with status 0."
+      - "The remote branch exists."
+      - "The remote branch SHA matches the intended local SHA."
+
+  - id: "render-api-deploy"
+    name: "Render API Service Creation and Deployment"
+    summary: >-
+      Render service creation and deployment are separate operations.
+      An HTTP 402 response during service creation must be classified as
+      a billing prerequisite for that account or request, not automatically
+      as malformed JSON, invalid authentication, or a transient provider error.
+    endpoints:
+      create_service:
+        method: "POST"
+        path: "/v1/services"
+        expected_success_status:
+          - 201
+      create_deploy:
+        method: "POST"
+        path: "/v1/services/<service-id>/deploys"
+        expected_success_status:
+          - 201
+          - 202
+    failure_mapping:
+      "400": "INVALID_REQUEST"
+      "401": "AUTHENTICATION_FAILED"
+      "402": "BILLING_PREREQUISITE"
+      "404": "RESOURCE_NOT_FOUND"
+      "409": "CONFLICT"
+      "429": "RATE_LIMITED"
+      "5xx": "PROVIDER_FAILURE"
+    create_service_body:
+      type: "web_service"
+      name: "<service-name>"
+      ownerId: "<workspace-owner-id>"
+      repo: "https://github.com/<owner>/<repository>"
+      branch: "main"
+      autoDeploy: "no"
+      serviceDetails:
+        runtime: "node"
+        plan: "free"
+        region: "virginia"
+        numInstances: 1
+        healthCheckPath: "/health"
+        envSpecificDetails:
+          buildCommand: "npm ci && npm run build"
+          startCommand: "npm run start"
+    verification:
+      - "The service creation request returns HTTP 201."
+      - "The service ID is captured from the response."
+      - "A deployment is created."
+      - "Deployment status is polled to a terminal state."
+      - "The deployment reaches the live state."
+      - "The health endpoint returns the expected response."
+
+  - id: "replit-database-external-reachability"
+    name: "Replit Database External Reachability"
+    summary: >-
+      A Replit Helium DATABASE_URL is scoped to the Replit application
+      environment and must not be treated as a portable public PostgreSQL
+      endpoint for Render, Fly.io, local workers, or external services.
+    invalid_architecture:
+      source: "Render, Fly.io, or another external host"
+      destination: "Replit Helium DATABASE_URL"
+      expected_result:
+        - "DNS resolution failure"
+        - "Network rejection"
+        - "Platform-scope rejection"
+        - "Unreachable database host"
+    required_architecture:
+      database: "Externally reachable managed PostgreSQL"
+      clients:
+        - "Render application"
+        - "Replit daemon"
+        - "Fly.io worker"
+        - "Authorized administration client"
+    environment_variables:
+      main_application: "DATABASE_URL"
+      replit_daemon: "SCRATCHPAD_DATABASE_URL"
+    verification:
+      - "DNS resolution succeeds."
+      - "The TCP and TLS connection succeeds."
+      - "PostgreSQL authentication succeeds."
+      - "SELECT 1 executes successfully."
+
+  - id: "render-postgres-connectivity"
+    name: "Render PostgreSQL Connectivity"
+    summary: >-
+      Render applications in the same region should use the internal database
+      connection string. External systems such as Replit or Fly.io must use the
+      external connection string and must satisfy the database's current
+      inbound network policy.
+    connection_selection:
+      render_same_region:
+        variable: "DATABASE_URL"
+        connection_type: "Render internal PostgreSQL URL"
+      external_runtime:
+        variable: "SCRATCHPAD_DATABASE_URL"
+        connection_type: "Render external PostgreSQL URL"
+    tls_policy:
+      preferred:
+        - "verify-full"
+        - "require"
+      temporary_exception:
+        - "no-verify"
+      exception_rule: >-
+        Certificate verification may be disabled only as a documented,
+        temporary compatibility exception.
+    network_policy:
+      preferred_rule: "<static-egress-ipv4>/32"
+      temporary_diagnostic_rule: "0.0.0.0/0"
+      requirement: >-
+        Inspect the actual Render inbound rules instead of assuming external
+        access is either enabled or disabled.
+    verification:
+      - "DNS resolution succeeds."
+      - "TLS negotiation succeeds."
+      - "PostgreSQL authentication succeeds."
+      - "SELECT 1 executes successfully."
+
+  - id: "global-state-stripper"
+    name: "GLOBAL_STATE Stripper"
+    summary: >-
+      GLOBAL_STATE markers must be anchored to the beginning of a line.
+      Removal must start only after an explicit opening marker is found.
+      Persisted-source processing and outbound redaction must use different
+      malformed-block behavior.
+    markers:
+      opener: "<!-- GLOBAL_STATE:BEGIN -->"
+      closer: "<!-- GLOBAL_STATE:END -->"
+    patterns:
+      opener: '^[ \t]*<!-- GLOBAL_STATE:BEGIN -->[ \t]*$'
+      closer: '^[ \t]*<!-- GLOBAL_STATE:END -->[ \t]*$'
+      flags:
+        - "m"
+    persisted_source_policy:
+      complete_block: "REMOVE_BLOCK"
+      opener_without_closer: "PRESERVE_ORIGINAL_AND_RETURN_ERROR"
+      closer_without_opener: "PRESERVE_ORIGINAL_AND_RETURN_ERROR"
+    outbound_redaction_policy:
+      complete_block: "REMOVE_BLOCK"
+      opener_without_closer: "REDACT_FROM_OPENER_TO_END"
+      closer_without_opener: "PRESERVE_CONTENT_AND_REPORT_MALFORMED_MARKER"
+    prohibited_behavior:
+      - "Do not use unanchored marker matching."
+      - "Do not remove content based only on a closing marker."
+      - "Do not match marker examples embedded in prose, JSON, or source code."
+      - "Do not silently modify malformed persisted source."
+
+  - id: "super-nova-tool-registry"
+    name: "Super Nova Tool Registry"
+    summary: >-
+      SSRF-safe network access must validate DNS and pin the approved IP during
+      the actual socket connection. Search execution must isolate failures by
+      provider and credential and continue through eligible fallback providers.
+    secure_fetch:
+      sequence:
+        - "Parse and canonicalize the URL."
+        - "Allow only HTTP and HTTPS."
+        - "Resolve all A and AAAA records."
+        - "Reject the destination if any resolved address is forbidden."
+        - "Select an approved address."
+        - "Pin the approved address through the HTTP client's lookup callback."
+        - "Preserve the original hostname for the Host header and TLS SNI."
+        - "Verify the connected peer address."
+        - "Stream the response through a hard body-size cap."
+      redirect_policy:
+        automatic_redirects: false
+        maximum_redirects: 5
+        per_hop_requirements:
+          - "Resolve the Location header."
+          - "Canonicalize the redirected URL."
+          - "Repeat SSRF validation."
+          - "Repeat DNS validation."
+          - "Create a new pinned connection."
+      resource_limits:
+        timeout_ms: 30000
+        maximum_response_bytes: 10485760
+    web_search_fallback:
+      continue_on:
+        - "AUTH_FAILED"
+        - "RATE_LIMITED"
+        - "TRANSIENT_FAILED"
+        - "PERMANENT_FAILED"
+      stop_on:
+        - "INVALID_QUERY"
+        - "POLICY_DENIED"
+      required_controls:
+        - "Per-key cooldown"
+        - "Per-provider circuit breaker"
+        - "Retry-After handling"
+        - "Bounded retry count"
+        - "Provider-specific timeout"
+        - "Request-ID capture"
+        - "Attempt ledger"
+        - "Result provenance"
+        - "Duplicate-result removal"
+
+  - id: "api-server-authorization"
+    name: "API Server Authorization Model"
+    summary: >-
+      The Work Tree PIN gate is currently the only API authorization boundary.
+      Any private, secret-bearing, or state-mutating route must therefore mount
+      behind requireWtAuth.
+    current_model:
+      per_user_authorization: false
+      authorization_boundary: "Work Tree PIN gate"
+    default_route_classification: "AUTHENTICATED_READ"
+    protected_resources:
+      - "Secrets"
+      - "Private configuration"
+      - "Agent memory"
+      - "Mission history"
+      - "Tool output"
+      - "Database records"
+      - "Private files"
+      - "Operator commands"
+      - "Cron configuration"
+      - "Deployment controls"
+      - "GitHub controls"
+      - "Provider credentials"
+      - "Private logs"
+      - "Internal diagnostics"
+    middleware: "requireWtAuth"
+    fail_closed_conditions:
+      - "Missing PIN configuration"
+      - "Unavailable session storage"
+      - "Cookie-signing failure"
+      - "Invalid session"
+      - "Expired session"
+      - "Tampered cookie"
+    required_tests:
+      - "Unauthenticated private GET is denied."
+      - "Unauthenticated private POST is denied."
+      - "Authenticated private GET succeeds."
+      - "Authenticated private POST succeeds."
+      - "Expired sessions are denied."
+      - "Tampered cookies are denied."
+      - "Missing PIN configuration causes denial."
+      - "Explicit public health routes remain accessible."
+
+  - id: "super-nova-model-router"
+    name: "Super Nova Model Router"
+    summary: >-
+      Provider and model must be treated as one atomic route. If a provider
+      override fails and execution falls back to another provider, the router
+      must select that fallback provider's compatible model instead of retaining
+      the failed provider's model identifier.
+    central_router: true
+    route_key: "agent-role"
+    atomic_route_fields:
+      - "provider"
+      - "model"
+      - "baseUrl"
+      - "credentialRef"
+    override_rules:
+      provider_only: "USE_PROVIDER_DEFAULT_MODEL"
+      provider_and_model: "VALIDATE_MODEL_SUPPORT_BEFORE_EXECUTION"
+      model_only: "REJECT_UNLESS_EXACTLY_ONE_PROVIDER_SUPPORTS_MODEL"
+    fallback_rule: >-
+      Every fallback route must carry its own provider-compatible model.
+      Provider-specific model names must never leak into another provider.
+    continue_on:
+      - "AUTHENTICATION_FAILED"
+      - "RATE_LIMITED"
+      - "PROVIDER_UNAVAILABLE"
+      - "TRANSIENT_FAILED"
+    stop_on:
+      - "INVALID_REQUEST"
+      - "POLICY_DENIED"
+    required_tests:
+      - "Default role routing selects the correct provider and model."
+      - "A provider-only override selects that provider's default model."
+      - "A compatible provider-and-model override succeeds."
+      - "An unsupported provider-and-model pair is rejected before execution."
+      - "A failed override falls back using the fallback provider's model."
+      - "A provider-specific model never leaks into another provider."
+      - "Every attempt records both provider and model."
+
+global_invariant: >-
+  An observed incident is not automatically a universal platform law.
+  Every operational conclusion must distinguish the attempted action,
+  observed evidence, directly supported conclusion, environment-specific
+  behavior, executable correction, and final verification result.
+---
+```
+
