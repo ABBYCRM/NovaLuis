@@ -1,6 +1,3 @@
-Replace the simulated version with this complete `nova_agentic_mvp.py`. The original relied on random searches, invented facts, fake sub-agents, and randomized verification. 
-
-````python
 #!/usr/bin/env python3
 """
 NOVA Agentic Research MVP
@@ -3318,21 +3315,3 @@ def main(
 
 if __name__ == "__main__":
     raise SystemExit(main())
-````
-
-Run it with:
-
-```bash
-export NOVA_LLM_API_KEY="YOUR_API_KEY"
-export NOVA_LLM_BASE_URL="https://integrate.api.nvidia.com/v1"
-export NOVA_LLM_MODEL="moonshotai/kimi-k2-instruct"
-export TAVILY_API_KEY="YOUR_TAVILY_KEY"
-
-python nova_agentic_mvp.py \
-  --goal "Research the latest developments in agentic AI runtimes" \
-  --output nova_report.md \
-  --summary-json nova_run.json \
-  --verbose
-```
-
-Without an LLM key, it still runs but produces an evidence digest rather than pretending it performed model-based synthesis.
