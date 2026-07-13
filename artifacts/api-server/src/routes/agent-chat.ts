@@ -61,7 +61,7 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
   }
 
   const messages = incoming.messages as ChatMessage[];
-  const conversationKey = conversationKeyFor(messages);
+  const conversationKey = conversationKeyFor(messages) ?? "nova-chat-default";
   const userText = lastUserText(messages);
   const stream = incoming.stream !== false;
   const forwardedMessages = [
