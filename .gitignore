@@ -47,3 +47,9 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Nova mutable runtime state
+.nova-data/
+**/.nova-data/
+.poll-state.json
+**/.poll-state.json
