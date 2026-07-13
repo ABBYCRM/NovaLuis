@@ -1,0 +1,101 @@
+name: Apply Composio Source Patches
+
+on:
+  push:
+    branches:
+      - 2026-07-13/composio-settings-tools
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: 2026-07-13/composio-settings-tools
+          fetch-depth: 1
+
+      - name: Apply assertion-checked patches
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              text = path.read_text()
+              count = text.count(old)
+              if count == 0 and new in text:
+                  return False
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one patch target, found {count}")
+              path.write_text(text.replace(old, new, 1))
+              return True
+
+          index = Path('artifacts/nova/index.html')
+          replace_once(
+              index,
+              '</body>',
+              '<script src="/assets/composio-settings.js"></script>\n</body>',
+          )
+
+          work_tree = Path('artifacts/api-server/src/routes/work-tree.ts')
+          replace_once(
+              work_tree,
+              '    "Use the nova-services skill whenever Gmail, Drive, Docs, Sheets, YouTube, Instagram, NOVA knowledge, scratchpad, or skill-catalog data is relevant. " +',
+              '    "Use the nova-services skill whenever Gmail, Drive, Docs, Sheets, YouTube, Instagram, GitHub, Composio, NOVA knowledge, scratchpad, or skill-catalog data is relevant. For GitHub URLs and connected apps, run composio-status, composio-search, and composio-execute; if the app is disconnected, run composio-connect and return the real Connect Link. Never deny tool access before attempting the bridge. " +',
+          )
+
+          proxy = Path('artifacts/api-server/src/routes/openai-proxy.ts')
+          replace_once(
+              proxy,
+              '  const provider = pickProvider(model);\n  const upstreamUrl = `${provider.url(req.path)}${qs}`;',
+              '  const provider = pickProvider(model);\n  const internalProxyKey = process.env.NOVA_OPENCLAW_PROXY_KEY || "";\n  const authHeader = String(req.headers.authorization || "");\n  const isInternalOpenClaw = Boolean(\n    internalProxyKey && authHeader === `Bearer ${internalProxyKey}`,\n  );\n  const upstreamUrl = `${provider.url(req.path)}${qs}`;',
+          )
+          replace_once(
+              proxy,
+              '    const captureOk = isChat && convKey && upstream.ok;',
+              '    const captureOk = isChat && !isInternalOpenClaw && convKey && upstream.ok;',
+          )
+
+          tools = Path('TOOLS.md')
+          replace_once(
+              tools,
+              'Channels        message · reminder\nSub-agents',
+              'Connected apps  nova-services via Composio · GitHub · Gmail · Slack · Notion · 1,000+ toolkits\nChannels        message · reminder\nSub-agents',
+          )
+          replace_once(
+              tools,
+              'LIVE — channels: `message`. Telegram AND Discord are both connected.',
+              'LIVE — connected apps: run `node openclaw/workspace/skills/nova-services/nova-services.mjs composio-status`, then `composio-search` and `composio-execute`. GitHub is reached through this bridge; if disconnected, use `composio-connect --toolkit github` and return the real Connect Link. Never claim GitHub is unavailable before attempting these commands.\nLIVE — channels: `message`. Telegram AND Discord are both connected.',
+          )
+          replace_once(
+              tools,
+              'IF the task needs information from the public web\nTHEN:',
+              'IF the task references GitHub or another external app/account\nTHEN use the `nova-services` Composio commands FIRST:\n     `composio-status` → `composio-search` → `composio-execute`\n     If disconnected, use `composio-connect --toolkit <slug>` and return its Connect Link.\n\nIF the task needs information from the public web\nTHEN:',
+          )
+          PY
+          git diff --check
+
+      - name: Validate patched JavaScript and TypeScript text
+        run: |
+          node --check artifacts/nova/public/assets/composio-settings.js
+          grep -q '/assets/composio-settings.js' artifacts/nova/index.html
+          grep -q 'composio-search' artifacts/api-server/src/routes/work-tree.ts
+          grep -q 'isInternalOpenClaw' artifacts/api-server/src/routes/openai-proxy.ts
+          grep -q 'Connected apps' TOOLS.md
+
+      - name: Commit patches
+        run: |
+          if git diff --quiet; then
+            echo 'Patches already applied.'
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/nova/index.html artifacts/api-server/src/routes/work-tree.ts artifacts/api-server/src/routes/openai-proxy.ts TOOLS.md
+          git diff --cached --check
+          git commit -m "feat: wire browser chat and tool doctrine to Composio"
+          git push origin HEAD:2026-07-13/composio-settings-tools
