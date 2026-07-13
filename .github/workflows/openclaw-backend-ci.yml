@@ -60,8 +60,8 @@ jobs:
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            echo "TypeScript typecheck failed; final diagnostic lines:" >&2
-            tail -n 100 /tmp/typecheck.log >&2
+            echo "TypeScript typecheck failed; exact diagnostics:" >&2
+            grep -E '(^|[[:space:]])[^[:space:]]+\.(ts|tsx)\([0-9]+,[0-9]+\): error TS[0-9]+|error TS[0-9]+|ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL|ELIFECYCLE' /tmp/typecheck.log | tail -n 80 >&2 || tail -n 40 /tmp/typecheck.log >&2
             exit "$status"
           fi
           tail -n 30 /tmp/typecheck.log
