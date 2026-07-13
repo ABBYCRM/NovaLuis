@@ -10,11 +10,14 @@ import { requireWtAuth, handleUnlock } from "../lib/work-tree-auth";
 // DB access is lazy + guarded so a missing/unreachable DATABASE_URL degrades to
 // a clear 503 instead of crashing the server at boot (mirrors scratchpad.ts).
 type DbModule = typeof import("@workspace/db");
-let dbModulePromise: Promise<DbModule | null> | null = null;
-async function getDb(): Promise<DbModule | null> {
+type ReadyDbModule = DbModule & { db: NonNullable<DbModule["db"]> };
+let dbModulePromise: Promise<ReadyDbModule | null> | null = null;
+async function getDb(): Promise<ReadyDbModule | null> {
   if (!process.env.DATABASE_URL) return null;
   if (!dbModulePromise) {
-    dbModulePromise = import("@workspace/db").catch(() => null);
+    dbModulePromise = import("@workspace/db")
+      .then((mod) => (mod.db ? (mod as ReadyDbModule) : null))
+      .catch(() => null);
   }
   return dbModulePromise;
 }
@@ -124,7 +127,7 @@ function trace(stage: string, detail: string, ok?: boolean): string {
   ]);
 }
 
-async function dispatchToOpenClaw(mod: DbModule, runId: number, goal: string): Promise<void> {
+async function dispatchToOpenClaw(mod: ReadyDbModule, runId: number, goal: string): Promise<void> {
   if (activeRuns.has(runId)) return;
 
   const controller = new AbortController();

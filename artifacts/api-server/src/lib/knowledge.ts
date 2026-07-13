@@ -141,6 +141,7 @@ export async function searchKnowledge(
   query: string,
   limit = 5,
 ): Promise<KnowledgeHit[]> {
+  if (!hasDatabase || !db) return [];
   const vec = await embed(query);
   const lit = `[${vec.join(",")}]`;
   const result = await db.execute(sql`

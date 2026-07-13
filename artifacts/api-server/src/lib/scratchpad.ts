@@ -4,13 +4,16 @@ import { createHash } from "node:crypto";
 // or break chat: if DATABASE_URL is missing or the DB is unreachable, every
 // scratchpad operation degrades to a no-op.
 type DbModule = typeof import("@workspace/db");
+type ReadyDbModule = DbModule & { db: NonNullable<DbModule["db"]> };
 
-let dbModulePromise: Promise<DbModule | null> | null = null;
+let dbModulePromise: Promise<ReadyDbModule | null> | null = null;
 
-async function getDb(): Promise<DbModule | null> {
+async function getDb(): Promise<ReadyDbModule | null> {
   if (!process.env.DATABASE_URL) return null;
   if (!dbModulePromise) {
-    dbModulePromise = import("@workspace/db").catch(() => null);
+    dbModulePromise = import("@workspace/db")
+      .then((mod) => (mod.db ? (mod as ReadyDbModule) : null))
+      .catch(() => null);
   }
   return dbModulePromise;
 }
