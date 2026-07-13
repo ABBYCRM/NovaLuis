@@ -1,15 +1,11 @@
-/**
- * /api/skills — Skills catalog API for Nova-Aura-Tools.
- * Mounted at /api/skills via the workspace index.ts mount point.
- */
 import { Router } from "express";
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 
 const router = Router();
-
-// Skills dir is at repo root (next to package.json)
 const SKILLS_ROOT = path.resolve(process.cwd(), "skills");
+const MAX_SKILL_BYTES = 64 * 1024;
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 interface SkillMeta {
   name: string;
@@ -18,68 +14,100 @@ interface SkillMeta {
   content: string;
 }
 
-function getSkillMeta(name: string): SkillMeta {
-  const skillDir = path.join(SKILLS_ROOT, name);
-  const skillMd = path.join(skillDir, "SKILL.md");
-  const composioMd = path.join(SKILLS_ROOT, `${name}.md`);
-
-  const readmePath = fs.existsSync(skillMd)
-    ? skillMd
-    : fs.existsSync(composioMd) ? composioMd : null;
-
-  if (readmePath) {
-    const content = fs.readFileSync(readmePath, "utf-8").slice(0, 8000);
-    const firstLine = content.split("\n").find((l) => l.trim().startsWith("#"));
-    const description = firstLine?.replace(/^#+\s*/, "").trim() || name;
-    const tagMatch = content.match(/<!--\s*tags:(.*?)\s*-->/i);
-    const tags = tagMatch ? tagMatch[1].split(",").map((t) => t.trim()).filter(Boolean) : [];
-    return { name, description, tags, content };
-  }
-
-  return { name, description: name, tags: [], content: "" };
+function contained(candidate: string): boolean {
+  const relative = path.relative(SKILLS_ROOT, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
 }
 
-// GET /api/skills — list all skills
+function skillPath(name: string): string | null {
+  if (!SAFE_NAME.test(name)) return null;
+  const candidates = [
+    path.join(SKILLS_ROOT, name, "SKILL.md"),
+    path.join(SKILLS_ROOT, `${name}.md`),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const real = fs.realpathSync(candidate);
+      if (contained(real) && fs.statSync(real).isFile()) return real;
+    } catch {
+      // Try the next supported shape.
+    }
+  }
+  return null;
+}
+
+function getSkillMeta(name: string): SkillMeta {
+  const source = skillPath(name);
+  if (!source) return { name, description: name, tags: [], content: "" };
+  const content = fs.readFileSync(source, "utf8").slice(0, MAX_SKILL_BYTES);
+  const heading = content
+    .split("\n")
+    .find((line) => line.trim().startsWith("#"));
+  const description = heading?.replace(/^#+\s*/, "").trim() || name;
+  const tagMatch = content.match(/<!--\s*tags:(.*?)\s*-->/i);
+  const tags = tagMatch
+    ? tagMatch[1]
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .slice(0, 30)
+    : [];
+  return { name, description, tags, content };
+}
+
+function listSkillNames(): string[] {
+  if (!fs.existsSync(SKILLS_ROOT)) return [];
+  const names = new Set<string>();
+  for (const entry of fs.readdirSync(SKILLS_ROOT, { withFileTypes: true })) {
+    if (entry.isDirectory() && SAFE_NAME.test(entry.name)) {
+      if (skillPath(entry.name)) names.add(entry.name);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const base = entry.name.slice(0, -3);
+    if (
+      SAFE_NAME.test(base) &&
+      (base.endsWith("-catalog") || base.endsWith("-index")) &&
+      skillPath(base)
+    ) {
+      names.add(base);
+    }
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
 router.get("/", (_req, res) => {
-  if (!fs.existsSync(SKILLS_ROOT)) {
-    res.json({ count: 0, skills: [] });
-    return;
-  }
-
-  let names: string[] = [];
   try {
-    names = fs.readdirSync(SKILLS_ROOT).filter((name) => {
-      try {
-        const stat = fs.statSync(path.join(SKILLS_ROOT, name));
-        if (stat.isDirectory()) {
-          return fs.existsSync(path.join(SKILLS_ROOT, name, "SKILL.md"));
-        }
-        return name.endsWith("-catalog.md") || name.endsWith("-index.md");
-      } catch {
-        return false;
-      }
+    const skills = listSkillNames().map((name) => {
+      const meta = getSkillMeta(name);
+      return { name, description: meta.description, tags: meta.tags };
     });
+    res.json({ count: skills.length, skills });
   } catch {
-    res.json({ count: 0, skills: [] });
-    return;
+    res.status(500).json({ error: "skills catalog unavailable" });
   }
-
-  const skills = names.map((name) => {
-    const meta = getSkillMeta(name);
-    return { name, description: meta.description, tags: meta.tags };
-  });
-
-  res.json({ count: skills.length, skills });
 });
 
-// GET /api/skills/:name — skill detail
 router.get("/:name", (req, res) => {
-  const meta = getSkillMeta(req.params.name);
-  if (!meta.content) {
-    res.status(404).json({ error: `Skill '${req.params.name}' not found` });
+  if (!SAFE_NAME.test(req.params.name)) {
+    res.status(400).json({ error: "invalid skill name" });
     return;
   }
-  res.json(meta);
+  try {
+    const meta = getSkillMeta(req.params.name);
+    if (!meta.content) {
+      res.status(404).json({ error: "skill not found" });
+      return;
+    }
+    res.json(meta);
+  } catch {
+    res.status(500).json({ error: "failed to read skill" });
+  }
 });
 
 export default router;
