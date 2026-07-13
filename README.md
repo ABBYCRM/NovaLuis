@@ -1,51 +1,82 @@
-# README.md — NOVA
+# NOVA
 
-NOVA is the primary personal AI assistant and Work-Tree planner half of a twin architecture. Its operational counter-weight and secondary system is **SUPERNOVA / ABBY** (the multi-agent automation swarm).
+NOVA is a personal AI assistant, connected-service hub, and persistent Work-Tree mission interface. The production backend now embeds the **official OpenClaw runtime** as its local agent control plane instead of forwarding Work-Tree missions to a separate service.
 
-* **Live Production (NOVA):** `[https://nova-luis.onrender.com/](https://nova-luis.onrender.com/)` (Fallback: `[https://nova-sszi.onrender.com](https://nova-sszi.onrender.com)`)
-* **Live Production (SUPERNOVA):** `[https://supernova-luis.onrender.com/](https://supernova-luis.onrender.com/)` (Fallback: `[https://supernova-ai1.onrender.com](https://supernova-ai1.onrender.com)`)
-* **Repository:** `[https://github.com/ABBYCRM/NovaLuis](https://github.com/ABBYCRM/NovaLuis)`
-* **Architecture Specification:** [`docs/ARCHITECTURE.md`](https://www.google.com/search?q=docs/ARCHITECTURE.md)
+- **Production:** `https://nova-luis.onrender.com/` (fallback: `https://nova-sszi.onrender.com`)
+- **Repository:** `https://github.com/ABBYCRM/NovaLuis`
+- **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- **OpenClaw integration runbook:** [`docs/OPENCLAW_BACKEND.md`](docs/OPENCLAW_BACKEND.md)
 
----
+## Runtime topology
 
-## Workspace Layout
-
-This project is managed strictly as a single **pnpm** monorepo workspace:
-
+```text
+Browser / NOVA UI
+        │
+        ▼
+Express API :8080
+  ├─ /api/v1/*                  server-side model proxy
+  ├─ /api/work-tree/*           persistent mission records
+  ├─ /api/integrations/*        Gmail, Drive, Docs, Sheets, YouTube, Instagram
+  ├─ /api/knowledge/*           semantic knowledge search and ingest
+  └─ /api/openclaw/status       runtime readiness
+        │
+        ▼
+OpenClaw Gateway 127.0.0.1:18789
+  ├─ official agent loop, sessions, tools, skills and subagents
+  ├─ model provider → http://127.0.0.1:8080/api/v1
+  └─ nova-services skill → http://127.0.0.1:8080/api/*
 ```
-artifacts/nova          Frontend — Vanilla SPA (index.html + public/assets/bob.js)
-artifacts/api-server    Express API Server: openai-proxy, voice, knowledge, work-tree
-lib/*                   Shared packages (db, api-spec, api-zod, api-client)
 
+The Gateway binds to loopback only. Work-Tree calls its authenticated OpenAI-compatible endpoint with model `openclaw/default`; OpenClaw then executes the mission through the same agent path used by the native CLI.
+
+## Workspace layout
+
+```text
+artifacts/nova                         frontend SPA
+artifacts/api-server                  Express API and Work-Tree persistence
+lib/*                                 shared DB, API schema and client packages
+openclaw/openclaw.json                strict Gateway/model/tool configuration
+openclaw/workspace/skills/nova-services
+                                      authenticated connected-service adapter
+scripts/start-openclaw.mjs            process supervisor and readiness gate
+skills/*                              existing repository skill catalog
 ```
 
----
+## Connected services available to OpenClaw
 
-## Twin Orchestration Link
+| Capability | NOVA endpoint | OpenClaw access |
+|---|---|---|
+| Gmail message search | `/api/integrations/gmail/messages` | `nova-services gmail` |
+| Google Drive search | `/api/integrations/drive/files` | `nova-services drive` |
+| Google Docs read | `/api/integrations/docs/:id` | `nova-services docs` |
+| Google Sheets read | `/api/integrations/sheets/:id` | `nova-services sheets` |
+| YouTube search | `/api/integrations/youtube/search` | `nova-services youtube` |
+| Instagram media | `/api/integrations/instagram/media` | `nova-services instagram` |
+| Knowledge search/ingest | `/api/knowledge/*` | `nova-services knowledge-*` |
+| Scratchpad | `/api/scratchpad` | `nova-services scratchpad` |
+| Skill catalog | `/api/skills/*` | `nova-services skills` |
 
-NOVA coordinates deep execution goals with SUPERNOVA via the `SUPERNOVA_BASE_URL` environment variable.
+## Build and validation
 
-* **Dispatched Workloads:** The Work-Tree planner transfers high-scale agentic operations to the SUPERNOVA swarm endpoint.
-* **Frontend Integration:** The "Open Super Nova" button in the SPA interface binds directly to the configured live swarm deployment URL.
-* **Authentication & Security:** Inter-system server-to-server validation is enforced strictly via `SUPERNOVA_API_KEY`, paired symmetrically with SUPERNOVA's `OPENCLAW_API_KEY`.
-
----
-
-## Development & Build Environment
-
-> **System Constraint:** **pnpm** is the exclusive package manager for this codebase. Do not use `npm` or `yarn`. Production secrets are managed solely via the platform deployment dashboard (Render) and must never be committed to source control.
-
-### Installation & System Validation
+**pnpm is the only package manager for this workspace.** Production secrets belong in Render environment variables and must never be committed.
 
 ```bash
-# Install exact workspace dependencies
-pnpm install
-
-# Run strict monorepo typechecking
+pnpm install --frozen-lockfile
 pnpm run typecheck
-
-# Build the main backend artifact
 pnpm --filter @workspace/api-server run build
-
 ```
+
+The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At startup, `scripts/start-openclaw.mjs` generates missing internal secrets in memory, starts the loopback Gateway, waits for `/readyz`, and starts the API only after the Gateway is ready.
+
+## Important environment variables
+
+| Variable | Purpose |
+|---|---|
+| `OPENCLAW_GATEWAY_TOKEN` | Optional persistent Gateway bearer token; generated at boot when absent |
+| `OPENCLAW_STATE_DIR` | OpenClaw sessions/state directory; point this at a persistent Render disk to retain state across deploys |
+| `NOVA_OPENCLAW_MODEL_ID` | Model ID sent through NOVA's server-side proxy; defaults to `WORK_TREE_MODEL` or `gpt-4o-mini` |
+| `OPENAI_API_KEY` | Used by NOVA proxy for `gpt-*` models |
+| `GEMINI_API_KEY` | Used by NOVA proxy for `gemini-*` models |
+| `BITDEER_API_KEY` | Used by NOVA proxy for other configured model IDs |
+| `SUPERNOVA_API_KEY` / `OPENCLAW_API_KEY` | Internal peer authentication for gated NOVA service endpoints |
+| `DATABASE_URL` | Work-Tree, knowledge and integration persistence |

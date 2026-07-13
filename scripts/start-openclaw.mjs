@@ -1,0 +1,184 @@
+#!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+function positiveInt(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeModelId(value) {
+  const raw = String(value || "").trim() || "gpt-4o-mini";
+  return raw.replace(/^(?:openai|google|gemini|bitdeer|nova)\//i, "");
+}
+
+const apiPort = positiveInt(process.env.PORT, 8080);
+const gatewayPort = positiveInt(process.env.OPENCLAW_GATEWAY_PORT, 18789);
+const appRoot = process.env.NOVA_APP_ROOT || "/app";
+const configPath =
+  process.env.OPENCLAW_CONFIG_PATH || path.join(appRoot, "openclaw", "openclaw.json");
+const stateDir = process.env.OPENCLAW_STATE_DIR || path.join(appRoot, ".openclaw");
+const workspaceDir =
+  process.env.OPENCLAW_WORKSPACE_DIR || path.join(appRoot, "openclaw", "workspace");
+const sharedInternalKey =
+  process.env.SUPERNOVA_API_KEY ||
+  process.env.OPENCLAW_API_KEY ||
+  randomBytes(32).toString("hex");
+const gatewayToken =
+  process.env.OPENCLAW_GATEWAY_TOKEN || randomBytes(32).toString("hex");
+const modelId = normalizeModelId(
+  process.env.NOVA_OPENCLAW_MODEL_ID || process.env.WORK_TREE_MODEL,
+);
+
+fs.mkdirSync(stateDir, { recursive: true });
+fs.mkdirSync(workspaceDir, { recursive: true });
+
+if (!fs.existsSync(configPath)) {
+  console.error(`start-openclaw: FATAL — config not found: ${configPath}`);
+  process.exit(78);
+}
+
+const childEnv = {
+  ...process.env,
+  PORT: String(apiPort),
+  OPENCLAW_GATEWAY_PORT: String(gatewayPort),
+  OPENCLAW_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}`,
+  OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+  OPENCLAW_CONFIG_PATH: configPath,
+  OPENCLAW_STATE_DIR: stateDir,
+  OPENCLAW_WORKSPACE_DIR: workspaceDir,
+  OPENCLAW_RUNTIME_VERSION:
+    process.env.OPENCLAW_RUNTIME_VERSION || "2026.6.11",
+  OPENCLAW_AGENT_MODEL: process.env.OPENCLAW_AGENT_MODEL || "openclaw/default",
+  OPENCLAW_API_KEY: sharedInternalKey,
+  SUPERNOVA_API_KEY: sharedInternalKey,
+  SUPERNOVA_BASE_URL: `http://127.0.0.1:${apiPort}`,
+  NOVA_INTERNAL_API_BASE: `http://127.0.0.1:${apiPort}/api`,
+  NOVA_INTERNAL_MODEL_BASE_URL: `http://127.0.0.1:${apiPort}/api/v1`,
+  NOVA_OPENCLAW_PROXY_KEY:
+    process.env.NOVA_OPENCLAW_PROXY_KEY || randomBytes(24).toString("hex"),
+  NOVA_OPENCLAW_MODEL_ID: modelId,
+};
+
+const children = new Map();
+let shuttingDown = false;
+
+function launch(name, command, args) {
+  const child = spawn(command, args, {
+    cwd: appRoot,
+    env: childEnv,
+    stdio: "inherit",
+  });
+  children.set(name, child);
+  child.once("error", (error) => {
+    console.error(`start-openclaw: ${name} process error`, error);
+  });
+  return child;
+}
+
+function closePromise(name, child) {
+  return new Promise((resolve) => {
+    child.once("close", (code, signal) => resolve({ name, code, signal }));
+  });
+}
+
+async function stopChildren(signal = "SIGTERM") {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  for (const child of children.values()) {
+    if (child.exitCode == null && !child.killed) child.kill(signal);
+  }
+  const deadline = setTimeout(() => {
+    for (const child of children.values()) {
+      if (child.exitCode == null && !child.killed) child.kill("SIGKILL");
+    }
+  }, 10_000);
+  deadline.unref?.();
+  await Promise.allSettled(
+    [...children.values()].map(
+      (child) =>
+        new Promise((resolve) => {
+          if (child.exitCode != null) resolve(undefined);
+          else child.once("close", () => resolve(undefined));
+        }),
+    ),
+  );
+  clearTimeout(deadline);
+}
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    void stopChildren(signal).then(() => {
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  });
+}
+
+async function waitForGateway(child) {
+  const timeoutMs = positiveInt(process.env.OPENCLAW_STARTUP_TIMEOUT_MS, 120_000);
+  const deadline = Date.now() + timeoutMs;
+  const url = `http://127.0.0.1:${gatewayPort}/readyz`;
+
+  while (Date.now() < deadline) {
+    if (child.exitCode != null) {
+      throw new Error(`OpenClaw Gateway exited before readiness (code ${child.exitCode})`);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    timer.unref?.();
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${gatewayToken}` },
+        signal: controller.signal,
+      });
+      if (response.ok) return;
+    } catch {
+      // Gateway is still booting.
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`OpenClaw Gateway did not become ready within ${timeoutMs}ms`);
+}
+
+async function main() {
+  console.log(
+    `start-openclaw: launching OpenClaw ${childEnv.OPENCLAW_RUNTIME_VERSION} on loopback:${gatewayPort}`,
+  );
+  const gateway = launch("openclaw-gateway", "openclaw", [
+    "gateway",
+    "--port",
+    String(gatewayPort),
+    "--verbose",
+  ]);
+
+  await waitForGateway(gateway);
+  console.log("start-openclaw: Gateway ready; launching NOVA API");
+
+  const api = launch("nova-api", "node", [
+    "--enable-source-maps",
+    "./dist/index.mjs",
+  ]);
+
+  const exited = await Promise.race([
+    closePromise("openclaw-gateway", gateway),
+    closePromise("nova-api", api),
+  ]);
+
+  if (!shuttingDown) {
+    console.error(
+      `start-openclaw: ${exited.name} exited unexpectedly (code=${exited.code}, signal=${exited.signal ?? "none"})`,
+    );
+    await stopChildren("SIGTERM");
+    process.exit(exited.code && exited.code > 0 ? exited.code : 1);
+  }
+}
+
+main().catch(async (error) => {
+  console.error("start-openclaw: FATAL", error);
+  await stopChildren("SIGTERM");
+  process.exit(1);
+});

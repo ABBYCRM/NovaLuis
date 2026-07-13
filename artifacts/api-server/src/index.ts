@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { resumeOpenClawRuns } from "./routes/work-tree";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,7 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  void resumeOpenClawRuns().catch((resumeErr) => {
+    logger.warn({ err: resumeErr }, "OpenClaw run reconciliation skipped");
+  });
 });

@@ -1,0 +1,118 @@
+{
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "bind": "loopback",
+    "controlUi": {
+      "enabled": false
+    },
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}",
+      "rateLimit": {
+        "maxAttempts": 10,
+        "windowMs": 60000,
+        "lockoutMs": 300000,
+        "exemptLoopback": true
+      }
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true,
+          "maxBodyBytes": 1048576
+        }
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "${OPENCLAW_WORKSPACE_DIR}",
+      "skipBootstrap": true,
+      "timeoutSeconds": 900,
+      "model": {
+        "primary": "nova/${NOVA_OPENCLAW_MODEL_ID}"
+      },
+      "sandbox": {
+        "mode": "off"
+      },
+      "subagents": {
+        "maxConcurrent": 4,
+        "runTimeoutSeconds": 900,
+        "archiveAfterMinutes": 60
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "name": "NOVA OpenClaw",
+        "workspace": "${OPENCLAW_WORKSPACE_DIR}"
+      }
+    ]
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "nova": {
+        "baseUrl": "${NOVA_INTERNAL_MODEL_BASE_URL}",
+        "apiKey": "${NOVA_OPENCLAW_PROXY_KEY}",
+        "api": "openai-completions",
+        "authHeader": true,
+        "timeoutSeconds": 900,
+        "models": [
+          {
+            "id": "${NOVA_OPENCLAW_MODEL_ID}",
+            "name": "NOVA server-side model route",
+            "reasoning": false,
+            "input": ["text", "image"],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "contextTokens": 96000,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "exec": {
+      "backgroundMs": 10000,
+      "timeoutSec": 1800,
+      "cleanupMs": 1800000,
+      "notifyOnExit": true
+    },
+    "loopDetection": {
+      "enabled": true,
+      "historySize": 30,
+      "warningThreshold": 8,
+      "unknownToolThreshold": 8,
+      "criticalThreshold": 16,
+      "globalCircuitBreakerThreshold": 24,
+      "detectors": {
+        "genericRepeat": true,
+        "knownPollNoProgress": true,
+        "pingPong": true
+      },
+      "postCompactionGuard": {
+        "windowSize": 3
+      }
+    },
+    "experimental": {
+      "planTool": true
+    }
+  },
+  "skills": {
+    "entries": {
+      "nova-services": {
+        "enabled": true
+      }
+    }
+  }
+}

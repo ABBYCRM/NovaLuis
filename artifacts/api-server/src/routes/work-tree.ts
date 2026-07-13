@@ -56,35 +56,43 @@ function apiNode(n: Record<string, unknown>) {
   };
 }
 
-// ── Super Nova engine ───────────────────────────────────────────────────
-// A run dispatches the goal to the supernova swarm, which executes it with its
-// inline agentic tool loop and returns a final report. We ask it to classify
-// the finding into one NOVA workspace category; the client files the report
-// into that workspace (the report carries an <!--sn-category:X--> marker).
-const SUPERNOVA_BASE_URL = (
-  process.env.SUPERNOVA_BASE_URL || "https://supernova-ai1.onrender.com"
+// ── OpenClaw engine ────────────────────────────────────────────────────────
+// The official OpenClaw Gateway runs in this container on loopback. Its
+// OpenAI-compatible Chat Completions endpoint executes a normal Gateway agent
+// run, including OpenClaw's real tool loop, skills, workspace, sessions and
+// verification behavior. Work-Tree keeps its existing DB/UI contract while
+// OpenClaw is the single execution backend.
+const OPENCLAW_GATEWAY_URL = (
+  process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789"
 ).replace(/\/$/, "");
-const SUPERNOVA_API_KEY =
-  process.env.SUPERNOVA_API_KEY || process.env.OPENCLAW_API_KEY || "";
+const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "openclaw/default";
+const OPENCLAW_RUN_TIMEOUT_MS = Math.max(
+  30_000,
+  Number(process.env.OPENCLAW_RUN_TIMEOUT_MS || 15 * 60 * 1000),
+);
 const WS_CATEGORIES = [
   "medical", "health", "dietary", "fitness", "todo", "tasks", "agents",
   "pictures", "numerology", "sacred", "vedic", "mystic", "manifest", "quantum",
 ];
 
-function supernovaMessages(goal: string) {
+const activeRuns = new Map<number, AbortController>();
+
+function openClawMessages(goal: string) {
   const system =
-    "You are Super Nova, an autonomous operator. Execute the user's goal end to end using your real tools " +
-    "(web fetch/search/compute) — plan, act, verify, correct — then produce a final report of your findings. " +
-    "Classify the finding into EXACTLY ONE category id from this list: " + WS_CATEGORIES.join(", ") + ". " +
-    "If none fits, use \"agents\". Respond with ONLY a single minified JSON object — no prose, no code fences: " +
-    "{\"category\":\"<one id>\",\"title\":\"<=80 char title>\",\"report\":\"<markdown findings>\"}";
+    "You are NOVA's OpenClaw execution runtime. Execute the user's goal end to end with your real tools and workspace skills. " +
+    "Use the nova-services skill whenever Gmail, Drive, Docs, Sheets, YouTube, Instagram, NOVA knowledge, scratchpad, or skill-catalog data is relevant. " +
+    "Plan, act, inspect every tool result, verify the result against the goal, correct failures within bounded attempts, and never claim an action succeeded without evidence. " +
+    "Classify the final finding into EXACTLY ONE category id from this list: " + WS_CATEGORIES.join(", ") + ". " +
+    "If none fits, use \"agents\". Respond with ONLY one minified JSON object, without prose or code fences: " +
+    "{\"category\":\"<one id>\",\"title\":\"<=80 char title\",\"report\":\"<markdown findings, actions, and verification evidence>\"}";
   return [
     { role: "system", content: system },
     { role: "user", content: goal },
   ];
 }
 
-function parseSupernovaResult(content: string): { category: string; title: string; report: string } {
+function parseOpenClawResult(content: string): { category: string; title: string; report: string } {
   let category = "agents";
   let title = "";
   let report = content || "";
@@ -99,46 +107,158 @@ function parseSupernovaResult(content: string): { category: string; title: strin
       report = String(obj.report ?? content);
     }
   } catch {
-    // Non-JSON reply: keep the raw content, file it under "agents".
+    // A non-JSON final response is still preserved rather than fabricated.
   }
   return { category, title, report };
 }
 
-async function dispatchToSupernova(mod: DbModule, runId: number, goal: string): Promise<void> {
-  const { eq } = await import("drizzle-orm");
-  const set = async (vals: Record<string, unknown>) => {
+function trace(stage: string, detail: string, ok?: boolean): string {
+  return JSON.stringify([
+    {
+      ts: new Date().toISOString(),
+      runtime: "openclaw",
+      stage,
+      detail,
+      ...(typeof ok === "boolean" ? { ok } : {}),
+    },
+  ]);
+}
+
+async function dispatchToOpenClaw(mod: DbModule, runId: number, goal: string): Promise<void> {
+  if (activeRuns.has(runId)) return;
+
+  const controller = new AbortController();
+  activeRuns.set(runId, controller);
+  const { eq, and, inArray } = await import("drizzle-orm");
+
+  const setWhileActive = async (vals: Record<string, unknown>) => {
     try {
       await mod.db
         .update(mod.workTreeRunsTable)
         .set({ ...vals, updatedAt: new Date() })
-        .where(eq(mod.workTreeRunsTable.id, runId));
+        .where(
+          and(
+            eq(mod.workTreeRunsTable.id, runId),
+            inArray(mod.workTreeRunsTable.status, ["pending", "running"]),
+          ),
+        );
     } catch {
-      /* best effort */
+      /* best effort; execution result must not be hidden by observability failure */
     }
   };
-  if (!SUPERNOVA_API_KEY) {
-    await set({ status: "failed", error: "SUPERNOVA_API_KEY is not configured on this server." });
-    return;
-  }
-  await set({ status: "running" });
+
+  const timeout = setTimeout(() => controller.abort(), OPENCLAW_RUN_TIMEOUT_MS);
+  timeout.unref?.();
+
   try {
-    const resp = await fetch(`${SUPERNOVA_BASE_URL}/api/external/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPERNOVA_API_KEY}` },
-      body: JSON.stringify({ model: "abby", stream: false, max_tokens: 4096, messages: supernovaMessages(goal) }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      await set({ status: "failed", error: `supernova HTTP ${resp.status}: ${body.slice(0, 300)}` });
+    if (!OPENCLAW_GATEWAY_TOKEN) {
+      await setWhileActive({
+        status: "failed",
+        model: OPENCLAW_AGENT_MODEL,
+        error: "OPENCLAW_GATEWAY_TOKEN is not configured on this server.",
+        stageTrace: trace("configuration", "OpenClaw Gateway token missing", false),
+      });
       return;
     }
-    const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data?.choices?.[0]?.message?.content ?? "";
-    const { category, title, report } = parseSupernovaResult(content);
+
+    await setWhileActive({
+      status: "running",
+      model: OPENCLAW_AGENT_MODEL,
+      error: "",
+      stageTrace: trace("dispatch", `Dispatching run ${runId} to the loopback OpenClaw Gateway`),
+    });
+
+    const resp = await fetch(`${OPENCLAW_GATEWAY_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}`,
+        "x-openclaw-session-key": `nova-work-tree-${runId}`,
+        "x-openclaw-message-channel": "webchat",
+      },
+      body: JSON.stringify({
+        model: OPENCLAW_AGENT_MODEL,
+        user: `nova-work-tree:${runId}`,
+        stream: false,
+        max_completion_tokens: 4096,
+        messages: openClawMessages(goal),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      await setWhileActive({
+        status: "failed",
+        model: OPENCLAW_AGENT_MODEL,
+        error: `OpenClaw Gateway HTTP ${resp.status}: ${body.slice(0, 500)}`,
+        stageTrace: trace("gateway-response", `HTTP ${resp.status}`, false),
+      });
+      return;
+    }
+
+    const data = (await resp.json()) as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+    };
+    const rawContent = data?.choices?.[0]?.message?.content;
+    const content = typeof rawContent === "string"
+      ? rawContent
+      : rawContent == null
+        ? ""
+        : JSON.stringify(rawContent);
+
+    if (!content.trim()) {
+      await setWhileActive({
+        status: "failed",
+        model: OPENCLAW_AGENT_MODEL,
+        error: "OpenClaw completed without a final text payload.",
+        stageTrace: trace("final-response", "Empty final payload", false),
+      });
+      return;
+    }
+
+    const { category, title, report } = parseOpenClawResult(content);
     const stored = `<!--sn-category:${category}-->\n` + (title ? `# ${title}\n\n` : "") + report;
-    await set({ status: "done", report: stored.slice(0, 60000), model: "supernova/abby" });
+    await setWhileActive({
+      status: "done",
+      report: stored.slice(0, 60000),
+      error: "",
+      model: OPENCLAW_AGENT_MODEL,
+      stageTrace: trace("verified-final", "OpenClaw returned a non-empty final report", true),
+    });
   } catch (e) {
-    await set({ status: "failed", error: `supernova dispatch failed: ${String((e as Error)?.message ?? e).slice(0, 300)}` });
+    const aborted = controller.signal.aborted;
+    await setWhileActive({
+      status: "failed",
+      model: OPENCLAW_AGENT_MODEL,
+      error: aborted
+        ? `OpenClaw run exceeded ${OPENCLAW_RUN_TIMEOUT_MS}ms or was cancelled.`
+        : `OpenClaw dispatch failed: ${String((e as Error)?.message ?? e).slice(0, 500)}`,
+      stageTrace: trace(aborted ? "aborted" : "dispatch-error", String((e as Error)?.message ?? e).slice(0, 500), false),
+    });
+  } finally {
+    clearTimeout(timeout);
+    activeRuns.delete(runId);
+  }
+}
+
+export async function resumeOpenClawRuns(): Promise<void> {
+  const mod = await getDb();
+  if (!mod) return;
+  try {
+    const { inArray, asc } = await import("drizzle-orm");
+    const limit = Math.min(Math.max(Number(process.env.OPENCLAW_RESUME_LIMIT || 10), 1), 25);
+    const rows = await mod.db
+      .select()
+      .from(mod.workTreeRunsTable)
+      .where(inArray(mod.workTreeRunsTable.status, ["pending", "running"]))
+      .orderBy(asc(mod.workTreeRunsTable.updatedAt))
+      .limit(limit);
+    for (const row of rows) {
+      void dispatchToOpenClaw(mod, Number(row.id), String(row.goal ?? ""));
+    }
+  } catch {
+    // Startup reconciliation is best-effort; normal API health must remain up.
   }
 }
 
@@ -182,13 +302,12 @@ router.post("/work-tree/runs", requireWtAuth, async (req, res) => {
       .insert(mod.workTreeRunsTable)
       .values({
         goal: parsed.data.goal.slice(0, 8000),
-        model: (parsed.data.model ?? "").slice(0, 200),
+        model: OPENCLAW_AGENT_MODEL,
         status: "pending",
       })
       .returning();
-    // Fire-and-forget: the supernova swarm runs in the background; the client
-    // polls the run until it reaches "done" (or "failed").
-    void dispatchToSupernova(mod, (row as Row).id as number, parsed.data.goal.slice(0, 8000));
+    // Fire-and-forget: OpenClaw runs the mission while the client polls the DB.
+    void dispatchToOpenClaw(mod, (row as Row).id as number, parsed.data.goal.slice(0, 8000));
     res.status(201).json(apiRun(row as Row));
   } catch (e) {
     req.log.error({ err: e }, "work-tree create run failed");
@@ -253,7 +372,7 @@ router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
     const { eq, inArray, and } = await import("drizzle-orm");
     const [updated] = await mod.db
       .update(mod.workTreeRunsTable)
-      .set({ status: "cancelled" })
+      .set({ status: "cancelled", updatedAt: new Date() })
       .where(
         and(
           eq(mod.workTreeRunsTable.id, id),
@@ -262,10 +381,11 @@ router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
       )
       .returning();
     if (updated) {
+      activeRuns.get(id)?.abort();
       res.json(apiRun(updated as Row));
       return;
     }
-    // Either it doesn't exist or it's already terminal — disambiguate.
+    // Either it doesn't exist or it is already terminal — disambiguate.
     const [existing] = await mod.db
       .select()
       .from(mod.workTreeRunsTable)
@@ -281,6 +401,8 @@ router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
   }
 });
 
+// Legacy node retry remains for pre-OpenClaw runs. It reopens the historical
+// node for UI continuity, then retries the complete mission through OpenClaw.
 router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
   const parsed = RetryWorkTreeNodeParams.safeParse(req.params);
   if (!parsed.success) {
@@ -323,7 +445,6 @@ router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
       return;
     }
 
-    // Load all nodes so we can walk the parent chain and re-open ancestors.
     const allNodes = await mod.db
       .select()
       .from(mod.workTreeNodesTable)
@@ -332,16 +453,11 @@ router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
       allNodes.map((n) => [n.id as number, n as Row]),
     );
 
-    // Reset the failed node back to pending so the worker re-executes it. Clear
-    // its prior result/verification but retain the attempts counter for history.
     await mod.db
       .update(mod.workTreeNodesTable)
       .set({ status: "pending", result: "", verification: "" })
       .where(eq(mod.workTreeNodesTable.id, nodeId));
 
-    // Re-open settled (done/failed) ancestor composites to "running" so
-    // settleComposites re-evaluates them once the retried leaf resolves. They
-    // must NOT go to "pending" — that would trigger a duplicate decomposition.
     const ancestorIds: number[] = [];
     let parentId = (node.parentId ?? null) as number | null;
     while (parentId != null) {
@@ -359,11 +475,16 @@ router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
         .where(inArray(mod.workTreeNodesTable.id, ancestorIds));
     }
 
-    // Re-open the run if it had already finished, clearing the stale report.
     if (run.status === "done" || run.status === "failed") {
       const [updated] = await mod.db
         .update(mod.workTreeRunsTable)
-        .set({ status: "running", report: "", error: "" })
+        .set({
+          status: "pending",
+          report: "",
+          error: "",
+          model: OPENCLAW_AGENT_MODEL,
+          updatedAt: new Date(),
+        })
         .where(
           and(
             eq(mod.workTreeRunsTable.id, runId),
@@ -371,6 +492,9 @@ router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
           ),
         )
         .returning();
+      if (updated) {
+        void dispatchToOpenClaw(mod, runId, String(run.goal ?? ""));
+      }
       res.json(apiRun((updated ?? run) as Row));
       return;
     }
