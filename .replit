@@ -18,15 +18,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Nova: Poll Events"
+args = "BOS OMEGA: Poll Events"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Nova: Deep Worker"
+args = "BOS OMEGA: Deep Worker"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Nova: Scratchpad Daemon"
+args = "BOS OMEGA: Scratchpad Daemon"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
@@ -34,37 +34,37 @@ args = "test"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Nova: Work Tree Worker"
+args = "BOS OMEGA: Work Tree Worker"
 
 [[workflows.workflow]]
-name = "Nova: Poll Events"
+name = "BOS OMEGA: Poll Events"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "OPENCLAW_STATE_DIR=/home/runner/workspace/.nova-data OPENCLAW_LOG_DIR=/tmp/openclaw node scripts/poll-events.mjs"
+args = "OPENCLAW_STATE_DIR=/home/runner/workspace/.nova-data OPENCLAW_LOG_DIR=/tmp/openclaw NOVA_WORKSPACE=/home/runner/workspace node scripts/poll-events.mjs"
 
 [workflows.workflow.metadata]
 outputType = "console"
 
 [[workflows.workflow]]
-name = "Nova: Deep Worker"
+name = "BOS OMEGA: Deep Worker"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd /home/runner/workspace/scripts && OPENCLAW_STATE_DIR=/home/runner/workspace/.nova-data node deep-worker.mjs"
+args = "cd /home/runner/workspace && OPENCLAW_STATE_DIR=/home/runner/workspace/.nova-data node scripts/deep-worker.mjs"
 
 [workflows.workflow.metadata]
 outputType = "console"
 
 [[workflows.workflow]]
-name = "Nova: Scratchpad Daemon"
+name = "BOS OMEGA: Scratchpad Daemon"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "node scripts/scratchpad-daemon.mjs"
+args = "cd /home/runner/workspace && node scripts/scratchpad-daemon.mjs"
 
 [workflows.workflow.metadata]
 outputType = "console"
@@ -75,18 +75,18 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/nova run test"
+args = "cd /home/runner/workspace && pnpm --filter @workspace/nova run test"
 
 [workflows.workflow.metadata]
 isValidation = true
 
 [[workflows.workflow]]
-name = "Nova: Work Tree Worker"
+name = "BOS OMEGA: Work Tree Worker"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "node scripts/work-tree-worker.mjs"
+args = "cd /home/runner/workspace && node scripts/work-tree-worker.mjs"
 
 [workflows.workflow.metadata]
 outputType = "console"
@@ -114,8 +114,10 @@ externalPort = 3000
 [nix]
 channel = "stable-25_05"
 
+# All secrets must be configured through Replit Secrets or the deployment
+# platform environment. Dangerous host execution is disabled by default; set
+# SUPER_NOVA_EXEC=1 only in an authenticated, isolated worker environment.
 [userenv]
 
 [userenv.shared]
-SCRATCHPAD_DATABASE_URL = "postgresql://nova:c5LyHhCkMG0BmZY0ocsbRGfmPRxxlMmV@dpg-d8dmksf7f7vs73cd3ic0-a.oregon-postgres.render.com:5432/nova_sdk8?sslmode=no-verify"
-SUPER_NOVA_EXEC = "1"
+SUPER_NOVA_EXEC = "0"
