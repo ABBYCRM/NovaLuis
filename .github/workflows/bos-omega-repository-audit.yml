@@ -1,6 +1,9 @@
 name: BOS Omega Repository Audit
 
 on:
+  push:
+    branches:
+      - 2026-07-13-bos-omega-tool-runtime
   pull_request:
     branches: [main]
   workflow_dispatch:
