@@ -26,16 +26,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node 22
+      - name: Install pnpm 9.15.4
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+          run_install: false
+
+      - name: Set up Node 22 with pnpm cache
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Activate pnpm 9.15.4
+      - name: Record toolchain versions
         run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
           node --version
           pnpm --version
 
