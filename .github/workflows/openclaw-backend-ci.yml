@@ -61,7 +61,7 @@ jobs:
           set -e
           if [ "$status" -ne 0 ]; then
             echo "TypeScript typecheck failed; exact diagnostics:" >&2
-            grep -E 'error TS[0-9]+|ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL|ELIFECYCLE' /tmp/typecheck.log | tail -n 80 >&2 || tail -n 40 /tmp/typecheck.log >&2
+            grep -E 'error TS[0-9]+|ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL|ELIFECYCLE' /tmp/typecheck.log | tail -n 100 >&2 || tail -n 60 /tmp/typecheck.log >&2
             exit "$status"
           fi
           tail -n 30 /tmp/typecheck.log
@@ -78,11 +78,15 @@ jobs:
       - name: Build API bundle
         run: pnpm --filter @workspace/api-server run build
 
-      - name: Validate runtime scripts
+      - name: Validate runtime and UI scripts
         run: |
           node --check scripts/start-openclaw.mjs
           node --check openclaw/workspace/skills/nova-services/nova-services.mjs
+          node --check artifacts/nova/public/assets/composio-settings.js
           node -e 'JSON.parse(require("node:fs").readFileSync("openclaw/openclaw.json", "utf8"))'
+          grep -q '/assets/composio-settings.js' artifacts/nova/index.html
+          grep -q 'composio-search' openclaw/workspace/skills/nova-services/SKILL.md
+          grep -q '/agent/v1/chat/completions' artifacts/nova/public/assets/composio-settings.js
 
       - name: Install and validate pinned OpenClaw
         env:
@@ -106,7 +110,10 @@ jobs:
       - name: Smoke-test production container
         run: |
           set -euo pipefail
-          docker run --detach --name nova-openclaw-ci -p 18080:8080 nova-openclaw:ci
+          docker run --detach --name nova-openclaw-ci \
+            -e SESSION_SECRET=ci-session-secret-not-production \
+            -e NOVA_WORK_TREE_PIN=22 \
+            -p 18080:8080 nova-openclaw:ci
           cleanup() {
             docker logs nova-openclaw-ci || true
             docker rm --force nova-openclaw-ci || true
@@ -127,7 +134,25 @@ jobs:
 
           grep -q '"status":"ok"' /tmp/nova-health.json
           grep -q '"status":"ready"' /tmp/openclaw-status.json
+
           curl --fail --silent http://127.0.0.1:18080/ >/tmp/nova-index.html
           curl --fail --silent http://127.0.0.1:18080/assets/bob.js >/tmp/nova-bob.js
+          curl --fail --silent http://127.0.0.1:18080/assets/composio-settings.js >/tmp/composio-settings.js
           test -s /tmp/nova-index.html
           test -s /tmp/nova-bob.js
+          test -s /tmp/composio-settings.js
+          grep -q '/assets/composio-settings.js' /tmp/nova-index.html
+          grep -q 'Connect an app' /tmp/composio-settings.js
+
+          agent_code="$(curl --silent --output /tmp/agent-validation.json --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -d '{}' \
+            http://127.0.0.1:18080/api/agent/v1/chat/completions)"
+          test "$agent_code" = '400'
+          grep -q 'messages must be an array' /tmp/agent-validation.json
+
+          curl --fail --silent --cookie-jar /tmp/nova-cookie.txt \
+            -H 'Content-Type: application/json' -d '{"pin":"22"}' \
+            http://127.0.0.1:18080/api/work-tree/unlock >/tmp/unlock.json
+          curl --fail --silent --cookie /tmp/nova-cookie.txt \
+            http://127.0.0.1:18080/api/integrations/composio/status >/tmp/composio-status.json
+          grep -q '"configured":false' /tmp/composio-status.json
