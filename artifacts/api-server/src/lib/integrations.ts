@@ -43,7 +43,8 @@ function encrypt(value: string, key: Buffer): string {
   ]);
   const tag = cipher.getAuthTag();
   return [
-    ENCRYPTED_PREFIX.slice(0, -1),
+    "enc",
+    "v1",
     iv.toString("base64url"),
     tag.toString("base64url"),
     ciphertext.toString("base64url"),
@@ -54,12 +55,12 @@ function decrypt(value: string, key: Buffer | null): string {
   if (!value.startsWith(ENCRYPTED_PREFIX)) return value;
   if (!key) throw new Error("integration encryption key is unavailable");
   const parts = value.split(":");
-  if (parts.length !== 6 || parts[0] !== "enc" || parts[1] !== "v1") {
+  if (parts.length !== 5 || parts[0] !== "enc" || parts[1] !== "v1") {
     throw new Error("invalid encrypted integration value");
   }
-  const iv = Buffer.from(parts[3]!, "base64url");
-  const tag = Buffer.from(parts[4]!, "base64url");
-  const ciphertext = Buffer.from(parts[5]!, "base64url");
+  const iv = Buffer.from(parts[2]!, "base64url");
+  const tag = Buffer.from(parts[3]!, "base64url");
+  const ciphertext = Buffer.from(parts[4]!, "base64url");
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([
