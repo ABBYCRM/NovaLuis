@@ -96,8 +96,15 @@ jobs:
       - name: Build API
         run: pnpm run build:api
 
-      - name: Validate Python syntax
-        run: python -m compileall -q .
+      - name: Validate tracked Python syntax
+        run: |
+          mapfile -d '' python_files < <(git ls-files -z -- '*.py')
+          if [ "${#python_files[@]}" -eq 0 ]; then
+            echo 'No tracked Python files found.'
+            exit 0
+          fi
+          printf 'Compiling %s tracked Python files.\n' "${#python_files[@]}"
+          python -m py_compile "${python_files[@]}"
 
       - name: Build production image
         run: docker build --tag nova-luis:verify .
