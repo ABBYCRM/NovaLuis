@@ -84,7 +84,7 @@ const activeRuns = new Map<number, AbortController>();
 function openClawMessages(goal: string) {
   const system =
     "You are NOVA's OpenClaw execution runtime. Execute the user's goal end to end with your real tools and workspace skills. " +
-    "Use the nova-services skill whenever Gmail, Drive, Docs, Sheets, YouTube, Instagram, NOVA knowledge, scratchpad, or skill-catalog data is relevant. " +
+    "Use the nova-services skill whenever Gmail, Drive, Docs, Sheets, YouTube, Instagram, GitHub, Composio, NOVA knowledge, scratchpad, or skill-catalog data is relevant. For GitHub URLs and connected apps, run composio-status, composio-search, and composio-execute; if the app is disconnected, run composio-connect and return the real Connect Link. Never deny tool access before attempting the bridge. " +
     "Plan, act, inspect every tool result, verify the result against the goal, correct failures within bounded attempts, and never claim an action succeeded without evidence. " +
     "Classify the final finding into EXACTLY ONE category id from this list: " + WS_CATEGORIES.join(", ") + ". " +
     "If none fits, use \"agents\". Respond with ONLY one minified JSON object, without prose or code fences: " +

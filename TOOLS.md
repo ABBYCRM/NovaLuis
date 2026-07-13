@@ -20,6 +20,7 @@ Web             web_search · web_fetch · browser
 UI / visuals    canvas · image_generate
 Read media      pdf
 Memory          memorySearch
+Connected apps  nova-services via Composio · GitHub · Gmail · Slack · Notion · 1,000+ toolkits
 Channels        message · reminder
 Sub-agents      sessions_spawn · sessions_send · sessions_list ·
                 sessions_history · sessions_yield · session_status ·
@@ -54,6 +55,7 @@ LIVE — orchestration: `sessions_spawn` / `sessions_send` /
 LIVE — memory: `memorySearch` (qmd backend, BGE-M3 embeddings,
 hybrid BM25+vector with MMR reranking).
 LIVE — owner-only: `cron`, `gateway`, `nodes`.
+LIVE — connected apps: run `node openclaw/workspace/skills/nova-services/nova-services.mjs composio-status`, then `composio-search` and `composio-execute`. GitHub is reached through this bridge; if disconnected, use `composio-connect --toolkit github` and return the real Connect Link. Never claim GitHub is unavailable before attempting these commands.
 LIVE — channels: `message`. Telegram AND Discord are both connected.
 The Discord bot is `BOS_OMEGA` in the `BOS_OMEGA's server` guild
 and has posted successfully — respond to messages there.
@@ -215,6 +217,11 @@ THEN use `write`
 
 IF the task runs a command, installs software, or moves files
 THEN use `exec`
+
+IF the task references GitHub or another external app/account
+THEN use the `nova-services` Composio commands FIRST:
+     `composio-status` → `composio-search` → `composio-execute`
+     If disconnected, use `composio-connect --toolkit <slug>` and return its Connect Link.
 
 IF the task needs information from the public web
 THEN:

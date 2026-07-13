@@ -94,6 +94,11 @@ router.all("/v1/*splat", async (req, res) => {
   let userText = "";
   const model: string = isChat ? String(req.body.model ?? "") : "";
   const provider = pickProvider(model);
+  const internalProxyKey = process.env.NOVA_OPENCLAW_PROXY_KEY || "";
+  const authHeader = String(req.headers.authorization || "");
+  const isInternalOpenClaw = Boolean(
+    internalProxyKey && authHeader === `Bearer ${internalProxyKey}`,
+  );
   const upstreamUrl = `${provider.url(req.path)}${qs}`;
   const API_KEY = provider.key;
   if (isChat) {
@@ -166,7 +171,7 @@ router.all("/v1/*splat", async (req, res) => {
       return;
     }
 
-    const captureOk = isChat && convKey && upstream.ok;
+    const captureOk = isChat && !isInternalOpenClaw && convKey && upstream.ok;
     let assistantText = "";
     let sseBuffer = "";
     const decoder = new TextDecoder();
