@@ -17,8 +17,16 @@ jobs:
     timeout-minutes: 35
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Check out exact source revision
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git init --quiet
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c http.extraheader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" fetch --quiet --depth=1 origin "${CHECKOUT_SHA}"
+          git checkout --quiet FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${CHECKOUT_SHA}"
 
       - name: Set up Node 24
         uses: actions/setup-node@v4
