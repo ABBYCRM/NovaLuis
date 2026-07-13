@@ -6,10 +6,9 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const ROOT = process.cwd();
-const OUT_DIR = path.join(ROOT, "audit");
+const OUT = path.join(ROOT, "audit");
 const STRICT = process.argv.includes("--strict");
-
-const EXCLUDED_DIRS = new Set([
+const SKIP_DIRS = new Set([
   ".git",
   ".nova-data",
   "node_modules",
@@ -20,37 +19,13 @@ const EXCLUDED_DIRS = new Set([
   ".cache",
   "audit",
 ]);
-
 const TEXT_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".js",
-  ".mjs",
-  ".cjs",
-  ".jsx",
-  ".py",
-  ".sh",
-  ".bash",
-  ".html",
-  ".css",
-  ".scss",
-  ".json",
-  ".jsonl",
-  ".yaml",
-  ".yml",
-  ".toml",
-  ".md",
-  ".txt",
-  ".sql",
-  ".graphql",
-  ".gql",
-  ".xml",
-  ".env.example",
+  ".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx",
+  ".py", ".sh", ".bash", ".html", ".css", ".scss", ".json",
+  ".jsonl", ".yaml", ".yml", ".toml", ".md", ".txt", ".sql",
+  ".graphql", ".gql", ".xml", ".env.example",
 ]);
-
-const SPECIAL_TEXT_FILES = new Set([
+const SPECIAL_FILES = new Set([
   ".dockerignore",
   ".gitignore",
   ".npmrc",
@@ -61,160 +36,171 @@ const SPECIAL_TEXT_FILES = new Set([
   "Procfile",
   "Makefile",
 ]);
-
 const CODE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".js",
-  ".mjs",
-  ".cjs",
-  ".jsx",
-  ".py",
-  ".sh",
-  ".bash",
+  ".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx",
+  ".py", ".sh", ".bash",
 ]);
-
 const STRUCTURED_EXTENSIONS = new Set([
-  ".json",
-  ".jsonl",
-  ".yaml",
-  ".yml",
-  ".toml",
+  ".json", ".jsonl", ".yaml", ".yml", ".toml",
+]);
+const NATIVE_FENCE_EXTENSIONS = new Set([
+  ...STRUCTURED_EXTENSIONS,
+  ...CODE_EXTENSIONS,
+  ".html",
+  ".css",
+  ".scss",
+  ".xml",
 ]);
 
-const SECRET_SIGNATURES = [
-  ["github-token", /\b(?:github_pat_|ghp_)[A-Za-z0-9_\-]{16,}/g],
-  ["openai-token", /\bsk-(?:proj-|service-)?[A-Za-z0-9_\-]{20,}/g],
-  ["kimi-token", /\bsk-kimi-[A-Za-z0-9_\-]{16,}/g],
-  ["render-token", /\brnd_[A-Za-z0-9_\-]{16,}/g],
-  ["tavily-token", /\btvly-[A-Za-z0-9_\-]{16,}/g],
-  ["firecrawl-token", /\bfc-[A-Za-z0-9_\-]{16,}/g],
-  ["steel-token", /\bste-[A-Za-z0-9_\-]{16,}/g],
-  ["resend-token", /\bre_[A-Za-z0-9_\-]{16,}/g],
-  ["pinecone-token", /\bpcsk_[A-Za-z0-9_\-]{16,}/g],
-  ["e2b-token", /\be2b_[A-Za-z0-9_\-]{16,}/g],
-  ["scrapfly-token", /\bscp-live-[A-Za-z0-9_\-]{16,}/g],
-  ["composio-token", /\b(?:ak_|oak_)[A-Za-z0-9_\-]{16,}/g],
-  ["generic-private-key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g],
+const pattern = (...parts) => new RegExp(parts.join(""), "g");
+const insensitivePattern = (...parts) => new RegExp(parts.join(""), "gi");
+const SECRET_PATTERNS = [
+  ["github-token", pattern("\\b(?:github", "_pat_|gh", "p_)[A-Za-z0-9_-]{16,}")],
+  ["openai-token", pattern("\\bsk", "-(?:proj-|service-)?[A-Za-z0-9_-]{20,}")],
+  ["kimi-token", pattern("\\bsk", "-kimi-[A-Za-z0-9_-]{16,}")],
+  ["render-token", pattern("\\brnd", "_[A-Za-z0-9_-]{16,}")],
+  ["tavily-token", pattern("\\btvly", "-[A-Za-z0-9_-]{16,}")],
+  ["firecrawl-token", pattern("\\bfc", "-[A-Za-z0-9_-]{16,}")],
+  ["steel-token", pattern("\\bste", "-[A-Za-z0-9_-]{16,}")],
+  ["resend-token", pattern("\\bre", "_[A-Za-z0-9_-]{16,}")],
+  ["pinecone-token", pattern("\\bpcsk", "_[A-Za-z0-9_-]{16,}")],
+  ["e2b-token", pattern("\\be2b", "_[A-Za-z0-9_-]{16,}")],
+  ["scrapfly-token", pattern("\\bscp", "-live-[A-Za-z0-9_-]{16,}")],
+  ["composio-token", pattern("\\b(?:a", "k_|oa", "k_)[A-Za-z0-9_-]{16,}")],
+  [
+    "credential-url",
+    insensitivePattern(
+      "\\b(?:postgres(?:ql)?|mysql|mongodb(?:\\+srv)?):\\/\\/",
+      "[^:\\s\"'\\/]+:[^@\\s\"']+@",
+    ),
+  ],
+  [
+    "private-key",
+    pattern("-----BEGIN ", "(?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+  ],
 ];
+const ASSIGNMENT =
+  /^\s*([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL))\s*=\s*(.+?)\s*$/;
+const SAFE_ASSIGNMENT =
+  /^(?:"?\$\{|"?\{env:|"?<|"?example|"?changeme|"?replace|"?proxy|"?redacted|"?none|"?null|"?"?$)/i;
 
-const CREDENTIAL_ASSIGNMENT = /^\s*([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL))\s*=\s*(.+?)\s*$/;
-const SAFE_ASSIGNMENT_VALUES = /^(?:"?\$\{|"?\{env:|"?<|"?example|"?changeme|"?replace|"?proxy|"?redacted|"?none|"?null|"?"?$)/i;
-
-function sha256(buffer) {
-  return crypto.createHash("sha256").update(buffer).digest("hex");
-}
-
-function rel(file) {
+function relative(file) {
   return path.relative(ROOT, file).split(path.sep).join("/");
 }
-
-function isTextCandidate(file) {
+function digest(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+function candidate(file) {
   const base = path.basename(file);
-  const extension = path.extname(base).toLowerCase();
-  return SPECIAL_TEXT_FILES.has(base) || TEXT_EXTENSIONS.has(extension);
+  return SPECIAL_FILES.has(base) || TEXT_EXTENSIONS.has(path.extname(base).toLowerCase());
 }
-
-function walk(dir, files = []) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+function walk(directory, output = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (entry.name === ".DS_Store") continue;
-    const absolute = path.join(dir, entry.name);
+    const absolute = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (!EXCLUDED_DIRS.has(entry.name)) walk(absolute, files);
-      continue;
+      if (!SKIP_DIRS.has(entry.name)) walk(absolute, output);
+    } else if (entry.isFile() && candidate(absolute)) {
+      output.push(absolute);
     }
-    if (entry.isFile() && isTextCandidate(absolute)) files.push(absolute);
   }
-  return files;
+  return output;
 }
-
-function looksGenerated(text, filePath) {
-  const head = text.slice(0, 1200);
+function generated(text, file) {
+  const head = text.slice(0, 1_200);
   return (
     /DO NOT EDIT THIS FILE[\s\S]{0,120}generated/i.test(head) ||
     /generated file/i.test(head) ||
-    /\.min\.js$/i.test(filePath)
+    /\.min\.js$/i.test(file)
   );
 }
-
-function runtimeRole(filePath) {
-  const p = rel(filePath);
-  if (/\/routes\//.test(p)) return "http-route";
-  if (/\/lib\//.test(p)) return "runtime-library";
-  if (/worker|daemon|poll-events|server\.(?:js|mjs|ts)$/.test(p)) return "runtime-process";
-  if (/build\.(?:js|mjs|ts)$|Dockerfile|railway\.json|fly\.toml|\.replit$/.test(p)) return "build-deploy";
-  if (/public\/|index\.html$|\.css$/.test(p)) return "ui-runtime";
-  if (/test|spec/.test(p)) return "test";
-  if (/package\.json$|tsconfig|pnpm-workspace|\.npmrc$/.test(p)) return "package-config";
-  if (/\.md$/.test(p)) return "documentation";
+function role(file) {
+  const name = relative(file);
+  if (/\/routes\//.test(name)) return "http-route";
+  if (/\/lib\//.test(name)) return "runtime-library";
+  if (/worker|daemon|poll-events|server\.(?:js|mjs|ts)$/.test(name)) return "runtime-process";
+  if (/build\.(?:js|mjs|ts)$|Dockerfile|railway\.json|fly\.toml|\.replit$/.test(name)) return "build-deploy";
+  if (/public\/|index\.html$|\.css$/.test(name)) return "ui-runtime";
+  if (/test|spec/.test(name)) return "test";
+  if (/package\.json$|tsconfig|pnpm-workspace|\.npmrc$/.test(name)) return "package-config";
+  if (/\.md$/.test(name)) return "documentation";
   return "source-config";
 }
-
-function extractImports(text) {
-  const imports = new Set();
-  const patterns = [
+function imports(text) {
+  const found = new Set();
+  for (const expression of [
     /\bfrom\s+["']([^"']+)["']/g,
     /\bimport\s*["']([^"']+)["']/g,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
     /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) imports.add(match[1]);
+  ]) {
+    for (const match of text.matchAll(expression)) found.add(match[1]);
   }
-  return [...imports].sort();
+  return [...found].sort();
 }
-
-function scanSecrets(text, filePath) {
+function documentation(file) {
+  const name = relative(file).toLowerCase();
+  const extension = path.extname(name);
+  return (
+    extension === ".md" ||
+    extension === ".txt" ||
+    extension === ".example" ||
+    name.startsWith("attached_assets/") ||
+    name.includes("/references/") ||
+    name.includes("/examples/") ||
+    name.includes("/templates/")
+  );
+}
+function placeholder(line) {
+  return /(?:\.\.\.|<[^>]+>|your[_ -]|replace|changeme|placeholder|example|sample|dummy|test[-_]|\[redacted\]|\{env:|process\.env)/i.test(line);
+}
+function secretScan(text, file) {
   const findings = [];
+  const warnings = [];
+  const docs = documentation(file);
   const lines = text.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    for (const [kind, pattern] of SECRET_SIGNATURES) {
-      pattern.lastIndex = 0;
-      if (pattern.test(line)) {
-        findings.push({ path: rel(filePath), line: index + 1, kind });
-      }
+    for (const [kind, expression] of SECRET_PATTERNS) {
+      expression.lastIndex = 0;
+      if (!expression.test(line)) continue;
+      const item = { path: relative(file), line: index + 1, kind };
+      if (docs || placeholder(line)) warnings.push(item);
+      else findings.push(item);
     }
-    const assignment = CREDENTIAL_ASSIGNMENT.exec(line);
-    if (assignment) {
-      const value = assignment[2].trim();
-      if (!SAFE_ASSIGNMENT_VALUES.test(value) && !value.startsWith("process.env")) {
-        findings.push({
-          path: rel(filePath),
-          line: index + 1,
-          kind: `credential-assignment:${assignment[1]}`,
-        });
-      }
-    }
+    const assignment = ASSIGNMENT.exec(line);
+    if (!assignment) continue;
+    const value = assignment[2].trim();
+    if (SAFE_ASSIGNMENT.test(value) || value.startsWith("process.env")) continue;
+    warnings.push({
+      path: relative(file),
+      line: index + 1,
+      kind: `credential-assignment:${assignment[1]}`,
+    });
   }
-  return findings;
+  return { findings, warnings };
 }
-
-function parseJson(text, filePath) {
+function jsonError(text, file) {
   try {
     JSON.parse(text);
     return null;
   } catch (error) {
     return {
-      path: rel(filePath),
+      path: relative(file),
       check: "json-parse",
       message: error instanceof Error ? error.message : String(error),
     };
   }
 }
-
-function parseJsonLines(text, filePath) {
+function jsonlErrors(text, file) {
   const errors = [];
-  const lines = text.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!lines[index].trim()) continue;
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
     try {
-      JSON.parse(lines[index]);
+      JSON.parse(line);
     } catch (error) {
       errors.push({
-        path: rel(filePath),
+        path: relative(file),
         check: "jsonl-parse",
         line: index + 1,
         message: error instanceof Error ? error.message : String(error),
@@ -223,158 +209,125 @@ function parseJsonLines(text, filePath) {
   }
   return errors;
 }
-
-function nodeSyntaxCheck(filePath) {
-  const result = spawnSync(process.execPath, ["--check", filePath], {
+function syntaxError(file) {
+  const result = spawnSync(process.execPath, ["--check", file], {
     cwd: ROOT,
     encoding: "utf8",
     timeout: 30_000,
   });
   if (result.status === 0) return null;
   return {
-    path: rel(filePath),
+    path: relative(file),
     check: "node-syntax",
     exitCode: result.status,
-    message: String(result.stderr || result.stdout || "syntax check failed").slice(0, 2000),
+    message: String(result.stderr || result.stdout || "syntax check failed").slice(0, 2_000),
+  };
+}
+function fenceError(text, file) {
+  const extension = path.extname(file).toLowerCase();
+  if (!NATIVE_FENCE_EXTENSIONS.has(extension)) return null;
+  if (!text.trimStart().startsWith("```")) return null;
+  return {
+    path: relative(file),
+    check: "markdown-fence-in-native-file",
+    message: "Native-format file begins with a Markdown code fence.",
   };
 }
 
-function markdownFenceMismatch(text, filePath) {
-  const extension = path.extname(filePath).toLowerCase();
-  if (extension === ".md") return null;
-  const first = text.trimStart().slice(0, 12);
-  if (first.startsWith("```")) {
-    return {
-      path: rel(filePath),
-      check: "markdown-fence-in-native-file",
-      message: "Native-format file begins with a Markdown code fence.",
-    };
-  }
-  return null;
-}
-
-fs.mkdirSync(OUT_DIR, { recursive: true });
-
-const files = walk(ROOT).sort((a, b) => rel(a).localeCompare(rel(b)));
+fs.mkdirSync(OUT, { recursive: true });
+const files = walk(ROOT).sort((left, right) => relative(left).localeCompare(relative(right)));
 const records = [];
 const errors = [];
 const secretFindings = [];
+const credentialExamples = [];
 
-for (const filePath of files) {
-  const buffer = fs.readFileSync(filePath);
+for (const file of files) {
+  const buffer = fs.readFileSync(file);
   const text = buffer.toString("utf8");
-  const extension = path.extname(filePath).toLowerCase();
-  const record = {
-    path: rel(filePath),
+  const extension = path.extname(file).toLowerCase();
+  records.push({
+    path: relative(file),
     bytes: buffer.length,
     lines: text === "" ? 0 : text.split(/\r?\n/).length,
-    sha256: sha256(buffer),
-    extension: extension || path.basename(filePath),
-    role: runtimeRole(filePath),
-    generated: looksGenerated(text, filePath),
-    imports: CODE_EXTENSIONS.has(extension) ? extractImports(text) : [],
-  };
-  records.push(record);
-
-  const fenceError = markdownFenceMismatch(text, filePath);
-  if (fenceError) errors.push(fenceError);
-
+    sha256: digest(buffer),
+    extension: extension || path.basename(file),
+    role: role(file),
+    generated: generated(text, file),
+    imports: CODE_EXTENSIONS.has(extension) ? imports(text) : [],
+  });
+  const fence = fenceError(text, file);
+  if (fence) errors.push(fence);
   if (extension === ".json") {
-    const jsonError = parseJson(text, filePath);
-    if (jsonError) errors.push(jsonError);
+    const error = jsonError(text, file);
+    if (error) errors.push(error);
   } else if (extension === ".jsonl") {
-    errors.push(...parseJsonLines(text, filePath));
+    errors.push(...jsonlErrors(text, file));
   }
-
   if ([".js", ".mjs", ".cjs"].includes(extension)) {
-    const syntaxError = nodeSyntaxCheck(filePath);
-    if (syntaxError) errors.push(syntaxError);
+    const error = syntaxError(file);
+    if (error) errors.push(error);
   }
-
-  secretFindings.push(...scanSecrets(text, filePath));
+  const secrets = secretScan(text, file);
+  secretFindings.push(...secrets.findings);
+  credentialExamples.push(...secrets.warnings);
 }
 
-const roleCounts = Object.fromEntries(
-  [...new Set(records.map((record) => record.role))]
-    .sort()
-    .map((role) => [role, records.filter((record) => record.role === role).length]),
-);
-
-const extensionCounts = Object.fromEntries(
-  [...new Set(records.map((record) => record.extension))]
-    .sort()
-    .map((extension) => [
-      extension,
-      records.filter((record) => record.extension === extension).length,
-    ]),
-);
-
+function counts(property) {
+  return Object.fromEntries(
+    [...new Set(records.map((record) => record[property]))]
+      .sort()
+      .map((value) => [value, records.filter((record) => record[property] === value).length]),
+  );
+}
 const report = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
-  root: ".",
   strict: STRICT,
   summary: {
     files: records.length,
     generatedFiles: records.filter((record) => record.generated).length,
     parseOrSyntaxErrors: errors.length,
     secretFindings: secretFindings.length,
-    roleCounts,
-    extensionCounts,
+    credentialExamples: credentialExamples.length,
+    roleCounts: counts("role"),
+    extensionCounts: counts("extension"),
   },
   files: records,
   errors,
   secretFindings,
+  credentialExamples,
 };
 
-fs.writeFileSync(path.join(OUT_DIR, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+fs.writeFileSync(path.join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+fs.writeFileSync(path.join(OUT, "source-files.txt"), `${records.map((record) => record.path).join("\n")}\n`);
+fs.writeFileSync(path.join(OUT, "source-files.nul"), Buffer.from(`${records.map((record) => record.path).join("\0")}\0`));
 fs.writeFileSync(
-  path.join(OUT_DIR, "source-files.txt"),
-  `${records.map((record) => record.path).join("\n")}\n`,
+  path.join(OUT, "report.md"),
+  [
+    "# Repository Audit",
+    "",
+    `- Files inventoried: ${report.summary.files}`,
+    `- Parse/syntax errors: ${report.summary.parseOrSyntaxErrors}`,
+    `- High-confidence secret indicators: ${report.summary.secretFindings}`,
+    `- Credential examples/warnings: ${report.summary.credentialExamples}`,
+    "",
+    "## Parse and syntax findings",
+    "",
+    ...(errors.length ? errors.map((error) => `- ${error.path}: ${error.check} — ${error.message}`) : ["- None"]),
+    "",
+    "## High-confidence secret indicators",
+    "",
+    ...(secretFindings.length ? secretFindings.map((item) => `- ${item.path}:${item.line} — ${item.kind} (redacted)`) : ["- None"]),
+    "",
+    "## Credential examples and warnings",
+    "",
+    ...(credentialExamples.length ? credentialExamples.map((item) => `- ${item.path}:${item.line} — ${item.kind} (example redacted)`) : ["- None"]),
+    "",
+    "## Inventory",
+    "",
+    ...records.map((record) => `- ${record.path} — ${record.role}; ${record.lines} lines; sha256 ${record.sha256}${record.generated ? "; generated" : ""}`),
+    "",
+  ].join("\n"),
 );
-fs.writeFileSync(
-  path.join(OUT_DIR, "source-files.nul"),
-  Buffer.from(`${records.map((record) => record.path).join("\0")}\0`, "utf8"),
-);
-
-const markdown = [
-  "# Repository Audit",
-  "",
-  `- Files inventoried: ${report.summary.files}`,
-  `- Generated files identified: ${report.summary.generatedFiles}`,
-  `- Parse/syntax errors: ${report.summary.parseOrSyntaxErrors}`,
-  `- Secret indicators: ${report.summary.secretFindings}`,
-  "",
-  "## Role counts",
-  "",
-  ...Object.entries(roleCounts).map(([role, count]) => `- ${role}: ${count}`),
-  "",
-  "## Parse and syntax findings",
-  "",
-  ...(errors.length
-    ? errors.map((error) => `- ${error.path}: ${error.check} — ${error.message}`)
-    : ["- None"]),
-  "",
-  "## Secret indicators",
-  "",
-  ...(secretFindings.length
-    ? secretFindings.map(
-        (finding) => `- ${finding.path}:${finding.line} — ${finding.kind} (value redacted)`,
-      )
-    : ["- None"]),
-  "",
-  "## Inventory",
-  "",
-  ...records.map(
-    (record) =>
-      `- ${record.path} — ${record.role}; ${record.lines} lines; sha256 ${record.sha256}${record.generated ? "; generated" : ""}`,
-  ),
-  "",
-].join("\n");
-
-fs.writeFileSync(path.join(OUT_DIR, "report.md"), markdown);
 console.log(JSON.stringify(report.summary, null, 2));
-
-if (STRICT && (errors.length > 0 || secretFindings.length > 0)) {
-  process.exitCode = 1;
-}
+if (STRICT && (errors.length || secretFindings.length)) process.exitCode = 1;
