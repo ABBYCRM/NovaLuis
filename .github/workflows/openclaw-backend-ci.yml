@@ -71,7 +71,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: typecheck-diagnostics
-          path: /tmp/typecheck.log
+          path: |
+            /tmp/typecheck.log
+            artifacts/api-server/src/routes/work-tree.ts
+            artifacts/api-server/src/lib/scratchpad.ts
+            artifacts/api-server/src/lib/knowledge.ts
           if-no-files-found: ignore
           retention-days: 1
 
