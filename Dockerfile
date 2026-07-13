@@ -6,7 +6,7 @@ FROM node:22-slim AS builder
 WORKDIR /app
 
 # Keep the package manager identical to package.json#packageManager.
-RUN npm install -g pnpm@9.15.4
+RUN npm install -g pnpm@10.32.1
 
 # Copy workspace manifests before source files so dependency installation can
 # remain cached when application code changes.
