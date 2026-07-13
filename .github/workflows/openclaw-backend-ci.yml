@@ -66,6 +66,15 @@ jobs:
           fi
           tail -n 30 /tmp/typecheck.log
 
+      - name: Upload typecheck diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-diagnostics
+          path: /tmp/typecheck.log
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Build API bundle
         run: pnpm --filter @workspace/api-server run build
 
