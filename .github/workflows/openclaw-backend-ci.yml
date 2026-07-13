@@ -54,7 +54,17 @@ jobs:
           tail -n 20 /tmp/pnpm-install.log
 
       - name: Typecheck workspace
-        run: pnpm run typecheck
+        run: |
+          set +e
+          pnpm run typecheck > /tmp/typecheck.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "TypeScript typecheck failed; final diagnostic lines:" >&2
+            tail -n 100 /tmp/typecheck.log >&2
+            exit "$status"
+          fi
+          tail -n 30 /tmp/typecheck.log
 
       - name: Build API bundle
         run: pnpm --filter @workspace/api-server run build
