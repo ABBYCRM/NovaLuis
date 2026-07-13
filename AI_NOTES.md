@@ -4,6 +4,19 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-13 — Repair frozen install and establish repository verification
+
+- **Observed failure:** `pnpm install --frozen-lockfile --shamefully-hoist`
+  failed in GitHub Actions with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
+- **Root cause:** the repository pinned pnpm 9 while `pnpm-workspace.yaml` and
+  `pnpm-lock.yaml` use the pnpm 10 workspace-level configuration model.
+- **Repair:** pin `pnpm@10.32.1` in `package.json`, use the same version in the
+  production Docker builder, and add a main-branch verification workflow.
+- **Verification scope:** JSON parse, frozen dependency install, TypeScript
+  typecheck, API build, Python bytecode compilation, and Docker build.
+- **Preservation:** no application source or existing runtime behavior was
+  removed.
+
 ## 2026-07-13 — Trigger Render deployment after package manifest repair
 
 - **Objective:** Trigger a fresh Render auto-deploy after repairing the root
