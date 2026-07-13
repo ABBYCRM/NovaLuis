@@ -4,6 +4,29 @@ All notable changes to **NOVA** (primary twin of SUPERNOVA/ABBY).
 
 ---
 
+## 2026-07-13 — Add Composio connected apps and repair normal chat tool execution
+
+Root cause:
+- The browser chat posted directly to the raw `/api/v1/chat/completions` model proxy. Only Work Tree reached OpenClaw, so normal chat could describe tools but could not invoke them.
+- The Settings integration panel only exposed hard-coded Google, YouTube and Instagram credential fields.
+- The `nova-services` skill had no Composio or GitHub discovery/execution commands, causing generic GitHub capability denials.
+
+Summary:
+- Added `/api/agent/v1/chat/completions` and routed normal browser chat through the real loopback OpenClaw agent runtime.
+- Kept `/api/v1/*` as the internal model-provider path, avoiding a recursive OpenClaw proxy loop.
+- Added a Composio Tool Router client with persistent stable-user sessions.
+- Added catalog, connection status, hosted Connect Link, natural-language tool search and tool execution routes.
+- Added a searchable dropdown-style Composio app showcase to Settings with featured GitHub, Gmail, Calendar, Drive, Sheets, Slack, Notion, Linear, Shopify, HubSpot, Supabase and Discord entries.
+- Added connection badges, OAuth popup return handling, catalog search, masked project-key storage and PIN protection.
+- Added `composio-status`, `composio-apps`, `composio-connections`, `composio-connect`, `composio-search`, `composio-execute` and `github-repo` commands to the OpenClaw service skill.
+- Updated Work Tree and `TOOLS.md` so GitHub and connected-app requests must attempt the real Composio bridge before reporting a capability failure.
+- Prevented OpenClaw's internal model-provider calls from being written into scratchpad memory as duplicate user conversations.
+
+Required production acceptance:
+- Configure `COMPOSIO_API_KEY` in Render or Settings.
+- Connect GitHub through Settings.
+- Ask normal NOVA chat to analyze a repository URL and verify that it discovers and executes real GitHub tools rather than returning a generic denial.
+
 ## 2026-07-13 — Embed official OpenClaw as the Work-Tree backend
 
 Summary:
@@ -38,25 +61,19 @@ Verification:
 ## 2026-07-13 — Repair frozen dependency installation and add CI verification
 
 Summary:
-- Aligned the repository, Docker image and CI on `pnpm@10.32.1`, matching the
-  workspace configuration and lockfile format.
+- Aligned the repository, Docker image and CI on `pnpm@10.32.1`, matching the workspace configuration and lockfile format.
 - Preserved the workspace-level platform overrides in `pnpm-workspace.yaml`.
-- Added `.github/workflows/repo-verify.yml` to validate JSON, install with the
-  frozen lockfile, typecheck, build the API, compile-check Python files, and
-  build the production Docker image.
+- Added `.github/workflows/repo-verify.yml` to validate JSON, install with the frozen lockfile, typecheck, build the API, compile-check Python files, and build the production Docker image.
 
 Defect fixed:
-- `pnpm@9.15.4` rejected the existing lockfile with
-  `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` because the workspace-level overrides
-  configuration was generated for the pnpm 10 configuration model.
+- `pnpm@9.15.4` rejected the existing lockfile with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` because the workspace-level overrides configuration was generated for the pnpm 10 configuration model.
 
 ---
 
 ## 2026-07-04 — branch `2026-07-04/point-nova-at-new-supernova`
 
 Summary:
-- Point NOVA at the NEW SUPERNOVA deployment (https://supernova-ai1.onrender.com),
-  replacing the old build (supernova-ekbj.onrender.com):
+- Point NOVA at the NEW SUPERNOVA deployment (https://supernova-ai1.onrender.com), replacing the old build (supernova-ekbj.onrender.com):
   - `artifacts/nova/index.html` — both "Open Super Nova" buttons.
   - `artifacts/api-server/src/routes/work-tree.ts` — `SUPERNOVA_BASE_URL` default.
   - docs/ARCHITECTURE.md + .agents/memory/twin-system-doctrine.md.
@@ -64,10 +81,6 @@ Summary:
 - Added README.md, CHANGELOG.md, AI_NOTES.md (git policy docking).
 
 Broken / known limits:
-- Server-to-server Work-Tree dispatch also needs SUPERNOVA_API_KEY (NOVA) to
-  match the new SUPERNOVA service's OPENCLAW_API_KEY; the browser "Open Super
-  Nova" buttons work regardless. NOVA's own redeploy is controlled by its
-  Render service (separate account).
+- Server-to-server Work-Tree dispatch also needs SUPERNOVA_API_KEY (NOVA) to match the new SUPERNOVA service's OPENCLAW_API_KEY; the browser "Open Super Nova" buttons work regardless. NOVA's own redeploy is controlled by its Render service.
 
-Verified: source + rebuilt dist contain only the new URL (0 old refs);
-typecheck clean; new URL returns HTTP 200.
+Verified: source + rebuilt dist contain only the new URL (0 old refs); typecheck clean; new URL returns HTTP 200.
