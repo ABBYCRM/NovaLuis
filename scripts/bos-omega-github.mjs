@@ -16,6 +16,13 @@ function repoName(input) {
   if (!match) throw new Error("repo must be owner/name or a GitHub repository URL");
   return `${match[1]}/${match[2]}`;
 }
+function branchName(input) {
+  const value = String(input || "").trim();
+  if (!value || value.length > 200 || value.startsWith("/") || value.endsWith("/") || value.includes("..") || /[~^:?*\[\\\s]/.test(value)) {
+    throw new Error("invalid branch name");
+  }
+  return value;
+}
 function encodedPath(value) {
   return String(value || "").split("/").filter(Boolean).map((segment) => {
     if (segment === "." || segment === "..") throw new Error("path traversal is not allowed");
@@ -110,6 +117,53 @@ export async function githubSearchCode(args) {
   } catch (error) { return errorResult("github_search_failed", error?.message || error); }
 }
 
+export async function githubCreateBranch(args) {
+  try {
+    const repo = repoName(args.repo);
+    const branch = branchName(args.branch);
+    const source = String(args.source_sha || "").trim();
+    if (!/^[0-9a-f]{40}$/i.test(source)) throw new Error("source_sha must be a full 40-character commit SHA");
+    const data = await request(`/repos/${repo}/git/refs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: source }),
+    });
+    return { repo, branch, ref: data.ref, sha: data.object?.sha || source };
+  } catch (error) { return errorResult("github_branch_failed", error?.message || error); }
+}
+
+export async function githubUpdateFile(args) {
+  try {
+    const repo = repoName(args.repo);
+    const path = encodedPath(args.path);
+    const branch = branchName(args.branch);
+    const message = String(args.message || "").trim().slice(0, 1000);
+    const content = String(args.content ?? "");
+    const sha = String(args.sha || "").trim();
+    if (!path || !message) throw new Error("path and message are required");
+    if (Buffer.byteLength(content) > 1_000_000) throw new Error("content exceeds 1 MB limit");
+    if (sha && !/^[0-9a-f]{40}$/i.test(sha)) throw new Error("sha must be a full blob SHA when supplied");
+    const data = await request(`/repos/${repo}/contents/${path}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        branch,
+        content: Buffer.from(content, "utf8").toString("base64"),
+        ...(sha ? { sha } : {}),
+      }),
+    });
+    return {
+      repo,
+      branch,
+      path: data.content?.path || String(args.path),
+      contentSha: data.content?.sha || null,
+      commitSha: data.commit?.sha || null,
+      htmlUrl: data.content?.html_url || null,
+    };
+  } catch (error) { return errorResult("github_update_failed", error?.message || error); }
+}
+
 export async function githubCreateIssue(args) {
   try {
     const repo = repoName(args.repo);
@@ -128,9 +182,9 @@ export async function githubCreatePullRequest(args) {
   try {
     const repo = repoName(args.repo);
     const title = String(args.title || "").trim().slice(0, 256);
-    const head = String(args.head || "").trim();
-    const base = String(args.base || "main").trim();
-    if (!title || !head || !base) throw new Error("title, head, and base are required");
+    const head = branchName(args.head);
+    const base = branchName(args.base || "main");
+    if (!title) throw new Error("title is required");
     const data = await request(`/repos/${repo}/pulls`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
