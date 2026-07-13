@@ -1,57 +1,65 @@
-# Nova-Aura-Tools — Production Dockerfile
-# Multi-stage: builds the API server and serves the Nova static application.
-
 FROM node:22-slim AS builder
 
 WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
-# Keep the package manager identical to package.json#packageManager.
-RUN npm install -g pnpm@9.15.4
+# Copy every workspace manifest before installation so the frozen lockfile is
+# checked against the same importer set used by typecheck and production build.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY artifacts/api-server/package.json artifacts/api-server/package.json
+COPY artifacts/mockup-sandbox/package.json artifacts/mockup-sandbox/package.json
+COPY artifacts/nova/package.json artifacts/nova/package.json
+COPY lib/api-client-react/package.json lib/api-client-react/package.json
+COPY lib/api-spec/package.json lib/api-spec/package.json
+COPY lib/api-zod/package.json lib/api-zod/package.json
+COPY lib/db/package.json lib/db/package.json
+COPY scripts/package.json scripts/package.json
 
-# Copy workspace manifests before source files so dependency installation can
-# remain cached when application code changes.
-COPY pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY package.json ./
-COPY artifacts/api-server/package.json ./artifacts/api-server/
-COPY lib/api-zod/package.json ./lib/api-zod/
-COPY lib/db/package.json ./lib/db/
-COPY scripts/package.json ./scripts/
-COPY .npmrc ./
-
-# CI builds must fail when package manifests and pnpm-lock.yaml disagree.
 RUN pnpm install --frozen-lockfile --shamefully-hoist
 
-COPY lib/ ./lib/
-COPY artifacts/api-server/ ./artifacts/api-server/
-COPY artifacts/nova/ ./artifacts/nova/
-COPY scripts/ ./scripts/
-COPY skills/ ./skills/
+COPY artifacts ./artifacts
+COPY lib ./lib
+COPY scripts ./scripts
+COPY skills ./skills
+COPY tsconfig.json tsconfig.base.json ./
+COPY GOVERNANCE.json ./
 
-RUN node ./artifacts/api-server/build.mjs
+RUN pnpm run typecheck
+RUN pnpm run build:api
+RUN node --test scripts/*.test.mjs
 
 FROM node:22-slim AS runtime
 
 WORKDIR /app
-
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV NOVA_STATIC_DIR=/app/nova-static
+ENV OPENCLAW_STATE_DIR=/app/.nova-data
 
-COPY --from=builder /app/artifacts/api-server/dist ./dist
+# The API server is bundled, but the standalone Work Tree daemon still resolves
+# pg and its transitive packages through pnpm's root store.
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/artifacts/api-server/package.json ./artifacts/api-server/package.json
+COPY --from=builder /app/artifacts/api-server/dist ./artifacts/api-server/dist
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/skills ./skills
+COPY --from=builder /app/GOVERNANCE.json ./GOVERNANCE.json
+
+# Preserve the existing deployed static application layout.
 COPY --from=builder /app/artifacts/nova/index.html ./nova-static/index.html
 COPY --from=builder /app/artifacts/nova/skills.html ./nova-static/skills.html
-COPY --from=builder /app/artifacts/nova/public ./nova-static/
-COPY --from=builder /app/skills ./skills
+COPY --from=builder /app/artifacts/nova/public ./nova-static
 
 COPY SOUL.md AGENTS.md DIRECTIVE.md IDENTITY.md USER.md \
-     HEARTBEAT.md TOOLS.md TASKS.md GOVERNANCE.json ./
+     HEARTBEAT.md TOOLS.md TASKS.md ./
 
-COPY --from=builder /app/scripts ./scripts
+RUN mkdir -p /app/.nova-data && chown -R node:node /app
+USER node
 
 EXPOSE 8080
 
-# The API server is PID 1 so Render stop signals and exit status are preserved.
-# The worker remains a child process of the shell and is terminated with the
-# container. A dedicated process supervisor is preferable if more daemons are
-# added later.
-CMD ["/bin/sh", "-c", "node scripts/work-tree-worker.mjs & exec node --enable-source-maps ./dist/index.mjs"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/api/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+
+CMD ["node", "scripts/container-entrypoint.mjs"]
