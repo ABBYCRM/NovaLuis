@@ -38,15 +38,29 @@ jobs:
           const fs = require('node:fs');
           const path = require('node:path');
           const ignored = new Set(['node_modules', '.git', 'dist']);
+          const failures = [];
           function walk(dir) {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
               if (ignored.has(entry.name)) continue;
               const full = path.join(dir, entry.name);
-              if (entry.isDirectory()) walk(full);
-              else if (entry.name.endsWith('.json')) JSON.parse(fs.readFileSync(full, 'utf8'));
+              if (entry.isDirectory()) {
+                walk(full);
+                continue;
+              }
+              if (!entry.name.endsWith('.json')) continue;
+              try {
+                JSON.parse(fs.readFileSync(full, 'utf8'));
+              } catch (error) {
+                failures.push(`${full}: ${error instanceof Error ? error.message : String(error)}`);
+              }
             }
           }
           walk('.');
+          if (failures.length) {
+            console.error(`Invalid JSON files (${failures.length}):`);
+            for (const failure of failures) console.error(`- ${failure}`);
+            process.exit(1);
+          }
           NODE
 
       - name: Install dependencies
