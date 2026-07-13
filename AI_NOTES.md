@@ -17,6 +17,15 @@ Working notes for AI agents/contributors. Newest first.
 - **Verified:** frozen install, full workspace typecheck, API bundle, OpenClaw config and skill discovery, production Docker build, and live-container API/UI smoke checks passed on the committed source.
 - **Remaining production truth gate:** do not claim live deployment completion until Render serves `/api/openclaw/status` as ready and one authenticated Work-Tree mission reaches `done` with `model=openclaw/default` and a non-empty report.
 
+## 2026-07-13 — Repository integrity audit corrections
+
+- **JSON evidence:** repository validation found three mislabeled or broken artifacts, not valid JSON defects: Markdown stored as `GOVERNANCE.json`, JSONC stored as `tsconfig-strict.json`, and a broken workspace governance link.
+- **JSON repair:** renamed the files to `GOVERNANCE.md` and `tsconfig-strict.jsonc`, repaired the workspace link, and updated Docker copy paths. Every actual `.json` file now parses.
+- **Python evidence:** tracked-source compilation found `scripts/agentic_demo.py` wrapped in a Markdown response with prose and code fences.
+- **Python repair:** removed only the wrapper and retained the complete 3,315-line program. CI then compiled all 1,014 tracked Python files successfully.
+- **Workflow correction:** repository Python validation uses `git ls-files '*.py'` so it inspects source under version control rather than generated pnpm dependency trees.
+- **Final proof:** Repository Verification and OpenClaw Backend CI both passed on a clean commit with no temporary repair workflow present.
+
 ## 2026-07-13 — Repair frozen install and establish repository verification
 
 - **Observed failure:** `pnpm install --frozen-lockfile --shamefully-hoist`
