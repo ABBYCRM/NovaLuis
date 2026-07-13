@@ -1,28 +1,59 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { getCredentials, setCredentials, maskFields } from "../lib/integrations";
+import {
+  getCredentials,
+  maskFields,
+  setCredentials,
+  supportedIntegrationServices,
+} from "../lib/integrations";
 import { getGoogleAccessToken, googleGet } from "../lib/google";
 
 const router = Router();
+const SERVICES = supportedIntegrationServices();
+const PROVIDER_TIMEOUT_MS = 20_000;
+const SAFE_RESOURCE_ID = /^[A-Za-z0-9_-]{5,256}$/;
 
-const SERVICES = ["google", "youtube", "instagram"] as const;
-type Service = (typeof SERVICES)[number];
-
-function isService(s: string): s is Service {
-  return (SERVICES as readonly string[]).includes(s);
+function isService(value: string): boolean {
+  return SERVICES.includes(value);
+}
+function providerSignal(): AbortSignal {
+  return AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+}
+function providerFailure(req: Request, res: Response, error: unknown): void {
+  req.log.error({ err: error }, "integration provider request failed");
+  res.status(502).json({ error: "integration provider unavailable" });
 }
 
-// ── Credential status + save ────────────────────────────────────────────────
+interface DocElement {
+  paragraph?: { elements?: { textRun?: { content?: string } }[] };
+}
+function extractDocText(doc: { body?: { content?: DocElement[] } }): string {
+  const output: string[] = [];
+  for (const element of doc.body?.content ?? []) {
+    for (const paragraphElement of element.paragraph?.elements ?? []) {
+      const text = paragraphElement.textRun?.content;
+      if (typeof text === "string") output.push(text);
+    }
+  }
+  return output.join("").slice(0, 1_000_000);
+}
 
-// Masked status of every service — only "set / not set" per field, no secrets.
-router.get("/integrations", async (_req, res) => {
-  const services: Record<string, Record<string, boolean>> = {};
-  for (const s of SERVICES) services[s] = maskFields(await getCredentials(s));
-  res.json({ services });
+router.get("/integrations", async (req, res) => {
+  try {
+    const services: Record<string, Record<string, boolean>> = {};
+    for (const service of SERVICES) {
+      services[service] = maskFields(await getCredentials(service));
+    }
+    res.json({ services });
+  } catch (error) {
+    req.log.error({ err: error }, "integration credential status failed");
+    res.status(503).json({ error: "integration credentials unavailable" });
+  }
 });
 
-const saveSchema = z.object({ fields: z.record(z.string(), z.string()) });
-
+const saveSchema = z.object({
+  fields: z.record(z.string().max(128), z.string().max(16 * 1024)),
+});
 router.post("/integrations/:service", async (req, res) => {
   const service = req.params.service;
   if (!isService(service)) {
@@ -31,169 +62,183 @@ router.post("/integrations/:service", async (req, res) => {
   }
   const parsed = saveSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "invalid body", details: parsed.error.issues });
+    res.status(400).json({ error: "invalid credential fields" });
     return;
   }
-  await setCredentials(service, parsed.data.fields);
-  res.json({ ok: true, service, fields: maskFields(await getCredentials(service)) });
-});
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function fail(res: import("express").Response, e: unknown) {
-  res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
-}
-
-interface DocElement {
-  paragraph?: { elements?: { textRun?: { content?: string } }[] };
-}
-function extractDocText(doc: { body?: { content?: DocElement[] } }): string {
-  const out: string[] = [];
-  for (const el of doc.body?.content ?? []) {
-    for (const pe of el.paragraph?.elements ?? []) {
-      const t = pe.textRun?.content;
-      if (typeof t === "string") out.push(t);
-    }
+  try {
+    await setCredentials(service, parsed.data.fields);
+    res.json({
+      ok: true,
+      service,
+      fields: maskFields(await getCredentials(service)),
+    });
+  } catch (error) {
+    req.log.error({ err: error, service }, "integration credential save failed");
+    const message = error instanceof Error ? error.message : "save failed";
+    const configurationError =
+      message.includes("INTEGRATIONS_ENCRYPTION_KEY") ||
+      message.includes("database not configured");
+    res.status(configurationError ? 503 : 400).json({
+      error: configurationError
+        ? "integration credential storage is not configured"
+        : "credential fields were rejected",
+    });
   }
-  return out.join("");
-}
-
-// ── Gmail ───────────────────────────────────────────────────────────────────
+});
 
 router.get("/integrations/gmail/messages", async (req, res) => {
   try {
     const token = await getGoogleAccessToken();
-    const max = Math.min(Math.max(Number(req.query.max ?? 10) || 10, 1), 50);
-    const q = req.query.q ? `&q=${encodeURIComponent(String(req.query.q))}` : "";
+    const maximum = Math.min(Math.max(Number(req.query.max ?? 10) || 10, 1), 25);
+    const query = String(req.query.q ?? "").slice(0, 500);
+    const url = new URL(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+    );
+    url.searchParams.set("maxResults", String(maximum));
+    if (query) url.searchParams.set("q", query);
     const list = await googleGet<{ messages?: { id: string }[] }>(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}${q}`,
+      url.toString(),
       token,
     );
-    const messages = [];
-    for (const { id } of list.messages ?? []) {
-      const m = await googleGet<{
-        snippet?: string;
-        payload?: { headers?: { name: string; value: string }[] };
-      }>(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
-        token,
-      );
-      const h = Object.fromEntries(
-        (m.payload?.headers ?? []).map((x) => [x.name, x.value]),
-      );
-      messages.push({
-        id,
-        snippet: m.snippet ?? "",
-        subject: h.Subject ?? "",
-        from: h.From ?? "",
-        date: h.Date ?? "",
-      });
-    }
+    const messages = await Promise.all(
+      (list.messages ?? []).slice(0, maximum).map(async ({ id }) => {
+        const metadataUrl = new URL(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}`,
+        );
+        metadataUrl.searchParams.set("format", "metadata");
+        for (const header of ["Subject", "From", "Date"]) {
+          metadataUrl.searchParams.append("metadataHeaders", header);
+        }
+        const message = await googleGet<{
+          snippet?: string;
+          payload?: { headers?: { name: string; value: string }[] };
+        }>(metadataUrl.toString(), token);
+        const headers = Object.fromEntries(
+          (message.payload?.headers ?? []).map((header) => [
+            header.name,
+            header.value,
+          ]),
+        );
+        return {
+          id,
+          snippet: String(message.snippet ?? "").slice(0, 1_000),
+          subject: String(headers.Subject ?? "").slice(0, 1_000),
+          from: String(headers.From ?? "").slice(0, 1_000),
+          date: String(headers.Date ?? "").slice(0, 200),
+        };
+      }),
+    );
     res.json({ messages });
-  } catch (e) {
-    fail(res, e);
+  } catch (error) {
+    providerFailure(req, res, error);
   }
 });
 
-// ── Google Sheets ─────────────────────────────────────────────────────────────
-
 router.get("/integrations/sheets/:id", async (req, res) => {
+  if (!SAFE_RESOURCE_ID.test(req.params.id)) {
+    res.status(400).json({ error: "invalid spreadsheet id" });
+    return;
+  }
   try {
     const token = await getGoogleAccessToken();
-    const range = String(req.query.range ?? "A1:Z100");
+    const range = String(req.query.range ?? "A1:Z100").slice(0, 200);
     const data = await googleGet<{ range?: string; values?: unknown[][] }>(
-      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
-        req.params.id,
-      )}/values/${encodeURIComponent(range)}`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(req.params.id)}/values/${encodeURIComponent(range)}`,
       token,
     );
     res.json({ range: data.range ?? range, values: data.values ?? [] });
-  } catch (e) {
-    fail(res, e);
+  } catch (error) {
+    providerFailure(req, res, error);
   }
 });
 
-// ── Google Docs ───────────────────────────────────────────────────────────────
-
 router.get("/integrations/docs/:id", async (req, res) => {
+  if (!SAFE_RESOURCE_ID.test(req.params.id)) {
+    res.status(400).json({ error: "invalid document id" });
+    return;
+  }
   try {
     const token = await getGoogleAccessToken();
-    const doc = await googleGet<{
+    const document = await googleGet<{
       title?: string;
       body?: { content?: DocElement[] };
     }>(
       `https://docs.googleapis.com/v1/documents/${encodeURIComponent(req.params.id)}`,
       token,
     );
-    res.json({ title: doc.title ?? "", text: extractDocText(doc) });
-  } catch (e) {
-    fail(res, e);
+    res.json({
+      title: String(document.title ?? "").slice(0, 1_000),
+      text: extractDocText(document),
+    });
+  } catch (error) {
+    providerFailure(req, res, error);
   }
 });
-
-// ── Google Drive ──────────────────────────────────────────────────────────────
 
 router.get("/integrations/drive/files", async (req, res) => {
   try {
     const token = await getGoogleAccessToken();
-    const q = req.query.q ? `&q=${encodeURIComponent(String(req.query.q))}` : "";
-    const data = await googleGet<{ files?: unknown[] }>(
-      `https://www.googleapis.com/drive/v3/files?pageSize=25&fields=files(id,name,mimeType,modifiedTime,webViewLink)${q}`,
-      token,
+    const url = new URL("https://www.googleapis.com/drive/v3/files");
+    url.searchParams.set("pageSize", "25");
+    url.searchParams.set(
+      "fields",
+      "files(id,name,mimeType,modifiedTime,webViewLink)",
     );
-    res.json({ files: data.files ?? [] });
-  } catch (e) {
-    fail(res, e);
+    const query = String(req.query.q ?? "").slice(0, 500);
+    if (query) url.searchParams.set("q", query);
+    const data = await googleGet<{ files?: unknown[] }>(url.toString(), token);
+    res.json({ files: (data.files ?? []).slice(0, 25) });
+  } catch (error) {
+    providerFailure(req, res, error);
   }
 });
-
-// ── YouTube (Data API key) ────────────────────────────────────────────────────
 
 router.get("/integrations/youtube/search", async (req, res) => {
   try {
-    const c = await getCredentials("youtube");
-    if (!c.api_key) {
-      res.status(400).json({ error: "YouTube API key not set" });
+    const credentials = await getCredentials("youtube");
+    if (!credentials.api_key) {
+      res.status(409).json({ error: "YouTube API key not configured" });
       return;
     }
-    const query = encodeURIComponent(String(req.query.q ?? ""));
-    const r = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${query}&key=${c.api_key}`,
-    );
-    if (!r.ok) {
-      res.status(502).json({ error: `YouTube API ${r.status}: ${await r.text()}` });
+    const query = String(req.query.q ?? "").trim().slice(0, 500);
+    if (!query) {
+      res.status(400).json({ error: "query is required" });
       return;
     }
-    res.json(await r.json());
-  } catch (e) {
-    fail(res, e);
+    const url = new URL("https://www.googleapis.com/youtube/v3/search");
+    url.searchParams.set("part", "snippet");
+    url.searchParams.set("type", "video");
+    url.searchParams.set("maxResults", "10");
+    url.searchParams.set("q", query);
+    url.searchParams.set("key", credentials.api_key);
+    const response = await fetch(url, { signal: providerSignal() });
+    if (!response.ok) throw new Error(`YouTube HTTP ${response.status}`);
+    res.json(await response.json());
+  } catch (error) {
+    providerFailure(req, res, error);
   }
 });
 
-// ── Instagram (Meta Graph access token) ───────────────────────────────────────
-
 router.get("/integrations/instagram/media", async (req, res) => {
   try {
-    const c = await getCredentials("instagram");
-    if (!c.access_token) {
-      res.status(400).json({ error: "Instagram access token not set" });
+    const credentials = await getCredentials("instagram");
+    if (!credentials.access_token) {
+      res.status(409).json({ error: "Instagram access token not configured" });
       return;
     }
-    const fields = "id,caption,media_type,media_url,permalink,timestamp";
-    const r = await fetch(
-      `https://graph.instagram.com/me/media?fields=${fields}&access_token=${encodeURIComponent(
-        c.access_token,
-      )}`,
+    const url = new URL("https://graph.instagram.com/me/media");
+    url.searchParams.set(
+      "fields",
+      "id,caption,media_type,media_url,permalink,timestamp",
     );
-    if (!r.ok) {
-      res
-        .status(502)
-        .json({ error: `Instagram API ${r.status}: ${await r.text()}` });
-      return;
-    }
-    res.json(await r.json());
-  } catch (e) {
-    fail(res, e);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${credentials.access_token}` },
+      signal: providerSignal(),
+    });
+    if (!response.ok) throw new Error(`Instagram HTTP ${response.status}`);
+    res.json(await response.json());
+  } catch (error) {
+    providerFailure(req, res, error);
   }
 });
 
