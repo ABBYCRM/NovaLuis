@@ -1,0 +1,123 @@
+name: Commit Verified DB Repair
+
+on:
+  push:
+    branches:
+      - agent/embed-openclaw-backend
+
+permissions:
+  contents: write
+
+jobs:
+  commit-repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/embed-openclaw-backend
+          fetch-depth: 1
+
+      - name: Apply exact repair proven by OpenClaw Backend CI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path("artifacts/api-server/src/routes/work-tree.ts"): (
+                  '''type DbModule = typeof import("@workspace/db");
+          let dbModulePromise: Promise<DbModule | null> | null = null;
+          async function getDb(): Promise<DbModule | null> {
+            if (!process.env.DATABASE_URL) return null;
+            if (!dbModulePromise) {
+              dbModulePromise = import("@workspace/db").catch(() => null);
+            }
+            return dbModulePromise;
+          }''',
+                  '''type DbModule = typeof import("@workspace/db");
+          type ReadyDbModule = DbModule & { db: NonNullable<DbModule["db"]> };
+          let dbModulePromise: Promise<ReadyDbModule | null> | null = null;
+          async function getDb(): Promise<ReadyDbModule | null> {
+            if (!process.env.DATABASE_URL) return null;
+            if (!dbModulePromise) {
+              dbModulePromise = import("@workspace/db")
+                .then((mod) => (mod.db ? (mod as ReadyDbModule) : null))
+                .catch(() => null);
+            }
+            return dbModulePromise;
+          }''',
+              ),
+              Path("artifacts/api-server/src/lib/scratchpad.ts"): (
+                  '''type DbModule = typeof import("@workspace/db");
+
+          let dbModulePromise: Promise<DbModule | null> | null = null;
+
+          async function getDb(): Promise<DbModule | null> {
+            if (!process.env.DATABASE_URL) return null;
+            if (!dbModulePromise) {
+              dbModulePromise = import("@workspace/db").catch(() => null);
+            }
+            return dbModulePromise;
+          }''',
+                  '''type DbModule = typeof import("@workspace/db");
+          type ReadyDbModule = DbModule & { db: NonNullable<DbModule["db"]> };
+
+          let dbModulePromise: Promise<ReadyDbModule | null> | null = null;
+
+          async function getDb(): Promise<ReadyDbModule | null> {
+            if (!process.env.DATABASE_URL) return null;
+            if (!dbModulePromise) {
+              dbModulePromise = import("@workspace/db")
+                .then((mod) => (mod.db ? (mod as ReadyDbModule) : null))
+                .catch(() => null);
+            }
+            return dbModulePromise;
+          }''',
+              ),
+              Path("artifacts/api-server/src/lib/knowledge.ts"): (
+                  '''export async function searchKnowledge(
+            query: string,
+            limit = 5,
+          ): Promise<KnowledgeHit[]> {
+            const vec = await embed(query);''',
+                  '''export async function searchKnowledge(
+            query: string,
+            limit = 5,
+          ): Promise<KnowledgeHit[]> {
+            if (!hasDatabase || !db) return [];
+            const vec = await embed(query);''',
+              ),
+          }
+
+          for path, (old, new) in replacements.items():
+              text = path.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f"{path}: repair target did not match exactly once")
+              path.write_text(text.replace(old, new, 1))
+
+          work_tree = Path("artifacts/api-server/src/routes/work-tree.ts")
+          text = work_tree.read_text()
+          old_signature = "async function dispatchToOpenClaw(mod: DbModule, runId: number, goal: string): Promise<void> {"
+          new_signature = "async function dispatchToOpenClaw(mod: ReadyDbModule, runId: number, goal: string): Promise<void> {"
+          if text.count(old_signature) != 1:
+              raise SystemExit("work-tree.ts: dispatcher signature target did not match exactly once")
+          work_tree.write_text(text.replace(old_signature, new_signature, 1))
+          PY
+          git diff --check
+          test "$(git diff --name-only | sort)" = "$(printf '%s\n' \
+            artifacts/api-server/src/lib/knowledge.ts \
+            artifacts/api-server/src/lib/scratchpad.ts \
+            artifacts/api-server/src/routes/work-tree.ts | sort)"
+
+      - name: Commit exact verified files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            artifacts/api-server/src/lib/knowledge.ts \
+            artifacts/api-server/src/lib/scratchpad.ts \
+            artifacts/api-server/src/routes/work-tree.ts
+          git diff --cached --check
+          git commit -m "fix: narrow database module before use"
+          git push origin HEAD:agent/embed-openclaw-backend
