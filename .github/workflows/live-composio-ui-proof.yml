@@ -8,6 +8,7 @@ on:
       - LIVE_COMPOSIO_UI_PROOF.json
       - .github/evidence/composio-ui-desktop.png
       - .github/evidence/composio-ui-mobile.png
+  pull_request:
 
 permissions:
   contents: write
