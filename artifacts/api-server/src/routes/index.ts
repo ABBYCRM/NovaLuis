@@ -16,14 +16,16 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use(novaConfigRouter);
 router.use(bosOmegaRouter);
-router.use(voiceRouter);
-router.use(scratchpadRouter);
 router.use(workTreeRouter);
 
-// Credentials, private knowledge, and their management surfaces require the
-// signed Work Tree session. The path prefixes are explicit so the gate cannot
-// accidentally lock unrelated routes such as BOS chat or the legacy proxy.
-router.use(["/integrations", "/knowledge"], requireWtAuth);
+// Explicit path-scoped gates prevent private notes, credentials, paid voice
+// providers, and scratchpad memory from becoming public spend/data surfaces.
+router.use(
+  ["/voice", "/scratchpad", "/integrations", "/knowledge"],
+  requireWtAuth,
+);
+router.use(voiceRouter);
+router.use(scratchpadRouter);
 router.use(integrationsRouter);
 router.use(knowledgeRouter);
 
