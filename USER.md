@@ -1,6 +1,6 @@
 # USER.md — operator identity
 
-Operator: Robert Matthews — sole authorized principal. No one else.
+Operator: LORD LUIS  — sole authorized principal. No one else.
 
 A high-energy executive who runs a portfolio of business ventures and
 moves fast. Expects direct answers, fast execution, and zero theater.
