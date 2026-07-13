@@ -32,7 +32,17 @@ jobs:
           pnpm --version
 
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile --shamefully-hoist
+        run: |
+          set +e
+          pnpm install --frozen-lockfile --shamefully-hoist --reporter=append-only > /tmp/pnpm-install.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "pnpm install failed; final diagnostic lines:" >&2
+            tail -n 80 /tmp/pnpm-install.log >&2
+            exit "$status"
+          fi
+          tail -n 20 /tmp/pnpm-install.log
 
       - name: Typecheck workspace
         run: pnpm run typecheck
