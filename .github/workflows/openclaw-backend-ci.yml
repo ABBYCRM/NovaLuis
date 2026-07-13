@@ -24,7 +24,8 @@ jobs:
         run: |
           git init --quiet
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git -c http.extraheader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" fetch --quiet --depth=1 origin "${CHECKOUT_SHA}"
+          auth_header="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth_header}" fetch --quiet --depth=1 origin "${CHECKOUT_SHA}"
           git checkout --quiet FETCH_HEAD
           test "$(git rev-parse HEAD)" = "${CHECKOUT_SHA}"
 
