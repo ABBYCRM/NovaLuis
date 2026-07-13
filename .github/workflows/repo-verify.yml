@@ -100,11 +100,25 @@ jobs:
         run: |
           mapfile -d '' python_files < <(git ls-files -z -- '*.py')
           if [ "${#python_files[@]}" -eq 0 ]; then
-            echo 'No tracked Python files found.'
+            echo 'No tracked Python files found.' | tee /tmp/python-validation.txt
             exit 0
           fi
-          printf 'Compiling %s tracked Python files.\n' "${#python_files[@]}"
-          python -m py_compile "${python_files[@]}"
+          printf 'Compiling %s tracked Python files.\n' "${#python_files[@]}" > /tmp/python-validation.txt
+          set +e
+          python -m py_compile "${python_files[@]}" >> /tmp/python-validation.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/python-validation.txt
+          exit "$status"
+
+      - name: Upload Python diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-validation-diagnostics
+          path: /tmp/python-validation.txt
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Build production image
         run: docker build --tag nova-luis:verify .
