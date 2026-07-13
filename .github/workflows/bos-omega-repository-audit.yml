@@ -1,0 +1,105 @@
+name: BOS Omega Repository Audit
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bos-omega-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Activate pnpm 9.15.4
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          node --version
+          pnpm --version
+
+      - name: Inventory and native syntax audit
+        run: node scripts/repository-audit.mjs
+
+      - name: Package inspected source and runtime files
+        run: |
+          tar --null -T audit/source-files.nul -czf audit/repository-source.tar.gz
+          sha256sum audit/repository-source.tar.gz > audit/repository-source.tar.gz.sha256
+
+      - name: Install exact lockfile
+        run: pnpm install --frozen-lockfile --shamefully-hoist
+
+      - name: Typecheck all workspaces
+        run: pnpm run typecheck
+
+      - name: Build production API server
+        run: pnpm run build:api
+
+      - name: Check all JavaScript and MJS runtime files
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find . \
+            -path './node_modules' -prune -o \
+            -path './dist' -prune -o \
+            -path './audit' -prune -o \
+            -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) \
+            -print0)
+
+      - name: Run Node tests when present
+        shell: bash
+        run: |
+          mapfile -d '' tests < <(find . \
+            -path './node_modules' -prune -o \
+            -path './dist' -prune -o \
+            -path './audit' -prune -o \
+            -type f \( -name '*.test.mjs' -o -name '*.test.js' -o -name '*.spec.mjs' -o -name '*.spec.js' \) \
+            -print0)
+          if (( ${#tests[@]} == 0 )); then
+            echo 'No Node test files found.'
+          else
+            node --test "${tests[@]}"
+          fi
+
+      - name: Enforce audit findings
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const report = JSON.parse(fs.readFileSync("audit/report.json", "utf8"));
+            const failures = report.errors.length + report.secretFindings.length;
+            console.log(JSON.stringify(report.summary, null, 2));
+            if (failures > 0) process.exit(1);
+          '
+
+      - name: Upload complete audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bos-omega-repository-audit-${{ github.sha }}
+          path: |
+            audit/report.json
+            audit/report.md
+            audit/source-files.txt
+            audit/repository-source.tar.gz
+            audit/repository-source.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
