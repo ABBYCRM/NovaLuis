@@ -41,6 +41,21 @@ function intOption(args, key, fallback, min, max) {
   return value;
 }
 
+function jsonObjectOption(args, key, fallback = {}) {
+  if (args[key] == null) return fallback;
+  const raw = required(args, key);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`--${key} must be valid JSON: ${error instanceof Error ? error.message : error}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`--${key} must be a JSON object`);
+  }
+  return parsed;
+}
+
 async function request(path, options = {}) {
   const headers = {
     Accept: "application/json",
@@ -78,15 +93,20 @@ async function request(path, options = {}) {
 async function run(command, args) {
   switch (command) {
     case "status": {
-      const [api, openclaw] = await Promise.all([
+      const [api, openclaw, composio] = await Promise.all([
         request("/healthz"),
         request("/openclaw/status").catch((error) => ({
           status: "unavailable",
           error: error.message,
           details: error.details,
         })),
+        request("/integrations/composio/status").catch((error) => ({
+          configured: false,
+          error: error.message,
+          details: error.details,
+        })),
       ]);
-      return { api, openclaw };
+      return { api, openclaw, composio };
     }
     case "integrations":
       return request("/integrations");
@@ -110,6 +130,50 @@ async function run(command, args) {
       return request(`/integrations/youtube/search?q=${encodeURIComponent(required(args, "query"))}`);
     case "instagram":
       return request("/integrations/instagram/media");
+    case "composio-status":
+      return request("/integrations/composio/status");
+    case "composio-apps": {
+      const limit = intOption(args, "limit", 25, 1, 50);
+      const search = typeof args.search === "string" ? args.search.trim() : "";
+      const query = new URLSearchParams({ limit: String(limit) });
+      if (search) query.set("search", search);
+      return request(`/integrations/composio/toolkits?${query}`);
+    }
+    case "composio-connections":
+      return request("/integrations/composio/connections");
+    case "composio-connect":
+      return request("/integrations/composio/connect", {
+        method: "POST",
+        body: JSON.stringify({ toolkit: required(args, "toolkit").toLowerCase() }),
+      });
+    case "composio-search":
+      return request("/integrations/composio/search", {
+        method: "POST",
+        body: JSON.stringify({ query: required(args, "query") }),
+      });
+    case "composio-execute": {
+      const body = {
+        toolSlug: required(args, "tool"),
+        arguments: jsonObjectOption(args, "arguments-json", {}),
+        ...(typeof args.account === "string" && args.account.trim()
+          ? { account: args.account.trim() }
+          : {}),
+      };
+      return request("/integrations/composio/execute", {
+        method: "POST",
+        body: JSON.stringify(body),
+        timeoutMs: 180_000,
+      });
+    }
+    case "github-repo": {
+      const url = required(args, "url");
+      return request("/integrations/composio/search", {
+        method: "POST",
+        body: JSON.stringify({
+          query: `Inspect and analyze the GitHub repository ${url}. Find tools to read repository metadata, default branch, directory tree, important files, commits, issues, and pull requests without modifying the repository.`,
+        }),
+      });
+    }
     case "knowledge-search": {
       const query = required(args, "query");
       const limit = intOption(args, "limit", 5, 1, 20);
@@ -150,7 +214,7 @@ async function run(command, args) {
       return request("/scratchpad");
     default:
       throw new Error(
-        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, knowledge-search, knowledge-ingest, skills, scratchpad",
+        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, skills, scratchpad",
       );
   }
 }
