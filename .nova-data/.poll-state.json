@@ -1,9 +1,380 @@
-{
-  "logOffsets": {},
-  "cronErrorCounts": {},
-  "lastCommitSha": null,
-  "lastRunId": null,
-  "githubDisabled": true,
-  "runCountDate": "2026-06-06",
-  "runCountToday": 0
+# Nova Runtime Poll-State Rule
+
+`/.nova-data/.poll-state.json` is mutable runtime state.
+
+It must **not** be committed to Git.
+
+## Required Repository Fix
+
+Add to:
+
+```text
+/home/runner/workspace/.gitignore
+```
+
+```gitignore
+# Nova mutable runtime state
+.nova-data/
+**/.nova-data/
+.poll-state.json
+**/.poll-state.json
+```
+
+Remove the tracked file without deleting the local runtime copy:
+
+```bash
+cd /home/runner/workspace
+
+git rm --cached \
+  NovaLuis/.nova-data/.poll-state.json
+```
+
+If the repository root itself is `NovaLuis`, use:
+
+```bash
+git rm --cached \
+  .nova-data/.poll-state.json
+```
+
+Verify:
+
+```bash
+git status --short
+git check-ignore -v \
+  NovaLuis/.nova-data/.poll-state.json
+```
+
+---
+
+## Required Runtime Location
+
+Resolve the state path from configuration:
+
+```js
+import path from "node:path";
+
+const NOVA_DATA_DIR = path.resolve(
+  process.env.NOVA_DATA_DIR ??
+    path.join(process.cwd(), ".nova-data"),
+);
+
+const POLL_STATE_PATH = path.join(
+  NOVA_DATA_DIR,
+  ".poll-state.json",
+);
+```
+
+For persistent hosting, set `NOVA_DATA_DIR` to a persistent disk or database-backed location.
+
+Do not assume the repository filesystem is persistent.
+
+---
+
+## State Contract
+
+```ts
+export interface NovaPollState {
+  version: 1;
+
+  logOffsets: Record<string, number>;
+  cronErrorCounts: Record<string, number>;
+
+  lastCommitSha: string | null;
+  lastRunId: string | null;
+
+  githubDisabled: boolean;
+
+  runCountDate: string;
+  runCountToday: number;
+
+  updatedAt: string;
 }
+```
+
+Default:
+
+```js
+export function createDefaultPollState() {
+  const now = new Date();
+
+  return {
+    version: 1,
+
+    logOffsets: {},
+    cronErrorCounts: {},
+
+    lastCommitSha: null,
+    lastRunId: null,
+
+    githubDisabled: false,
+
+    runCountDate:
+      now.toISOString().slice(0, 10),
+
+    runCountToday: 0,
+
+    updatedAt:
+      now.toISOString(),
+  };
+}
+```
+
+Do not permanently default:
+
+```json
+"githubDisabled": true
+```
+
+unless GitHub integration was intentionally disabled by configuration.
+
+Use:
+
+```text
+GITHUB_DISABLED=true
+```
+
+for an explicit operational disablement.
+
+Runtime state must not silently become configuration authority.
+
+---
+
+## Date Rollover
+
+The committed value:
+
+```json
+"runCountDate": "2026-06-06"
+```
+
+is stale runtime data.
+
+On load:
+
+```js
+export function applyDailyRollover(state) {
+  const today =
+    new Date().toISOString().slice(0, 10);
+
+  if (state.runCountDate !== today) {
+    return {
+      ...state,
+      runCountDate: today,
+      runCountToday: 0,
+      updatedAt:
+        new Date().toISOString(),
+    };
+  }
+
+  return state;
+}
+```
+
+---
+
+## Safe Loading
+
+```js
+import fs from "node:fs/promises";
+
+export async function loadPollState() {
+  await fs.mkdir(
+    NOVA_DATA_DIR,
+    {
+      recursive: true,
+      mode: 0o700,
+    },
+  );
+
+  try {
+    const raw = await fs.readFile(
+      POLL_STATE_PATH,
+      "utf8",
+    );
+
+    const parsed = JSON.parse(raw);
+
+    return applyDailyRollover(
+      validatePollState(parsed),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return createDefaultPollState();
+    }
+
+    if (error instanceof SyntaxError) {
+      const corruptPath =
+        `${POLL_STATE_PATH}.corrupt-${Date.now()}`;
+
+      await fs.rename(
+        POLL_STATE_PATH,
+        corruptPath,
+      );
+
+      return createDefaultPollState();
+    }
+
+    throw error;
+  }
+}
+```
+
+---
+
+## Atomic Persistence
+
+Never write directly over the active state file.
+
+```js
+export async function savePollState(
+  state,
+) {
+  const nextState = {
+    ...state,
+    version: 1,
+    updatedAt:
+      new Date().toISOString(),
+  };
+
+  const temporaryPath =
+    `${POLL_STATE_PATH}.tmp-${process.pid}`;
+
+  await fs.writeFile(
+    temporaryPath,
+    `${JSON.stringify(
+      nextState,
+      null,
+      2,
+    )}\n`,
+    {
+      encoding: "utf8",
+      mode: 0o600,
+    },
+  );
+
+  await fs.rename(
+    temporaryPath,
+    POLL_STATE_PATH,
+  );
+}
+```
+
+Required invariant:
+
+```text
+write temporary file
+→ flush complete JSON
+→ atomic rename
+```
+
+---
+
+## Concurrency Rule
+
+Multiple workers must not overwrite each other’s state.
+
+Required:
+
+```text
+single process
+→ in-process mutex permitted
+
+multiple processes or instances
+→ shared database or distributed lock required
+```
+
+A local JSON file is not safe shared state across multiple Render or Replit instances.
+
+For distributed workers, move these fields into PostgreSQL:
+
+```text
+log offsets
+cron error counts
+last commit SHA
+last run ID
+daily execution count
+GitHub integration status
+```
+
+---
+
+## Configuration Separation
+
+Runtime state:
+
+```text
+lastCommitSha
+lastRunId
+logOffsets
+cronErrorCounts
+runCountDate
+runCountToday
+```
+
+Configuration:
+
+```text
+githubDisabled
+daily run limit
+poll interval
+GitHub repository
+branch
+credentials
+```
+
+Preferred:
+
+```js
+const githubDisabled =
+  process.env.GITHUB_DISABLED === "true";
+```
+
+Do not let an old state file permanently disable GitHub operations.
+
+---
+
+## Required Tests
+
+```text
+missing state file
+→ default state created
+
+stale runCountDate
+→ count reset to zero
+
+valid current state
+→ preserved
+
+corrupt JSON
+→ quarantined and recreated
+
+partial write
+→ never replaces valid state
+
+concurrent write
+→ serialized or rejected
+
+state file
+→ ignored by Git
+
+githubDisabled
+→ sourced from explicit configuration
+```
+
+---
+
+## Final Rule
+
+```text
+.nova-data/.poll-state.json
+=
+EPHEMERAL RUNTIME STATE
+
+IT MUST BE:
+ignored by Git
+validated on read
+written atomically
+reset on date rollover
+stored persistently when required
+kept separate from configuration
+```
