@@ -1,15 +1,15 @@
 import { Router, type IRouter } from "express";
 import {
+  CancelWorkTreeRunParams,
   CreateWorkTreeRunBody,
   GetWorkTreeRunParams,
-  CancelWorkTreeRunParams,
   RetryWorkTreeNodeParams,
 } from "@workspace/api-zod";
-import { requireWtAuth, handleUnlock } from "../lib/work-tree-auth";
+import { handleUnlock, requireWtAuth } from "../lib/work-tree-auth";
 
-// DB access is lazy + guarded so a missing/unreachable DATABASE_URL degrades to
-// a clear 503 instead of crashing the server at boot (mirrors scratchpad.ts).
 type DbModule = typeof import("@workspace/db");
+type Row = Record<string, unknown>;
+
 let dbModulePromise: Promise<DbModule | null> | null = null;
 async function getDb(): Promise<DbModule | null> {
   if (!process.env.DATABASE_URL) return null;
@@ -19,132 +19,47 @@ async function getDb(): Promise<DbModule | null> {
   return dbModulePromise;
 }
 
-type Row = Record<string, unknown>;
+function iso(value: unknown): string {
+  const date = value instanceof Date ? value : new Date(String(value ?? ""));
+  return Number.isNaN(date.valueOf()) ? new Date(0).toISOString() : date.toISOString();
+}
 
-function apiRun(r: Record<string, unknown>) {
+function apiRun(row: Row) {
   return {
-    id: r.id as number,
-    goal: String(r.goal ?? ""),
-    status: String(r.status ?? ""),
-    model: String(r.model ?? ""),
-    report: String(r.report ?? ""),
-    error: String(r.error ?? ""),
-    stageTrace: String(r.stageTrace ?? ""),
-    createdAt: new Date(r.createdAt as string).toISOString(),
-    updatedAt: new Date(r.updatedAt as string).toISOString(),
+    id: Number(row.id),
+    goal: String(row.goal ?? ""),
+    status: String(row.status ?? ""),
+    model: String(row.model ?? ""),
+    report: String(row.report ?? ""),
+    error: String(row.error ?? ""),
+    stageTrace: String(row.stageTrace ?? ""),
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
   };
 }
 
-function apiNode(n: Record<string, unknown>) {
+function apiNode(row: Row) {
   return {
-    id: n.id as number,
-    runId: n.runId as number,
-    parentId: (n.parentId ?? null) as number | null,
-    title: String(n.title ?? ""),
-    detail: String(n.detail ?? ""),
-    kind: String(n.kind ?? ""),
-    status: String(n.status ?? ""),
-    depth: Number(n.depth ?? 0),
-    position: Number(n.position ?? 0),
-    result: String(n.result ?? ""),
-    verification: String(n.verification ?? ""),
-    attempts: Number(n.attempts ?? 0),
-    trace: String(n.trace ?? ""),
-    role: String(n.role ?? ""),
-    createdAt: new Date(n.createdAt as string).toISOString(),
-    updatedAt: new Date(n.updatedAt as string).toISOString(),
+    id: Number(row.id),
+    runId: Number(row.runId),
+    parentId: row.parentId == null ? null : Number(row.parentId),
+    title: String(row.title ?? ""),
+    detail: String(row.detail ?? ""),
+    kind: String(row.kind ?? ""),
+    status: String(row.status ?? ""),
+    depth: Number(row.depth ?? 0),
+    position: Number(row.position ?? 0),
+    result: String(row.result ?? ""),
+    verification: String(row.verification ?? ""),
+    attempts: Number(row.attempts ?? 0),
+    trace: String(row.trace ?? ""),
+    role: String(row.role ?? ""),
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
   };
-}
-
-// ── Super Nova engine ───────────────────────────────────────────────────
-// A run dispatches the goal to the supernova swarm, which executes it with its
-// inline agentic tool loop and returns a final report. We ask it to classify
-// the finding into one NOVA workspace category; the client files the report
-// into that workspace (the report carries an <!--sn-category:X--> marker).
-const SUPERNOVA_BASE_URL = (
-  process.env.SUPERNOVA_BASE_URL || "https://supernova-ai1.onrender.com"
-).replace(/\/$/, "");
-const SUPERNOVA_API_KEY =
-  process.env.SUPERNOVA_API_KEY || process.env.OPENCLAW_API_KEY || "";
-const WS_CATEGORIES = [
-  "medical", "health", "dietary", "fitness", "todo", "tasks", "agents",
-  "pictures", "numerology", "sacred", "vedic", "mystic", "manifest", "quantum",
-];
-
-function supernovaMessages(goal: string) {
-  const system =
-    "You are Super Nova, an autonomous operator. Execute the user's goal end to end using your real tools " +
-    "(web fetch/search/compute) — plan, act, verify, correct — then produce a final report of your findings. " +
-    "Classify the finding into EXACTLY ONE category id from this list: " + WS_CATEGORIES.join(", ") + ". " +
-    "If none fits, use \"agents\". Respond with ONLY a single minified JSON object — no prose, no code fences: " +
-    "{\"category\":\"<one id>\",\"title\":\"<=80 char title>\",\"report\":\"<markdown findings>\"}";
-  return [
-    { role: "system", content: system },
-    { role: "user", content: goal },
-  ];
-}
-
-function parseSupernovaResult(content: string): { category: string; title: string; report: string } {
-  let category = "agents";
-  let title = "";
-  let report = content || "";
-  try {
-    const s = content.indexOf("{");
-    const e = content.lastIndexOf("}");
-    if (s !== -1 && e > s) {
-      const obj = JSON.parse(content.slice(s, e + 1)) as Record<string, unknown>;
-      const c = String(obj.category ?? "").toLowerCase().trim();
-      category = WS_CATEGORIES.includes(c) ? c : "agents";
-      title = String(obj.title ?? "").slice(0, 200);
-      report = String(obj.report ?? content);
-    }
-  } catch {
-    // Non-JSON reply: keep the raw content, file it under "agents".
-  }
-  return { category, title, report };
-}
-
-async function dispatchToSupernova(mod: DbModule, runId: number, goal: string): Promise<void> {
-  const { eq } = await import("drizzle-orm");
-  const set = async (vals: Record<string, unknown>) => {
-    try {
-      await mod.db
-        .update(mod.workTreeRunsTable)
-        .set({ ...vals, updatedAt: new Date() })
-        .where(eq(mod.workTreeRunsTable.id, runId));
-    } catch {
-      /* best effort */
-    }
-  };
-  if (!SUPERNOVA_API_KEY) {
-    await set({ status: "failed", error: "SUPERNOVA_API_KEY is not configured on this server." });
-    return;
-  }
-  await set({ status: "running" });
-  try {
-    const resp = await fetch(`${SUPERNOVA_BASE_URL}/api/external/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPERNOVA_API_KEY}` },
-      body: JSON.stringify({ model: "abby", stream: false, max_tokens: 4096, messages: supernovaMessages(goal) }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      await set({ status: "failed", error: `supernova HTTP ${resp.status}: ${body.slice(0, 300)}` });
-      return;
-    }
-    const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data?.choices?.[0]?.message?.content ?? "";
-    const { category, title, report } = parseSupernovaResult(content);
-    const stored = `<!--sn-category:${category}-->\n` + (title ? `# ${title}\n\n` : "") + report;
-    await set({ status: "done", report: stored.slice(0, 60000), model: "supernova/abby" });
-  } catch (e) {
-    await set({ status: "failed", error: `supernova dispatch failed: ${String((e as Error)?.message ?? e).slice(0, 300)}` });
-  }
 }
 
 const router: IRouter = Router();
-
-// PIN unlock is the one open endpoint; everything else requires the cookie.
 router.post("/work-tree/unlock", handleUnlock);
 
 router.get("/work-tree/runs", requireWtAuth, async (req, res) => {
@@ -159,9 +74,9 @@ router.get("/work-tree/runs", requireWtAuth, async (req, res) => {
       .select()
       .from(mod.workTreeRunsTable)
       .orderBy(desc(mod.workTreeRunsTable.createdAt));
-    res.json({ runs: rows.map((r) => apiRun(r as Row)) });
-  } catch (e) {
-    req.log.error({ err: e }, "work-tree list runs failed");
+    res.json({ runs: rows.map((row) => apiRun(row as Row)) });
+  } catch (error) {
+    req.log.error({ err: error }, "work-tree list failed");
     res.status(500).json({ error: "failed to list runs" });
   }
 });
@@ -181,17 +96,17 @@ router.post("/work-tree/runs", requireWtAuth, async (req, res) => {
     const [row] = await mod.db
       .insert(mod.workTreeRunsTable)
       .values({
-        goal: parsed.data.goal.slice(0, 8000),
+        goal: parsed.data.goal.slice(0, 8_000),
         model: (parsed.data.model ?? "").slice(0, 200),
         status: "pending",
+        report: "",
+        error: "",
+        stageTrace: "[]",
       })
       .returning();
-    // Fire-and-forget: the supernova swarm runs in the background; the client
-    // polls the run until it reaches "done" (or "failed").
-    void dispatchToSupernova(mod, (row as Row).id as number, parsed.data.goal.slice(0, 8000));
     res.status(201).json(apiRun(row as Row));
-  } catch (e) {
-    req.log.error({ err: e }, "work-tree create run failed");
+  } catch (error) {
+    req.log.error({ err: error }, "work-tree create failed");
     res.status(500).json({ error: "failed to create run" });
   }
 });
@@ -202,14 +117,14 @@ router.get("/work-tree/runs/:id", requireWtAuth, async (req, res) => {
     res.status(400).json({ error: "invalid id" });
     return;
   }
-  const id = Number(parsed.data.id);
   const mod = await getDb();
   if (!mod) {
     res.status(503).json({ error: "database unavailable" });
     return;
   }
   try {
-    const { eq, asc } = await import("drizzle-orm");
+    const { asc, eq } = await import("drizzle-orm");
+    const id = Number(parsed.data.id);
     const [run] = await mod.db
       .select()
       .from(mod.workTreeRunsTable)
@@ -229,10 +144,10 @@ router.get("/work-tree/runs/:id", requireWtAuth, async (req, res) => {
       );
     res.json({
       run: apiRun(run as Row),
-      nodes: nodes.map((n) => apiNode(n as Row)),
+      nodes: nodes.map((node) => apiNode(node as Row)),
     });
-  } catch (e) {
-    req.log.error({ err: e }, "work-tree get run failed");
+  } catch (error) {
+    req.log.error({ err: error }, "work-tree get failed");
     res.status(500).json({ error: "failed to get run" });
   }
 });
@@ -243,17 +158,17 @@ router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
     res.status(400).json({ error: "invalid id" });
     return;
   }
-  const id = Number(parsed.data.id);
   const mod = await getDb();
   if (!mod) {
     res.status(503).json({ error: "database unavailable" });
     return;
   }
   try {
-    const { eq, inArray, and } = await import("drizzle-orm");
+    const { and, eq, inArray } = await import("drizzle-orm");
+    const id = Number(parsed.data.id);
     const [updated] = await mod.db
       .update(mod.workTreeRunsTable)
-      .set({ status: "cancelled" })
+      .set({ status: "cancelled", updatedAt: new Date() })
       .where(
         and(
           eq(mod.workTreeRunsTable.id, id),
@@ -265,7 +180,6 @@ router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
       res.json(apiRun(updated as Row));
       return;
     }
-    // Either it doesn't exist or it's already terminal — disambiguate.
     const [existing] = await mod.db
       .select()
       .from(mod.workTreeRunsTable)
@@ -275,8 +189,8 @@ router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
       return;
     }
     res.json(apiRun(existing as Row));
-  } catch (e) {
-    req.log.error({ err: e }, "work-tree cancel run failed");
+  } catch (error) {
+    req.log.error({ err: error }, "work-tree cancel failed");
     res.status(500).json({ error: "failed to cancel run" });
   }
 });
@@ -287,15 +201,14 @@ router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
     res.status(400).json({ error: "invalid id" });
     return;
   }
-  const nodeId = Number(parsed.data.id);
   const mod = await getDb();
   if (!mod) {
     res.status(503).json({ error: "database unavailable" });
     return;
   }
   try {
-    const { eq, and, inArray } = await import("drizzle-orm");
-
+    const { and, eq, inArray } = await import("drizzle-orm");
+    const nodeId = Number(parsed.data.id);
     const [node] = await mod.db
       .select()
       .from(mod.workTreeNodesTable)
@@ -309,7 +222,7 @@ router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
       return;
     }
 
-    const runId = node.runId as number;
+    const runId = Number(node.runId);
     const [run] = await mod.db
       .select()
       .from(mod.workTreeRunsTable)
@@ -318,65 +231,56 @@ router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
       res.status(404).json({ error: "run not found" });
       return;
     }
-    if (String(run.status) === "cancelled") {
-      res.status(409).json({ error: "run is cancelled" });
-      return;
-    }
 
-    // Load all nodes so we can walk the parent chain and re-open ancestors.
     const allNodes = await mod.db
       .select()
       .from(mod.workTreeNodesTable)
       .where(eq(mod.workTreeNodesTable.runId, runId));
     const byId = new Map<number, Row>(
-      allNodes.map((n) => [n.id as number, n as Row]),
+      allNodes.map((value) => [Number(value.id), value as Row]),
     );
 
-    // Reset the failed node back to pending so the worker re-executes it. Clear
-    // its prior result/verification but retain the attempts counter for history.
     await mod.db
       .update(mod.workTreeNodesTable)
-      .set({ status: "pending", result: "", verification: "" })
+      .set({
+        status: "pending",
+        result: "",
+        verification: "",
+        trace: "",
+        updatedAt: new Date(),
+      })
       .where(eq(mod.workTreeNodesTable.id, nodeId));
 
-    // Re-open settled (done/failed) ancestor composites to "running" so
-    // settleComposites re-evaluates them once the retried leaf resolves. They
-    // must NOT go to "pending" — that would trigger a duplicate decomposition.
     const ancestorIds: number[] = [];
-    let parentId = (node.parentId ?? null) as number | null;
+    let parentId = node.parentId == null ? null : Number(node.parentId);
     while (parentId != null) {
       const parent = byId.get(parentId);
       if (!parent) break;
       if (parent.status === "done" || parent.status === "failed") {
-        ancestorIds.push(parent.id as number);
+        ancestorIds.push(Number(parent.id));
       }
-      parentId = (parent.parentId ?? null) as number | null;
+      parentId = parent.parentId == null ? null : Number(parent.parentId);
     }
-    if (ancestorIds.length) {
+    if (ancestorIds.length > 0) {
       await mod.db
         .update(mod.workTreeNodesTable)
-        .set({ status: "running" })
+        .set({ status: "running", updatedAt: new Date() })
         .where(inArray(mod.workTreeNodesTable.id, ancestorIds));
     }
 
-    // Re-open the run if it had already finished, clearing the stale report.
-    if (run.status === "done" || run.status === "failed") {
-      const [updated] = await mod.db
-        .update(mod.workTreeRunsTable)
-        .set({ status: "running", report: "", error: "" })
-        .where(
-          and(
-            eq(mod.workTreeRunsTable.id, runId),
-            inArray(mod.workTreeRunsTable.status, ["done", "failed"]),
-          ),
-        )
-        .returning();
-      res.json(apiRun((updated ?? run) as Row));
-      return;
-    }
-    res.json(apiRun(run as Row));
-  } catch (e) {
-    req.log.error({ err: e }, "work-tree retry node failed");
+    const [updatedRun] = await mod.db
+      .update(mod.workTreeRunsTable)
+      .set({ status: "running", report: "", error: "", updatedAt: new Date() })
+      .where(
+        and(
+          eq(mod.workTreeRunsTable.id, runId),
+          inArray(mod.workTreeRunsTable.status, ["done", "failed", "running"]),
+        ),
+      )
+      .returning();
+    res.json(apiRun((updatedRun ?? run) as Row));
+  } catch (error) {
+    req.log.error({ err: error }, "work-tree retry failed");
     res.status(500).json({ error: "failed to retry node" });
   }
 });
