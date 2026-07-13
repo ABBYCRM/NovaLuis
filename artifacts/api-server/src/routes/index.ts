@@ -4,6 +4,8 @@ import novaConfigRouter from "./nova-config";
 import scratchpadRouter from "./scratchpad";
 import workTreeRouter from "./work-tree";
 import integrationsRouter from "./integrations";
+import composioRouter from "./composio";
+import agentChatRouter from "./agent-chat";
 import knowledgeRouter from "./knowledge";
 import openaiProxyRouter from "./openai-proxy";
 import voiceRouter from "./voice";
@@ -26,7 +28,11 @@ router.use(workTreeRouter);
 // does not pass through these gated HTTP routes.
 router.use(["/integrations", "/knowledge"], requireWtAuth);
 router.use(integrationsRouter);
+router.use(composioRouter);
 router.use(knowledgeRouter);
+// Browser chat uses the OpenClaw agent loop. OpenClaw's own model provider still
+// calls /v1/* below, keeping the agent endpoint and raw inference endpoint separate.
+router.use(agentChatRouter);
 router.use(openaiProxyRouter);
 router.use(skillsRouter);
 
