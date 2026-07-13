@@ -4,6 +4,17 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-13 — Trigger Render deployment after package manifest repair
+
+- **Objective:** Trigger a fresh Render auto-deploy after repairing the root
+  `package.json` and production `Dockerfile`.
+- **Expected source:** `ABBYCRM/NovaLuis`, branch `main`.
+- **Expected repair commit:** `f577e1995755ca1df1206a1c965e3faf6c401110` or a later descendant containing the same fix.
+- **Required verification:** Render build completes, deploy reaches `live`, the
+  deployed commit matches the expected Git revision, `/api/healthz` responds,
+  and the Nova UI loads.
+- **Security:** No GitHub or Render credentials are stored in this repository.
+
 ## 2026-07-04 — Repoint NOVA → new SUPERNOVA URL
 
 - **Model:** claude-opus-4-8 (Claude Code).
