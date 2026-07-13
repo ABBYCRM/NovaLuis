@@ -13,7 +13,7 @@ The production image pins:
 ```text
 Node:     24.18.0-bookworm-slim
 OpenClaw: 2026.6.11
-pnpm:     9.15.4
+pnpm:     10.32.1
 ```
 
 Change these only through a reviewed Dockerfile update, then rebuild and verify

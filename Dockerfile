@@ -5,7 +5,7 @@ ARG OPENCLAW_VERSION=2026.6.11
 FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
 
-RUN npm install -g pnpm@9.15.4
+RUN npm install -g pnpm@10.32.1
 
 # Preserve the repository's proven pnpm install boundary. Only workspaces needed
 # by the API build are present during dependency resolution.

@@ -15,12 +15,26 @@ Summary:
 - Added startup readiness gating, process supervision, stale-run reconciliation, cancellation aborts, runtime status reporting and bounded execution timeouts.
 - Stopped launching the competing legacy custom worker in production.
 
-Verification required before declaring production complete:
-- JSON syntax for `openclaw/openclaw.json`.
-- Node syntax checks for runtime scripts.
-- TypeScript parse/type/build checks.
-- Docker build and `openclaw --version` output.
-- `/api/healthz`, `/api/openclaw/status`, `/v1/models` and a real Work-Tree mission on the deployed revision.
+Verification:
+- Frozen dependency installation, full TypeScript typecheck and API bundle passed.
+- Exact OpenClaw configuration and `nova-services` skill discovery passed.
+- The production Docker image built and booted successfully.
+- `/api/healthz`, `/api/openclaw/status`, the NOVA UI and `/assets/bob.js` passed live-container smoke checks.
+
+## 2026-07-13 — Repair frozen dependency installation and add CI verification
+
+Summary:
+- Aligned the repository, Docker image and CI on `pnpm@10.32.1`, matching the
+  workspace configuration and lockfile format.
+- Preserved the workspace-level platform overrides in `pnpm-workspace.yaml`.
+- Added `.github/workflows/repo-verify.yml` to validate JSON, install with the
+  frozen lockfile, typecheck, build the API, compile-check Python files, and
+  build the production Docker image.
+
+Defect fixed:
+- `pnpm@9.15.4` rejected the existing lockfile with
+  `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` because the workspace-level overrides
+  configuration was generated for the pnpm 10 configuration model.
 
 ---
 

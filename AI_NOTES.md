@@ -7,14 +7,27 @@ Working notes for AI agents/contributors. Newest first.
 ## 2026-07-13 — Official OpenClaw backend integration
 
 - **Objective:** Replace NOVA's non-local/competing agent execution paths with one official OpenClaw Gateway inside the production container.
-- **Pinned runtime:** `openclaw@2026.6.11` on Node `24.18.0`.
+- **Pinned runtime:** `openclaw@2026.6.11` on Node `24.18.0`, with `pnpm@10.32.1` for the workspace build.
 - **Execution contract:** Work-Tree posts to the loopback Gateway's enabled `/v1/chat/completions` endpoint using `openclaw/default`. The endpoint executes a normal OpenClaw agent run, not a raw model completion.
 - **Model wiring:** OpenClaw provider `nova` points to `http://127.0.0.1:$PORT/api/v1`; NOVA continues to own real provider credentials and memory/knowledge prompt injection.
 - **Service wiring:** Workspace skill `nova-services` calls NOVA's authenticated integration, knowledge, scratchpad and skills endpoints through loopback only.
 - **Process lifecycle:** `scripts/start-openclaw.mjs` starts and health-checks the Gateway before starting the API, forwards signals, and terminates the container if either critical process dies.
 - **Persistence:** Set `OPENCLAW_STATE_DIR` to a mounted persistent disk path in production. The default `/app/.openclaw` is functional but ephemeral across image replacement.
 - **Do not re-enable:** `scripts/work-tree-worker.mjs` must not run alongside the new Gateway-backed Work-Tree dispatcher; both would claim/execute the same missions.
-- **Truth gate:** Do not mark this deployment complete until the image builds, the Gateway status endpoint is ready, and one real mission reaches `done` with `model=openclaw/default` and a non-empty report.
+- **Verified:** frozen install, full workspace typecheck, API bundle, OpenClaw config and skill discovery, production Docker build, and live-container API/UI smoke checks passed on the committed source.
+- **Remaining production truth gate:** do not claim live deployment completion until Render serves `/api/openclaw/status` as ready and one authenticated Work-Tree mission reaches `done` with `model=openclaw/default` and a non-empty report.
+
+## 2026-07-13 — Repair frozen install and establish repository verification
+
+- **Observed failure:** `pnpm install --frozen-lockfile --shamefully-hoist`
+  failed in GitHub Actions with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
+- **Root cause:** the repository pinned pnpm 9 while `pnpm-workspace.yaml` and
+  `pnpm-lock.yaml` use the pnpm 10 workspace-level configuration model.
+- **Repair:** pin `pnpm@10.32.1` in `package.json`, use the same version in the
+  production Docker builder and OpenClaw CI, and retain the main-branch verification workflow.
+- **Verification scope:** JSON parse, frozen dependency install, TypeScript
+  typecheck, API build, Python bytecode compilation, OpenClaw validation, Docker build and container smoke tests.
+- **Preservation:** no application source or existing runtime behavior was removed while reconciling concurrent `main` changes.
 
 ## 2026-07-13 — Trigger Render deployment after package manifest repair
 
