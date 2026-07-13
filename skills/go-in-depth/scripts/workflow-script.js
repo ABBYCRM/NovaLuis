@@ -1,66 +1,94 @@
 export const meta = {
-  name: 'go-in-depth',
-  description: 'Go in depth harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report.',
-  whenToUse: 'When the user wants a deep, multi-source, fact-checked research report on any topic. BEFORE invoking, check if the question is specific enough to research directly — if underspecified (e.g., "what car to buy" without budget/use-case/region), ask 2-3 clarifying questions to narrow scope. Then pass the refined question as args, weaving the answers in.',
-  phases: [{"title":"Scope","detail":"Decompose question (from args) into 5 search angles"},{"title":"Search","detail":"5 parallel WebSearch agents, one per angle"},{"title":"Fetch","detail":"URL-dedup, fetch top 15 sources, extract falsifiable claims"},{"title":"Verify","detail":"3-vote adversarial verification per claim (need 2/3 refutes to kill)"},{"title":"Synthesize","detail":"Merge semantic dupes, rank by confidence, cite sources"}],
+  name: "go-in-depth",
+  description:
+    "Fan-out web research, source extraction, adversarial claim verification, and cited synthesis.",
+  whenToUse:
+    "Use for deep, multi-source, fact-checked research after the question has enough scope, region, timeframe, and constraints.",
+  phases: [
+    { title: "Scope", detail: "Decompose the question into complementary search angles" },
+    { title: "Search", detail: "Search each angle in parallel" },
+    { title: "Fetch", detail: "Deduplicate URLs and extract falsifiable claims" },
+    { title: "Verify", detail: "Run three adversarial votes per claim" },
+    { title: "Synthesize", detail: "Merge verified claims into a cited report" },
+  ],
 }
-
-// go-in-depth: Scope → pipeline(Search → URL-dedup → Fetch+Extract) → 3-vote Verify → Synthesize
-// Uses a bug-hunting-style fan-out and verification pattern, adapted for web research.
-// Question is passed via Workflow({name: 'go-in-depth', args: '<question>'}).
 
 const VOTES_PER_CLAIM = 3
 const REFUTATIONS_REQUIRED = 2
 const MAX_FETCH = 15
 const MAX_VERIFY_CLAIMS = 25
 
-// ─── Schemas ───
 const SCOPE_SCHEMA = {
-  type: "object", required: ["question", "angles", "summary"],
+  type: "object",
+  required: ["question", "angles", "summary"],
   properties: {
     question: { type: "string" },
     summary: { type: "string" },
-    angles: { type: "array", minItems: 3, maxItems: 6, items: {
-      type: "object", required: ["label", "query"],
-      properties: {
-        label: { type: "string" },
-        query: { type: "string" },
-        rationale: { type: "string" },
+    angles: {
+      type: "array",
+      minItems: 3,
+      maxItems: 6,
+      items: {
+        type: "object",
+        required: ["label", "query"],
+        properties: {
+          label: { type: "string" },
+          query: { type: "string" },
+          rationale: { type: "string" },
+        },
       },
-    }},
+    },
   },
 }
+
 const SEARCH_SCHEMA = {
-  type: "object", required: ["results"],
+  type: "object",
+  required: ["results"],
   properties: {
-    results: { type: "array", maxItems: 6, items: {
-      type: "object", required: ["url", "title", "relevance"],
-      properties: {
-        url: { type: "string" },
-        title: { type: "string" },
-        snippet: { type: "string" },
-        relevance: { enum: ["high", "medium", "low"] },
+    results: {
+      type: "array",
+      maxItems: 6,
+      items: {
+        type: "object",
+        required: ["url", "title", "relevance"],
+        properties: {
+          url: { type: "string" },
+          title: { type: "string" },
+          snippet: { type: "string" },
+          relevance: { enum: ["high", "medium", "low"] },
+        },
       },
-    }},
+    },
   },
 }
+
 const EXTRACT_SCHEMA = {
-  type: "object", required: ["claims", "sourceQuality"],
+  type: "object",
+  required: ["claims", "sourceQuality"],
   properties: {
-    sourceQuality: { enum: ["primary", "secondary", "blog", "forum", "unreliable"] },
+    sourceQuality: {
+      enum: ["primary", "secondary", "blog", "forum", "unreliable"],
+    },
     publishDate: { type: "string" },
-    claims: { type: "array", maxItems: 5, items: {
-      type: "object", required: ["claim", "quote", "importance"],
-      properties: {
-        claim: { type: "string" },
-        quote: { type: "string" },
-        importance: { enum: ["central", "supporting", "tangential"] },
+    claims: {
+      type: "array",
+      maxItems: 5,
+      items: {
+        type: "object",
+        required: ["claim", "quote", "importance"],
+        properties: {
+          claim: { type: "string" },
+          quote: { type: "string" },
+          importance: { enum: ["central", "supporting", "tangential"] },
+        },
       },
-    }},
+    },
   },
 }
+
 const VERDICT_SCHEMA = {
-  type: "object", required: ["refuted", "evidence", "confidence"],
+  type: "object",
+  required: ["refuted", "evidence", "confidence"],
   properties: {
     refuted: { type: "boolean" },
     evidence: { type: "string" },
@@ -68,283 +96,303 @@ const VERDICT_SCHEMA = {
     counterSource: { type: "string" },
   },
 }
+
 const REPORT_SCHEMA = {
-  type: "object", required: ["summary", "findings", "caveats"],
+  type: "object",
+  required: ["summary", "findings", "caveats"],
   properties: {
     summary: { type: "string" },
-    findings: { type: "array", items: {
-      type: "object", required: ["claim", "confidence", "sources", "evidence"],
-      properties: {
-        claim: { type: "string" },
-        confidence: { enum: ["high", "medium", "low"] },
-        sources: { type: "array", items: { type: "string" } },
-        evidence: { type: "string" },
-        vote: { type: "string" },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["claim", "confidence", "sources", "evidence"],
+        properties: {
+          claim: { type: "string" },
+          confidence: { enum: ["high", "medium", "low"] },
+          sources: { type: "array", items: { type: "string" } },
+          evidence: { type: "string" },
+          vote: { type: "string" },
+        },
       },
-    }},
+    },
     caveats: { type: "string" },
     openQuestions: { type: "array", items: { type: "string" } },
   },
 }
 
-// ─── Phase 0: Scope — decompose question into search angles ───
-phase("Scope")
-const QUESTION = (typeof args === "string" ? args.trim() : args?.query?.trim()) || ""
-if (!QUESTION) {
-  return { error: "No research question provided. Pass it as args: Workflow({name: 'go-in-depth', args: '<question>'})." }
-}
-const scope = await agent(
-  "Decompose this research question into complementary search angles.\n\n" +
-  "## Question\n" + QUESTION + "\n\n" +
-  "## Task\n" +
-  "Generate 5 distinct web search queries that together cover the question from different angles. Pick angles that suit the question's domain. Examples:\n" +
-  "- broad/primary  · academic/technical  · recent news  · contrarian/skeptical  · practitioner/implementation\n" +
-  "- For medical: anatomy · common causes · serious differentials · authoritative refs · red flags\n" +
-  "- For tech: state-of-art · benchmarks · limitations · industry adoption · cost/tradeoffs\n\n" +
-  "Make queries specific enough to surface high-signal results. Avoid redundancy.\n" +
-  "Return: the question (verbatim or lightly normalized), a 1-2 sentence decomposition strategy, and the angles.\n\nStructured output only.",
-  { label: "scope", schema: SCOPE_SCHEMA }
-)
-if (!scope) {
-  return { error: "Scope agent returned no result — cannot decompose the research question." }
-}
-log("Q: " + QUESTION.slice(0, 80) + (QUESTION.length > 80 ? "…" : ""))
-log("Decomposed into " + scope.angles.length + " angles: " + scope.angles.map(a => a.label).join(", "))
-
-// ─── Dedup state — accumulates across searchers as they complete ───
-const normURL = u => {
-  try {
-    const p = new URL(u)
-    return (p.hostname.replace(/^www\./, "") + p.pathname.replace(/\/$/, "")).toLowerCase()
-  } catch { return u.toLowerCase() }
-}
-const seen = new Map()
-const dupes = []
-const budgetDropped = []
-const relRank = { high: 0, medium: 1, low: 2 }
-let fetchSlots = MAX_FETCH
-
-// ─── Prompts ───
-const SEARCH_PROMPT = (angle) =>
-  "## Web Searcher: " + angle.label + "\n\n" +
-  "Research question: \"" + QUESTION + "\"\n\n" +
-  "Your angle: **" + angle.label + "** — " + (angle.rationale || "") + "\n" +
-  "Search query: `" + angle.query + "`\n\n" +
-  "## Task\nUse WebSearch with the query above (or a refined version). Return the top 4-6 most relevant results.\n" +
-  "Rank by relevance to the ORIGINAL question, not just the search query. Skip obvious SEO spam/content farms.\n" +
-  "Include a short snippet capturing why each result is relevant.\n\nStructured output only."
-
-const FETCH_PROMPT = (source, angle) =>
-  "## Source Extractor\n\n" +
-  "Research question: \"" + QUESTION + "\"\n\n" +
-  "Fetch and extract key claims from this source:\n" +
-  "**URL:** " + source.url + "\n**Title:** " + source.title + "\n**Found via:** " + angle + " search\n\n" +
-  "## Task\n1. Use WebFetch to retrieve the page content.\n" +
-  "2. Assess source quality: primary research/institution? secondary reporting? blog/opinion? forum? unreliable?\n" +
-  "3. Extract 2-5 FALSIFIABLE claims that bear on the research question. Each claim must:\n" +
-  "   - be a concrete, checkable statement (not vague generalities)\n" +
-  "   - include a direct quote from the source as support\n" +
-  "   - be rated central/supporting/tangential to the research question\n" +
-  "4. Note publish date if available.\n\n" +
-  "If the fetch fails or the page is irrelevant/paywalled, return claims: [] and sourceQuality: \"unreliable\".\n\nStructured output only."
-
-const VERIFY_PROMPT = (claim, v) =>
-  "## Adversarial Claim Verifier (voter " + (v + 1) + "/" + VOTES_PER_CLAIM + ")\n\n" +
-  "Be SKEPTICAL. Try to REFUTE this claim. ≥" + REFUTATIONS_REQUIRED + "/" + VOTES_PER_CLAIM + " refutations kill it.\n\n" +
-  "## Research question\n" + QUESTION + "\n\n" +
-  "## Claim under review\n\"" + claim.claim + "\"\n\n" +
-  "**Source:** " + claim.sourceUrl + " (" + claim.sourceQuality + ")\n" +
-  "**Supporting quote:** \"" + claim.quote + "\"\n\n" +
-  "## Checklist\n" +
-  "1. Is the claim actually supported by the quote, or is it an overreach/misread?\n" +
-  "2. WebSearch for contradicting evidence — does any credible source dispute or heavily qualify this?\n" +
-  "3. Is the source quality sufficient for the claim's strength? (extraordinary claims need primary sources)\n" +
-  "4. Is the claim outdated? (check dates — old claims about fast-moving fields are suspect)\n" +
-  "5. Is this a marketing claim / press release / cherry-picked benchmark / forum speculation?\n\n" +
-  "**refuted=true** if: unsupported by quote / contradicted / low-quality source for strong claim / outdated / marketing fluff.\n" +
-  "**refuted=false** ONLY if: claim is well-supported, current, and source quality matches claim strength.\n" +
-  "Default to refuted=true if uncertain.\n\nStructured output only. Evidence MUST be specific."
-
-// ─── Pipeline: search → dedup → fetch+extract (no barrier) ───
-const searchResults = await pipeline(
-  scope.angles,
-
-  angle => agent(SEARCH_PROMPT(angle), {
-    label: "search:" + angle.label, phase: "Search", schema: SEARCH_SCHEMA
-  }).then(r => {
-    if (!r) return null
-    log(angle.label + ": " + r.results.length + " results")
-    return { angle: angle.label, results: r.results }
-  }),
-
-  searchResult => {
-    const sorted = [...searchResult.results].sort((a, b) => relRank[a.relevance] - relRank[b.relevance])
-    const novel = sorted.filter(r => {
-      const key = normURL(r.url)
-      if (seen.has(key)) {
-        dupes.push({ ...r, angle: searchResult.angle, dupOf: seen.get(key) })
-        return false
-      }
-      if (fetchSlots <= 0) {
-        budgetDropped.push({ ...r, angle: searchResult.angle })
-        return false
-      }
-      seen.set(key, { angle: searchResult.angle, title: r.title })
-      fetchSlots--
-      return true
-    })
-    if (novel.length < searchResult.results.length) {
-      log(searchResult.angle + ": " + novel.length + " novel (" + (searchResult.results.length - novel.length) + " filtered)")
+function runtimeFunctions(runtime) {
+  if (!runtime || typeof runtime !== "object") {
+    throw new Error("go-in-depth runtime is required")
+  }
+  const { phase, agent, pipeline, parallel, log } = runtime
+  for (const [name, value] of Object.entries({
+    phase,
+    agent,
+    pipeline,
+    parallel,
+    log,
+  })) {
+    if (typeof value !== "function") {
+      throw new Error(`go-in-depth runtime.${name} must be a function`)
     }
-    return parallel(
-      novel.map(source => () => {
-        let host = "unknown"
-        try { host = new URL(source.url).hostname.replace(/^www\./, "") } catch {}
-        return agent(FETCH_PROMPT(source, searchResult.angle), {
-          label: "fetch:" + host,
-          phase: "Fetch",
-          schema: EXTRACT_SCHEMA,
-        }).then(ext => {
-          // User-skip → null; drop it (filtered by searchResults.flat().filter(Boolean))
-          // rather than throwing into .catch() and mislabeling it "unreliable".
-          if (!ext) return null
-          return {
-            url: source.url, title: source.title, angle: searchResult.angle,
-            sourceQuality: ext.sourceQuality, publishDate: ext.publishDate,
-            claims: ext.claims.map(c => ({ ...c, sourceUrl: source.url, sourceQuality: ext.sourceQuality })),
-          }
-        }).catch(e => {
-          log("fetch failed: " + source.url + " — " + (e.message || e))
-          return { url: source.url, title: source.title, angle: searchResult.angle, sourceQuality: "unreliable", claims: [] }
-        })
-      })
-    )
   }
-)
+  return { phase, agent, pipeline, parallel, log }
+}
 
-const allSources = searchResults.flat().filter(Boolean)
-const allClaims = allSources.flatMap(s => s.claims)
-const impRank = { central: 0, supporting: 1, tangential: 2 }
-const qualRank = { primary: 0, secondary: 1, blog: 2, forum: 3, unreliable: 4 }
-
-const rankedClaims = [...allClaims]
-  .sort((a, b) => (impRank[a.importance] - impRank[b.importance]) || (qualRank[a.sourceQuality] - qualRank[b.sourceQuality]))
-  .slice(0, MAX_VERIFY_CLAIMS)
-
-log("Fetched " + allSources.length + " sources → " + allClaims.length + " claims → verifying top " + rankedClaims.length)
-
-if (rankedClaims.length === 0) {
-  return {
-    question: QUESTION,
-    summary: "No claims extracted. " + allSources.length + " sources fetched, all empty/failed. " + dupes.length + " URL dupes, " + budgetDropped.length + " budget-dropped.",
-    findings: [], refuted: [], sources: allSources.map(s => ({ url: s.url, quality: s.sourceQuality })),
-    stats: { angles: scope.angles.length, sources: allSources.length, claims: 0, dupes: dupes.length },
+function normalizedUrl(value) {
+  try {
+    const url = new URL(String(value))
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(utm_|fbclid$|gclid$)/i.test(key)) url.searchParams.delete(key)
+    }
+    url.hash = ""
+    return `${url.hostname.replace(/^www\./, "").toLowerCase()}${url.pathname.replace(/\/$/, "")}${url.search}`
+  } catch {
+    return String(value).trim().toLowerCase()
   }
 }
 
-// ─── Verify: 3-vote adversarial ───
-// Barrier here is intentional — claim pool must be fully assembled before ranking/verification.
-phase("Verify")
-const voted = (await parallel(
-  rankedClaims.map(claim => () =>
-    parallel(
-      Array.from({ length: VOTES_PER_CLAIM }, (_, v) => () =>
-        agent(VERIFY_PROMPT(claim, v), {
-          label: "v" + v + ":" + claim.claim.slice(0, 40),
-          phase: "Verify",
-          schema: VERDICT_SCHEMA,
-        })
-      )
-    ).then(verdicts => {
-      // A vote can be null (user-skip or agent error) — treat as abstain.
-      const valid = verdicts.filter(Boolean)
-      const refuted = valid.filter(v => v.refuted).length
-      // Survive only if the claim was actually adjudicated: a quorum of
-      // valid votes AND fewer than REFUTATIONS_REQUIRED refuting. Too many
-      // abstentions = unverified, which must NOT pass into the report
-      // (otherwise all-abstain → refuted=0 → false survive).
-      const abstained = VOTES_PER_CLAIM - valid.length
-      const survives = valid.length >= REFUTATIONS_REQUIRED && refuted < REFUTATIONS_REQUIRED
-      log("\"" + claim.claim.slice(0, 50) + "…\": " + (valid.length - refuted) + "-" + refuted + (abstained > 0 ? " (" + abstained + " abstain)" : "") + " " + (survives ? "✓" : "✗"))
-      return { ...claim, verdicts: valid, refutedVotes: refuted, survives }
-    })
+function questionFrom(args) {
+  if (typeof args === "string") return args.trim()
+  if (args && typeof args === "object") {
+    return String(args.query || args.question || "").trim()
+  }
+  return ""
+}
+
+export async function run(args, runtime) {
+  const { phase, agent, pipeline, parallel, log } = runtimeFunctions(runtime)
+  const question = questionFrom(args)
+  if (!question) {
+    return {
+      error:
+        "No research question provided. Pass a specific question in args or args.query.",
+    }
+  }
+
+  phase("Scope")
+  const scope = await agent(
+    `Decompose the following research question into five complementary, non-duplicate search angles.\n\nQuestion: ${question}\n\nPrefer primary sources, current material, technical evidence, skeptical or contrary evidence, and practical implementation evidence. Return structured output only.`,
+    { label: "scope", schema: SCOPE_SCHEMA },
   )
-)).filter(Boolean)
+  if (!scope || !Array.isArray(scope.angles) || scope.angles.length === 0) {
+    return { error: "Scope agent returned no usable search angles." }
+  }
 
-const confirmed = voted.filter(c => c.survives)
-const killed = voted.filter(c => !c.survives)
-log("Verify done: " + voted.length + " claims → " + confirmed.length + " confirmed, " + killed.length + " killed")
+  log(`Question: ${question.slice(0, 120)}`)
+  log(`Angles: ${scope.angles.map((angle) => angle.label).join(", ")}`)
 
-if (confirmed.length === 0) {
+  const seen = new Set()
+  const duplicates = []
+  const dropped = []
+  let slots = MAX_FETCH
+  const relevance = { high: 0, medium: 1, low: 2 }
+
+  const sources = (
+    await pipeline(
+      scope.angles,
+      (angle) =>
+        agent(
+          `Search the web for the original question from this angle.\n\nQuestion: ${question}\nAngle: ${angle.label}\nQuery: ${angle.query}\nRationale: ${angle.rationale || ""}\n\nReturn 4-6 high-signal results. Prefer authoritative and primary sources. Reject SEO spam. Structured output only.`,
+          {
+            label: `search:${angle.label}`,
+            phase: "Search",
+            schema: SEARCH_SCHEMA,
+          },
+        ).then((result) => ({ angle, results: result?.results || [] })),
+      ({ angle, results }) => {
+        const selected = [...results]
+          .sort(
+            (left, right) =>
+              (relevance[left.relevance] ?? 9) -
+              (relevance[right.relevance] ?? 9),
+          )
+          .filter((result) => {
+            const key = normalizedUrl(result.url)
+            if (!key || seen.has(key)) {
+              duplicates.push(result)
+              return false
+            }
+            if (slots <= 0) {
+              dropped.push(result)
+              return false
+            }
+            seen.add(key)
+            slots -= 1
+            return true
+          })
+
+        return parallel(
+          selected.map((source) => () =>
+            agent(
+              `Fetch and inspect this source for the original research question.\n\nQuestion: ${question}\nURL: ${source.url}\nTitle: ${source.title}\nSearch angle: ${angle.label}\n\nExtract 2-5 concrete falsifiable claims. Include a direct supporting quote, source quality, publication date when available, and importance. If inaccessible or irrelevant, return an empty claims array and unreliable quality. Structured output only.`,
+              {
+                label: `fetch:${angle.label}`,
+                phase: "Fetch",
+                schema: EXTRACT_SCHEMA,
+              },
+            )
+              .then((extraction) => ({
+                url: source.url,
+                title: source.title,
+                angle: angle.label,
+                sourceQuality: extraction?.sourceQuality || "unreliable",
+                publishDate: extraction?.publishDate || "",
+                claims: (extraction?.claims || []).map((claim) => ({
+                  ...claim,
+                  sourceUrl: source.url,
+                  sourceQuality:
+                    extraction?.sourceQuality || "unreliable",
+                })),
+              }))
+              .catch((error) => {
+                log(`Fetch failed for ${source.url}: ${error?.message || error}`)
+                return {
+                  url: source.url,
+                  title: source.title,
+                  angle: angle.label,
+                  sourceQuality: "unreliable",
+                  claims: [],
+                }
+              }),
+          ),
+        )
+      },
+    )
+  )
+    .flat()
+    .filter(Boolean)
+
+  const importance = { central: 0, supporting: 1, tangential: 2 }
+  const quality = { primary: 0, secondary: 1, blog: 2, forum: 3, unreliable: 4 }
+  const claims = sources
+    .flatMap((source) => source.claims || [])
+    .sort(
+      (left, right) =>
+        (importance[left.importance] ?? 9) -
+          (importance[right.importance] ?? 9) ||
+        (quality[left.sourceQuality] ?? 9) -
+          (quality[right.sourceQuality] ?? 9),
+    )
+    .slice(0, MAX_VERIFY_CLAIMS)
+
+  if (claims.length === 0) {
+    return {
+      question,
+      summary: "No usable claims were extracted from the retrieved sources.",
+      findings: [],
+      refuted: [],
+      sources,
+      stats: {
+        angles: scope.angles.length,
+        sources: sources.length,
+        claims: 0,
+        duplicates: duplicates.length,
+        budgetDropped: dropped.length,
+      },
+    }
+  }
+
+  phase("Verify")
+  const voted = await parallel(
+    claims.map((claim) => async () => {
+      const verdicts = (
+        await parallel(
+          Array.from({ length: VOTES_PER_CLAIM }, (_, index) => () =>
+            agent(
+              `Act as adversarial verifier ${index + 1}/${VOTES_PER_CLAIM}. Try to refute this claim using credible current evidence.\n\nResearch question: ${question}\nClaim: ${claim.claim}\nSource: ${claim.sourceUrl}\nSource quality: ${claim.sourceQuality}\nSupporting quote: ${claim.quote}\n\nSet refuted=true for unsupported, contradicted, outdated, overstated, or inadequately sourced claims. Structured output only.`,
+              {
+                label: `verify:${index}:${String(claim.claim).slice(0, 40)}`,
+                phase: "Verify",
+                schema: VERDICT_SCHEMA,
+              },
+            ),
+          ),
+        )
+      ).filter(Boolean)
+      const refutedVotes = verdicts.filter((verdict) => verdict.refuted).length
+      const survives =
+        verdicts.length >= REFUTATIONS_REQUIRED &&
+        refutedVotes < REFUTATIONS_REQUIRED
+      return { ...claim, verdicts, refutedVotes, survives }
+    }),
+  )
+
+  const confirmed = voted.filter((claim) => claim.survives)
+  const refuted = voted.filter((claim) => !claim.survives)
+  if (confirmed.length === 0) {
+    return {
+      question,
+      summary:
+        "All extracted claims failed adversarial verification or lacked a voting quorum.",
+      findings: [],
+      refuted: refuted.map((claim) => ({
+        claim: claim.claim,
+        source: claim.sourceUrl,
+        vote: `${claim.verdicts.length - claim.refutedVotes}-${claim.refutedVotes}`,
+      })),
+      sources,
+      stats: {
+        angles: scope.angles.length,
+        sources: sources.length,
+        claims: claims.length,
+        confirmed: 0,
+        refuted: refuted.length,
+      },
+    }
+  }
+
+  phase("Synthesize")
+  const evidenceBlock = confirmed
+    .map(
+      (claim, index) =>
+        `### ${index + 1}. ${claim.claim}\nSource: ${claim.sourceUrl}\nQuote: ${claim.quote}\nVote: ${claim.verdicts.length - claim.refutedVotes}-${claim.refutedVotes}\nVerifier evidence: ${claim.verdicts.map((verdict) => verdict.evidence).join(" | ")}`,
+    )
+    .join("\n\n")
+
+  const report = await agent(
+    `Synthesize a cited, evidence-based report that directly answers the question. Merge duplicate claims, preserve source URLs, assign confidence, identify weak evidence and time-sensitive caveats, and list open questions.\n\nQuestion: ${question}\n\nVerified claims:\n${evidenceBlock}\n\nStructured output only.`,
+    { label: "synthesize", phase: "Synthesize", schema: REPORT_SCHEMA },
+  )
+
   return {
-    question: QUESTION,
-    summary: "All " + voted.length + " claims refuted by adversarial verification. Research inconclusive — sources may be low-quality or claims overstated.",
-    findings: [],
-    refuted: killed.map(c => ({ claim: c.claim, vote: (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes, source: c.sourceUrl })),
-    sources: allSources.map(s => ({ url: s.url, quality: s.sourceQuality, claimCount: s.claims.length })),
-    stats: { angles: scope.angles.length, sources: allSources.length, claims: allClaims.length, verified: voted.length, confirmed: 0, killed: killed.length },
+    question,
+    ...(report || {
+      summary:
+        "Synthesis failed; verified claims are returned without narrative merging.",
+      findings: confirmed.map((claim) => ({
+        claim: claim.claim,
+        confidence: "medium",
+        sources: [claim.sourceUrl],
+        evidence: claim.quote,
+        vote: `${claim.verdicts.length - claim.refutedVotes}-${claim.refutedVotes}`,
+      })),
+      caveats: "Automated synthesis was unavailable.",
+      openQuestions: [],
+    }),
+    refuted: refuted.map((claim) => ({
+      claim: claim.claim,
+      source: claim.sourceUrl,
+      vote: `${claim.verdicts.length - claim.refutedVotes}-${claim.refutedVotes}`,
+    })),
+    sources: sources.map((source) => ({
+      url: source.url,
+      title: source.title,
+      quality: source.sourceQuality,
+      angle: source.angle,
+      claimCount: source.claims.length,
+    })),
+    stats: {
+      angles: scope.angles.length,
+      sourcesFetched: sources.length,
+      claimsExtracted: claims.length,
+      confirmed: confirmed.length,
+      refuted: refuted.length,
+      urlDuplicates: duplicates.length,
+      budgetDropped: dropped.length,
+    },
   }
 }
 
-// ─── Synthesize ───
-phase("Synthesize")
-const confRank = { high: 0, medium: 1, low: 2 }
-const block = confirmed.map((c, i) => {
-  const best = c.verdicts.filter(v => !v.refuted).sort((a, b) => confRank[a.confidence] - confRank[b.confidence])[0]
-  return "### [" + i + "] " + c.claim + "\n" +
-    "Vote: " + (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes + " · Source: " + c.sourceUrl + " (" + c.sourceQuality + ")\n" +
-    "Quote: \"" + c.quote + "\"\nVerifier evidence (" + best.confidence + "): " + best.evidence + "\n"
-}).join("\n")
-
-const killedBlock = killed.length > 0
-  ? "\n## Refuted claims (for transparency)\n" +
-    killed.map(c => "- \"" + c.claim + "\" (" + c.sourceUrl + ", vote " + (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes + ")").join("\n")
-  : ""
-
-const report = await agent(
-  "## Synthesis: research report\n\n" +
-  "**Question:** " + QUESTION + "\n\n" +
-  confirmed.length + " claims survived " + VOTES_PER_CLAIM + "-vote adversarial verification. Merge semantic duplicates and synthesize.\n\n" +
-  "## Confirmed claims\n" + block + "\n" + killedBlock + "\n\n" +
-  "## Instructions\n" +
-  "1. Identify claims that say the same thing — merge them, combine their sources.\n" +
-  "2. Group related claims into coherent findings. Each finding should directly address the research question.\n" +
-  "3. Assign confidence per finding: high (multiple primary sources, unanimous votes), medium (secondary sources or split votes), low (single source or blog-quality).\n" +
-  "4. Write a 3-5 sentence executive summary answering the research question.\n" +
-  "5. Note caveats: what's uncertain, what sources were weak, what time-sensitivity applies.\n" +
-  "6. List 2-4 open questions that emerged but weren't answered.\n\nStructured output only.",
-  { label: "synthesize", schema: REPORT_SCHEMA }
-)
-
-if (!report) {
-  // Synthesis skipped/errored — salvage the verified claims raw rather
-  // than throwing on report.findings and discarding the whole run.
-  return {
-    question: QUESTION,
-    summary: "Synthesis step was skipped or failed — returning " + confirmed.length + " verified claims unmerged.",
-    findings: [],
-    confirmed: confirmed.map(c => ({ claim: c.claim, source: c.sourceUrl, quote: c.quote, vote: (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes })),
-    refuted: killed.map(c => ({ claim: c.claim, vote: (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes, source: c.sourceUrl })),
-    sources: allSources.map(s => ({ url: s.url, quality: s.sourceQuality, claimCount: s.claims.length })),
-    stats: { angles: scope.angles.length, sources: allSources.length, claims: allClaims.length, verified: voted.length, confirmed: confirmed.length, killed: killed.length, afterSynthesis: 0 },
-  }
-}
-
-return {
-  question: QUESTION,
-  ...report,
-  refuted: killed.map(c => ({ claim: c.claim, vote: (c.verdicts.length - c.refutedVotes) + "-" + c.refutedVotes, source: c.sourceUrl })),
-  sources: allSources.map(s => ({ url: s.url, quality: s.sourceQuality, angle: s.angle, claimCount: s.claims.length })),
-  stats: {
-    angles: scope.angles.length,
-    sourcesFetched: allSources.length,
-    claimsExtracted: allClaims.length,
-    claimsVerified: voted.length,
-    confirmed: confirmed.length,
-    killed: killed.length,
-    afterSynthesis: report.findings.length,
-    urlDupes: dupes.length,
-    budgetDropped: budgetDropped.length,
-    agentCalls: 1 + scope.angles.length + allSources.length + (voted.length * VOTES_PER_CLAIM) + 1,
-  },
-}
+export default { meta, run }
