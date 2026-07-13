@@ -5,6 +5,7 @@ import scratchpadRouter from "./scratchpad";
 import workTreeRouter from "./work-tree";
 import integrationsRouter from "./integrations";
 import knowledgeRouter from "./knowledge";
+import bosOmegaRouter from "./bos-omega";
 import openaiProxyRouter from "./openai-proxy";
 import voiceRouter from "./voice";
 import skillsRouter from "./skills";
@@ -14,19 +15,20 @@ const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(novaConfigRouter);
+router.use(bosOmegaRouter);
 router.use(voiceRouter);
 router.use(scratchpadRouter);
 router.use(workTreeRouter);
-// The credential store and knowledge base are sensitive (they hold Robert's API
-// tokens and private notes), so they sit behind the same PIN gate as Work Tree.
-// One /unlock (cookie scoped to /api) covers all three. The gate is scoped to
-// these path prefixes ONLY — mounting requireWtAuth without a path turns it into
-// catch-all middleware that locks every later route (including the chat proxy).
-// Knowledge context is still injected into chat server-side in-process, which
-// does not pass through these gated HTTP routes.
+
+// Credentials, private knowledge, and their management surfaces require the
+// signed Work Tree session. The path prefixes are explicit so the gate cannot
+// accidentally lock unrelated routes such as BOS chat or the legacy proxy.
 router.use(["/integrations", "/knowledge"], requireWtAuth);
 router.use(integrationsRouter);
 router.use(knowledgeRouter);
+
+// Keep the legacy OpenAI-compatible proxy for non-chat compatibility while the
+// browser chat uses /api/bos/v1 through nova-config.
 router.use(openaiProxyRouter);
 router.use(skillsRouter);
 
