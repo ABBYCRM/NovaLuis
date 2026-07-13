@@ -1,48 +1,27 @@
-```json
 {
   "name": "workspace",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "license": "MIT",
+  "packageManager": "pnpm@9.15.4",
   "engines": {
     "node": ">=20.11 <25",
-    "pnpm": ">=9"
+    "pnpm": ">=9 <11"
   },
   "scripts": {
     "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(!ua.startsWith('pnpm/')){console.error('Use pnpm instead of npm or yarn');process.exit(1)}\"",
     "typecheck:libs": "tsc --build",
     "typecheck:workspaces": "pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "typecheck": "pnpm run typecheck:libs && pnpm run typecheck:workspaces",
-    "check:server": "node --check server.js",
-    "check": "pnpm run check:server && pnpm run typecheck",
-    "build:workspaces": "pnpm -r --if-present run build",
-    "build": "pnpm run check && pnpm run build:workspaces",
-    "start": "node server.js",
+    "build:api": "pnpm --filter @workspace/api-server run build",
+    "build": "pnpm run typecheck && pnpm run build:api",
+    "start": "node --enable-source-maps ./artifacts/api-server/dist/index.mjs",
+    "start:api": "pnpm --filter @workspace/api-server run start",
     "start:skills": "node server.js"
-  },
-  "dependencies": {
-    "express": "^4.21.2"
   },
   "devDependencies": {
     "prettier": "^3.8.3",
     "typescript": "~5.9.3"
   }
 }
-```
-
-```bash
-rm -f package-lock.json yarn.lock
-rm -rf node_modules
-pnpm install --no-frozen-lockfile
-pnpm run check
-pnpm run build
-pnpm start
-```
-
-```text
-Render Build Command:
-corepack enable && pnpm install --frozen-lockfile && pnpm run build
-
-Render Start Command:
-pnpm start
-```
