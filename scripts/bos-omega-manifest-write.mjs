@@ -1,5 +1,5 @@
 import { arraySchema as A, jsonSchema as O, stringSchema as S } from "./bos-omega-core.mjs";
-import { githubCreateIssue, githubCreatePullRequest } from "./bos-omega-github.mjs";
+import { githubCreateBranch, githubCreateIssue, githubCreatePullRequest, githubUpdateFile } from "./bos-omega-github.mjs";
 import { discordSendMessage, inngestSendEvent, resendSendEmail } from "./bos-omega-services.mjs";
 import { memoryPut, writeFile } from "./bos-omega-files.mjs";
 
@@ -9,6 +9,8 @@ const obj = (properties, required = []) => O(properties, required);
 const def = (name, category, description, schema, run, capability = null, aliases = []) => ({ name, category, description, schema, run, risk: "high", requiresAuth: true, requiresApproval: true, internalOnly: false, capability, aliases });
 
 export const WRITE_TOOLS = [
+  def("github_create_branch", "git", "Create a GitHub branch from an exact commit SHA after explicit approval.", obj({ repo: str("owner/name or URL."), branch: str("New branch name."), source_sha: str("Full source commit SHA.") }, ["repo", "branch", "source_sha"]), githubCreateBranch, "github.api"),
+  def("github_update_file", "git", "Create or replace one UTF-8 GitHub file on an explicit branch after approval.", obj({ repo: str("owner/name or URL."), path: str("Repository file path."), branch: str("Target branch."), message: str("Commit message."), content: str("Complete UTF-8 content."), sha: str("Existing blob SHA when replacing a file.") }, ["repo", "path", "branch", "message", "content"]), githubUpdateFile, "github.api"),
   def("github_create_issue", "git", "Create a GitHub issue after explicit approval.", obj({ repo: str("owner/name or URL."), title: str("Title."), body: str("Body.") }, ["repo", "title"]), githubCreateIssue, "github.api"),
   def("github_create_pr", "git", "Create a draft GitHub pull request after explicit approval.", obj({ repo: str("owner/name or URL."), title: str("Title."), body: str("Body."), head: str("Head branch."), base: str("Base branch."), draft: { type: "boolean" } }, ["repo", "title", "head", "base"]), githubCreatePullRequest, "github.api"),
   def("send_email", "productivity", "Send an idempotent email through Resend after explicit approval.", obj({ to: arr("Recipients.", { type: "string" }), subject: str("Subject."), text: str("Text body."), html: str("HTML body."), idempotency_key: str("Optional idempotency key.") }, ["to", "subject"]), resendSendEmail, "email.resend"),
