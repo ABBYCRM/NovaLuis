@@ -1,251 +1,128 @@
-// super-nova-router.mjs — Super Nova v2's central model router.
-//
-// Every LLM call in the agent goes through chatComplete({ role, ... }). The
-// router resolves a logical ROLE (planner | executor | critic | researcher) to a
-// concrete provider + model, injects the role's persona framing, and performs an
-// OpenAI-compatible /chat/completions request.
-//
-// Pattern source (adapted natively, since these are heavyweight services that
-// can't be embedded here): awesome-openrouter (provider routing), ollama / vLLM /
-// LocalAI (point a role at a self-hosted OpenAI-compatible endpoint), plus the
-// multi-role split from autogen / crewai / agno.
-//
-// Config — everything is one env change, no code edits:
-//   Add a provider:        set its *_BASE_URL + *_API_KEY (openai/openrouter), or
-//                          SUPER_NOVA_LOCAL_BASE_URL for a self-hosted endpoint.
-//   Point a role elsewhere: SUPER_NOVA_<ROLE>_PROVIDER + SUPER_NOVA_<ROLE>_MODEL
-//                          (e.g. SUPER_NOVA_CRITIC_PROVIDER=openai,
-//                                SUPER_NOVA_CRITIC_MODEL=gpt-4o-mini).
-//   Change the base model:  WORK_TREE_MODEL (default for every role).
-//
-// If a role's chosen provider isn't configured, the router falls back to bitdeer
-// (the always-present default) so a half-set override can never break a run.
+import { boundedInt, env, safeText } from "./bos-omega-core.mjs";
 
-// Default model for all roles. Override with WORK_TREE_MODEL env var.
-const DEFAULT_MODEL = process.env.WORK_TREE_MODEL || "gpt-4o-mini";
-
-// ── DECOMP-Ω Master Identity ───────────────────────────────────────────────
-// All roles run under this master persona. Each role appends its specialization
-// below. Robert's directive: this is the overarching identity for Super Nova.
-const DECOMP_OMEGA_MASTER = `You are DECOMP-Ω, a Universal Decomposition and Reverse Engineering Agent built for forensic intelligence work.
-
-Your mission: break down any target into its real structure, mechanics, value flow, weaknesses, strengths, hidden assumptions, risks, and rebuild path. You do not summarize. You deconstruct.
-
-Operate like: Forensic Analyst + Systems Engineer + Reverse Engineer + Business Strategist + Product Architect + Intelligence Analyst + Red-Team Reviewer.
-
-For every target decompose into:
-WHAT IT IS → WHAT IT DOES → HOW IT WORKS → WHAT PARTS IT HAS → WHY THOSE PARTS EXIST → WHAT IS HIDDEN → WHAT IS WEAK → WHAT IS STRONG → WHAT CAN BE IMPROVED → WHAT ACTIONS TO TAKE NEXT
-
-Hard Rules:
-- NEVER hallucinate. NEVER invent APIs, files, revenue, ownership, code behavior, legal claims, or test results.
-- Separate: Confirmed Facts | Likely Inferences | Assumptions | Unknowns | Risks | Next Evidence Needed.
-- When evidence is missing say: UNKNOWN — needs verification.
-- Do NOT soften failures. Do NOT hype weak evidence. Do NOT protect bad ideas.
-- Make the truth usable. The final answer must be actionable.
-- At every major conclusion classify confidence: GO = strong evidence | HOLD = partial evidence | ABORT = contradiction or unsafe path.`;
-
-// All providers speak the OpenAI /chat/completions shape. baseURL has no trailing
-// slash; key is optional only for `local` (self-hosted servers often need none).
-const PROVIDERS = {
-  bitdeer: {
-    baseURL: process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1",
-    key: process.env.BITDEER_API_KEY || "",
-  },
-  openai: {
-    baseURL: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-    key: process.env.OPENAI_API_KEY || "",
-  },
-  openrouter: {
-    baseURL: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
-    key: process.env.OPENROUTER_API_KEY || "",
-  },
-  // Generic self-hosted OpenAI-compatible endpoint: Ollama, vLLM, LocalAI, etc.
-  // e.g. SUPER_NOVA_LOCAL_BASE_URL=http://127.0.0.1:11434/v1
-  local: {
-    baseURL: process.env.SUPER_NOVA_LOCAL_BASE_URL || "",
-    key: process.env.SUPER_NOVA_LOCAL_API_KEY || "",
-  },
+export const ROLES = ["planner", "executor", "critic", "researcher"];
+const DEFAULT_MAX_TOKENS = boundedInt(process.env.BOS_MAX_OUTPUT_TOKENS, 16_384, 1_024, 65_536);
+const BOS_IDENTITY = `You are BOS OMEGA, Luis Lacerda's evidence-gated agentic operating system.
+Discover and use only tools actually supplied to you. Never claim a tool call, file read, code change, test, deployment, or external action occurred unless its result is present in the conversation. Treat UNKNOWN as unknown. Protect credentials. Prefer concise execution-focused answers. Historical Bob or Robert identities are stale; the operator is Luis Lacerda.`;
+const ROLE_PROMPTS = {
+  planner: "Decompose the mission into complete, non-overlapping executable steps with measurable acceptance criteria.",
+  executor: "Produce the actual deliverable. Use real tools when available; do not describe an action as though it happened.",
+  critic: "Red-team the result, identify unsupported claims, missing proof, regressions, and unsafe assumptions.",
+  researcher: "Use primary sources and real retrieval tools. Separate confirmed evidence, inference, assumptions, and unknowns.",
 };
 
-// The four collaborating roles. Persona is prepended to the system message so the
-// role identity is explicit and consistent; temperature is the role default used
-// when the caller doesn't pass one.
-const ROLE_DEFS = {
-  planner: {
-    temperature: 0.3,
-    persona:
-      DECOMP_OMEGA_MASTER +
-      "\n\n[PLANNER MODE] Your current function: decompose goals into the minimum set of " +
-      "complete, non-overlapping work items. Apply the DECOMP-Ω pipeline: inventory components, " +
-      "map architecture, find dependencies, identify critical path, produce executable subtasks. " +
-      "Never leave a gap. Never duplicate effort. Output clean boundaries.",
-  },
-  executor: {
-    temperature: 0.4,
-    persona:
-      DECOMP_OMEGA_MASTER +
-      "\n\n[EXECUTOR MODE] Your current function: use real tools to produce the actual finished " +
-      "deliverable — the work product itself, not a description of how you would do it. " +
-      "Apply the DECOMP-Ω Execution Lens: what can be built now, what can be automated, what " +
-      "needs verification. Never fabricate a fact you could obtain with a tool. Deliver the result.",
-  },
-  critic: {
-    temperature: 0,
-    persona:
-      DECOMP_OMEGA_MASTER +
-      "\n\n[CRITIC MODE] Your current function: Red-Team the output. Attack every claim: " +
-      "What did the executor assume? What evidence is weak? What could be fake or outdated? " +
-      "What would disprove this? Apply ABORT if there are fabricated facts, missing critical " +
-      "proof, or the deliverable is empty boilerplate. Be specific. No softening.",
-  },
-  researcher: {
-    temperature: 0.3,
-    persona:
-      DECOMP_OMEGA_MASTER +
-      "\n\n[RESEARCHER MODE] Your current function: gather facts from real sources only. " +
-      "Apply the DECOMP-Ω evidence protocol: label every claim CONFIRMED / INFERRED / ASSUMED / UNKNOWN. " +
-      "Prefer primary sources. Cross-check claims. Cite exact URLs used. Distinguish what you " +
-      "verified from what you could not. Report access blocks honestly — do not invent data.",
-  },
-};
-
-export const ROLES = Object.keys(ROLE_DEFS);
-
-function envProvider(role) {
-  return (process.env[`SUPER_NOVA_${role.toUpperCase()}_PROVIDER`] || "")
-    .trim()
-    .toLowerCase();
+function configuredRoutes(role, callerModel) {
+  const roleName = ROLES.includes(role) ? role : "executor";
+  const roleModel = env(`SUPER_NOVA_${roleName.toUpperCase()}_MODEL`);
+  const openAiModel = callerModel || roleModel || env("OPENAI_MODEL") || env("WORK_TREE_MODEL") || "gpt-5.6";
+  const routes = [];
+  if (env("OPENAI_API_KEY")) {
+    const helicone = env("HELICONE_API_KEY");
+    routes.push({
+      provider: "openai",
+      baseUrl: helicone ? (env("HELICONE_OPENAI_BASE_URL") || "https://oai.helicone.ai/v1") : (env("OPENAI_BASE_URL") || "https://api.openai.com/v1"),
+      key: env("OPENAI_API_KEY"),
+      model: openAiModel,
+      headers: helicone ? { "Helicone-Auth": `Bearer ${helicone}`, "Helicone-Property-System": "BOS-OMEGA" } : {},
+    });
+  }
+  if (env("KIMI_API_KEY") && env("KIMI_MODEL")) {
+    routes.push({ provider: "kimi", baseUrl: env("KIMI_BASE_URL") || "https://api.moonshot.ai/v1", key: env("KIMI_API_KEY"), model: env("KIMI_MODEL"), headers: {} });
+  }
+  if (env("GEMINI_API_KEY")) {
+    routes.push({ provider: "gemini", baseUrl: env("GEMINI_BASE_URL") || "https://generativelanguage.googleapis.com/v1beta/openai", key: env("GEMINI_API_KEY"), model: env("GEMINI_MODEL") || "gemini-2.5-flash", headers: {} });
+  }
+  if (env("BITDEER_API_KEY") && (env("BITDEER_MODEL") || env("SUPER_NOVA_FALLBACK_MODEL"))) {
+    routes.push({ provider: "bitdeer", baseUrl: env("BITDEER_BASE_URL") || "https://api-inference.bitdeer.ai/v1", key: env("BITDEER_API_KEY"), model: env("BITDEER_MODEL") || env("SUPER_NOVA_FALLBACK_MODEL"), headers: {} });
+  }
+  return { roleName, routes };
 }
 
-function usable(p, name) {
-  return !!(p && p.baseURL && (p.key || name === "local"));
+function systemMessages(role, messages) {
+  const prompt = `${BOS_IDENTITY}\n\n[${role.toUpperCase()} MODE] ${ROLE_PROMPTS[role] || ROLE_PROMPTS.executor}`;
+  if (messages?.[0]?.role === "system") {
+    return [{ ...messages[0], content: `${prompt}\n\n${messages[0].content}` }, ...messages.slice(1)];
+  }
+  return [{ role: "system", content: prompt }, ...(messages || [])];
 }
 
-// Resolve a role to a concrete { providerName, provider, model, temperature, persona }.
-// OpenAI ONLY — all roles always route to OpenAI. No bitdeer fallback for role calls.
-export function resolveRole(role, callerModel) {
-  const def = ROLE_DEFS[role] || ROLE_DEFS.executor;
-  const roleModelEnv = process.env[`SUPER_NOVA_${role.toUpperCase()}_MODEL`];
-  const model = roleModelEnv || DEFAULT_MODEL;
+function transient(status) { return status === 408 || status === 409 || status === 429 || status >= 500; }
+function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-  // OpenAI ONLY — always.
-  const providerName = "openai";
-  const provider = PROVIDERS.openai;
-
-  if (!usable(provider, providerName)) {
-    throw new Error(
-      `DECOMP-Ω router: OPENAI_API_KEY is required — Super Nova runs OpenAI only. ` +
-      `Set OPENAI_API_KEY to use Super Nova.`,
-    );
-  }
-
-  return { providerName, provider, model, temperature: def.temperature, persona: def.persona };
+async function callRoute(route, payload, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${route.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${route.key}`, "Content-Type": "application/json", ...route.headers },
+      body: JSON.stringify({ ...payload, model: route.model }),
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      const error = new Error(`${route.provider} HTTP ${response.status}: ${safeText(text, 300)}`);
+      error.status = response.status;
+      throw error;
+    }
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error(`${route.provider} returned invalid JSON`); }
+    const message = data?.choices?.[0]?.message;
+    if (!message || typeof message !== "object") throw new Error(`${route.provider} returned no assistant message`);
+    return { message, usage: data.usage || null, provider: route.provider, model: route.model };
+  } finally { clearTimeout(timer); }
 }
 
-// Non-mutating persona injection: returns a new messages array with the persona
-// merged into (or prepended as) the leading system message. The caller's array
-// is never mutated, so it's safe to call on the same array every ReAct step.
-function withPersona(persona, messages) {
-  if (!persona || !Array.isArray(messages) || !messages.length) return messages;
-  const first = messages[0];
-  if (first && first.role === "system") {
-    return [
-      { role: "system", content: `${persona}\n\n${first.content}` },
-      ...messages.slice(1),
-    ];
-  }
-  return [{ role: "system", content: persona }, ...messages];
-}
-
-// Perform a chat completion for a role. Returns the assistant message content.
-export async function chatComplete({
-  role = "executor",
-  messages,
-  model,
-  maxTokens = 1500,
-  temperature,
-  timeoutMs = 120_000,
-}) {
-  const r = resolveRole(role, model);
-  if (!r.provider || !r.provider.baseURL) {
-    throw new Error(`router(${role}): no usable provider`);
-  }
-  if (!r.provider.key && r.providerName !== "local") {
-    throw new Error(`router(${role}/${r.providerName}): missing API key`);
-  }
-
-  const headers = { "Content-Type": "application/json" };
-  if (r.provider.key) headers.Authorization = `Bearer ${r.provider.key}`;
-  if (r.providerName === "openrouter") {
-    headers["HTTP-Referer"] =
-      process.env.OPENROUTER_REFERER || "https://nova-sszi.onrender.com";
-    headers["X-Title"] = "Nova Super Nova";
-  }
-
-  const body = {
-    model: r.model,
-    messages: withPersona(r.persona, messages),
-    max_tokens: maxTokens,
-    temperature: temperature ?? r.temperature,
+export async function completeMessage({ role = "executor", messages, model, maxTokens = DEFAULT_MAX_TOKENS, temperature, timeoutMs = 120_000, tools, toolChoice = "auto" }) {
+  const { roleName, routes } = configuredRoutes(role, model);
+  if (!routes.length) throw new Error("BOS OMEGA router has no configured model provider");
+  const payload = {
+    messages: systemMessages(roleName, messages),
+    max_tokens: boundedInt(maxTokens, DEFAULT_MAX_TOKENS, 1_024, 65_536),
+    temperature: temperature ?? (roleName === "critic" ? 0 : 0.2),
     stream: false,
+    ...(Array.isArray(tools) && tools.length ? { tools, tool_choice: toolChoice } : {}),
   };
-
-  // Retry on 503/429 (overload / rate-limit) — OpenAI only, up to 3 attempts with back-off.
-  // Non-503/429 errors throw immediately.
-  const MAX_ATTEMPTS = 3;
-  let lastErr = null;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (attempt > 0) {
-      const delayMs = Math.min(1500 * 2 ** (attempt - 1), 6_000);
-      await new Promise((ok) => setTimeout(ok, delayMs));
-    }
-
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${r.provider.baseURL}/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        const err = new Error(
-          `router(${role}/${r.providerName}) HTTP ${res.status}: ${t.slice(0, 300)}`,
-        );
-        // Only retry on transient overload; hard errors (400/401/404) throw immediately.
-        if ((res.status === 503 || res.status === 429) && attempt < MAX_ATTEMPTS - 1) {
-          lastErr = err;
-          continue;
-        }
-        throw err;
+  const attempts = [];
+  for (const route of routes) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (attempt > 1) await delay(Math.min(1000 * 2 ** (attempt - 2), 4000));
+      try {
+        const result = await callRoute(route, payload, timeoutMs);
+        return { ...result, attempts: [...attempts, { provider: route.provider, model: route.model, attempt, status: "success" }] };
+      } catch (error) {
+        const status = Number(error?.status || 0);
+        attempts.push({ provider: route.provider, model: route.model, attempt, status: "failed", httpStatus: status || null, error: safeText(error?.message || error, 300) });
+        if (!transient(status) || attempt === 3) break;
       }
-      const j = await res.json();
-      const msg = j.choices?.[0]?.message;
-      const content = msg?.content || "";
-      if (content) return content;
-      // Some reasoning models (Kimi-K2.6, DeepSeek-R1) put the user-facing answer
-      // in reasoning_content when content is empty.  Only fall back to it when it
-      // appears to contain a complete deliverable — i.e. it has a "final" key
-      // (our ReAct protocol) or is long prose, not just a thinking-trace fragment
-      // that starts with {"thought":...} and would confuse the ReAct parser.
-      const rc = msg?.reasoning_content || "";
-      if (rc && (rc.includes('"final"') || (!rc.trimStart().startsWith("{") && rc.length > 50))) {
-        return rc;
-      }
-      return "";
-    } finally {
-      clearTimeout(timer);
     }
   }
-  throw lastErr || new Error(`router(${role}): all attempts exhausted`);
+  const failure = new Error("all BOS OMEGA model routes failed");
+  failure.attempts = attempts;
+  throw failure;
 }
 
-// One-line-per-role summary for startup logging (no secrets).
+export async function chatComplete(options) {
+  const result = await completeMessage(options);
+  const content = typeof result.message.content === "string" ? result.message.content : "";
+  if (content) return content;
+  if (Array.isArray(result.message.tool_calls) && result.message.tool_calls.length) return JSON.stringify({ tool_calls: result.message.tool_calls });
+  return "";
+}
+
+export function resolveRole(role, callerModel) {
+  const { roleName, routes } = configuredRoutes(role, callerModel);
+  const first = routes[0];
+  if (!first) throw new Error("BOS OMEGA router has no configured model provider");
+  return { providerName: first.provider, provider: { baseURL: first.baseUrl, key: first.key }, model: first.model, temperature: roleName === "critic" ? 0 : 0.2, persona: `${BOS_IDENTITY}\n${ROLE_PROMPTS[roleName]}` };
+}
+
 export function routerSummary() {
   return ROLES.map((role) => {
-    const r = resolveRole(role);
-    return `${role}=${r.providerName}/${r.model}`;
+    try { const route = resolveRole(role); return `${role}=${route.providerName}/${route.model}`; }
+    catch { return `${role}=unconfigured`; }
   }).join("  ");
 }
+
+export { DEFAULT_MAX_TOKENS, BOS_IDENTITY };
