@@ -2,13 +2,18 @@ import { Router } from "express";
 
 const router = Router();
 
-// The chat UI sends requests to the server-side proxy at /api/v1, which injects
-// the real OPENAI_API_KEY. The browser only needs a non-empty placeholder token
-// so bob.js will send the request — the real key never leaves the server.
+// The browser uses a non-secret placeholder token. Model credentials and all
+// tool integrations remain server-side. Anonymous chat is model-only; the same
+// signed Work Tree session unlocks BOS OMEGA's configured read-only tools.
 router.get("/nova-config", (_req, res) => {
   res.json({
     apiKey: "proxy",
-    baseUrl: "/api/v1",
+    baseUrl: "/api/bos/v1",
+    defaultModel:
+      process.env.OPENAI_MODEL ?? process.env.WORK_TREE_MODEL ?? "gpt-5.6",
+    identity: "BOS OMEGA",
+    capabilitiesUrl: "/api/bos/capabilities",
+    unlockUrl: "/api/work-tree/unlock",
   });
 });
 
