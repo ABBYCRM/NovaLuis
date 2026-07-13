@@ -14,7 +14,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
 
     steps:
       - name: Check out exact source revision
@@ -104,10 +104,18 @@ jobs:
           openclaw skills check --agent main | tee /tmp/openclaw-skills.txt
           grep -q 'nova-services' /tmp/openclaw-skills.txt
 
+      - name: Install Playwright Chromium for UI proof
+        run: |
+          mkdir -p /tmp/nova-ui-proof
+          cd /tmp/nova-ui-proof
+          npm init -y >/dev/null
+          npm install playwright@1.55.0 --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
       - name: Build production image
         run: docker build --tag nova-openclaw:ci .
 
-      - name: Smoke-test production container
+      - name: Smoke-test production container and Settings UI
         run: |
           set -euo pipefail
           docker run --detach --name nova-openclaw-ci \
@@ -156,3 +164,108 @@ jobs:
           curl --fail --silent --cookie /tmp/nova-cookie.txt \
             http://127.0.0.1:18080/api/integrations/composio/status >/tmp/composio-status.json
           grep -q '"configured":false' /tmp/composio-status.json
+
+          cat > /tmp/nova-ui-proof/proof.mjs <<'NODE'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+
+          const base = 'http://127.0.0.1:18080';
+          const browser = await chromium.launch({ headless: true });
+          const evidence = {
+            result: 'fail',
+            baseUrl: base,
+            checkedAt: new Date().toISOString(),
+            desktop: {},
+            mobile: {},
+          };
+
+          async function verify(viewport, screenshotPath, key) {
+            const page = await browser.newPage({ viewport });
+            page.on('dialog', async (dialog) => dialog.dismiss());
+            await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            if (viewport.width <= 1024) {
+              await page.locator('#hamburger').click();
+              await page.waitForFunction(() => document.querySelector('#sidebar')?.classList.contains('open'));
+            }
+            await page.locator('#settings-btn').click();
+            await page.locator('#settings-modal').waitFor({ state: 'visible' });
+            await page.locator('#composio-settings').waitFor({ state: 'visible' });
+            await page.locator('#composio-settings').scrollIntoViewIfNeeded();
+
+            const title = await page.locator('#composio-settings').getByText('Composio Apps', { exact: true }).count();
+            const summary = await page.locator('#cmp-picker summary').getByText('Connect an app', { exact: true }).count();
+            const chips = {};
+            for (const name of ['GitHub', 'Gmail', 'Slack', 'Notion']) {
+              chips[name] = await page.locator('#cmp-featured').getByRole('button', { name, exact: true }).count();
+            }
+
+            await page.locator('#cmp-featured').getByRole('button', { name: 'GitHub', exact: true }).click();
+            await page.locator('[data-cmp-app="github"]').waitFor({ state: 'visible', timeout: 15000 });
+            const githubButton = await page.locator('[data-cmp-app="github"] [data-cmp-connect="github"]').count();
+
+            const layout = await page.evaluate(() => {
+              const modal = document.querySelector('#settings-modal');
+              const panel = document.querySelector('#composio-settings');
+              const picker = document.querySelector('#cmp-picker');
+              if (!modal || !panel || !picker) throw new Error('Settings nodes missing');
+              const modalRect = modal.getBoundingClientRect();
+              const panelRect = panel.getBoundingClientRect();
+              return {
+                viewportWidth: window.innerWidth,
+                modalLeft: modalRect.left,
+                modalRight: modalRect.right,
+                modalWidth: modalRect.width,
+                panelLeft: panelRect.left,
+                panelRight: panelRect.right,
+                panelWidth: panelRect.width,
+                bodyOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                modalOverflow: modal.scrollWidth - modal.clientWidth,
+                pickerOpen: picker.hasAttribute('open'),
+              };
+            });
+
+            const assertions = {
+              title: title === 1,
+              summary: summary === 1,
+              featured: Object.values(chips).every((count) => count === 1),
+              githubResult: githubButton === 1,
+              pickerOpen: layout.pickerOpen === true,
+              panelInsideViewport: layout.panelLeft >= -1 && layout.panelRight <= layout.viewportWidth + 1,
+              noBodyHorizontalOverflow: layout.bodyOverflow <= 2,
+              noModalHorizontalOverflow: layout.modalOverflow <= 2,
+            };
+            if (!Object.values(assertions).every(Boolean)) {
+              throw new Error(`${key} assertions failed: ${JSON.stringify({ assertions, chips, layout })}`);
+            }
+
+            await page.locator('#composio-settings').screenshot({ path: screenshotPath });
+            evidence[key] = { viewport, chips, layout, assertions };
+            await page.close();
+          }
+
+          try {
+            await verify({ width: 1440, height: 1000 }, '/tmp/composio-ui-desktop.png', 'desktop');
+            await verify({ width: 390, height: 844 }, '/tmp/composio-ui-mobile.png', 'mobile');
+            evidence.result = 'pass';
+          } catch (error) {
+            evidence.error = error instanceof Error ? error.stack || error.message : String(error);
+            throw error;
+          } finally {
+            fs.writeFileSync('/tmp/composio-ui-proof.json', JSON.stringify(evidence, null, 2) + '\n');
+            await browser.close();
+          }
+          NODE
+          node /tmp/nova-ui-proof/proof.mjs
+          grep -q '"result": "pass"' /tmp/composio-ui-proof.json
+
+      - name: Upload Composio UI proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composio-settings-ui-proof
+          path: |
+            /tmp/composio-ui-proof.json
+            /tmp/composio-ui-desktop.png
+            /tmp/composio-ui-mobile.png
+          if-no-files-found: warn
+          retention-days: 7
