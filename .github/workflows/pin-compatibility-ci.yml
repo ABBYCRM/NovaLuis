@@ -30,11 +30,12 @@ jobs:
           pnpm run typecheck
           pnpm run build:api
           docker build --tag nova-pin-compat:ci .
-      - name: Prove canonical PIN and deployment revision reporting
+      - name: Prove session self-heal, canonical PIN, and deployment revision
         run: |
           set -euo pipefail
+          # Intentionally do NOT provide SESSION_SECRET. The production supervisor
+          # must generate a cryptographically random process-local signing secret.
           docker run --detach --name nova-pin-compat \
-            -e SESSION_SECRET=ci-session-secret-not-production \
             -e NOVA_WORK_TREE_PIN=999999 \
             -e RENDER=true \
             -e RENDER_GIT_COMMIT=ci-render-revision \
