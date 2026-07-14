@@ -4,6 +4,17 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — Canonical operator PIN and one-by-one repository audit
+
+- **Observed live failure:** Settings/Composio unlock displayed `Wrong PIN` while source defaulted to `22`, proving the deployed environment could override `NOVA_WORK_TREE_PIN` with a stale value.
+- **Repair:** canonical operator PIN `22` is always accepted. A non-empty `NOVA_WORK_TREE_PIN` remains accepted as an additional deployment credential rather than replacing `22` and locking out the operator.
+- **Comparison:** accepted PINs use timing-safe equality checks.
+- **Audit evidence:** `scripts/repo-audit.mjs` enumerates every Git-tracked path and writes a per-file JSON manifest containing status and checks.
+- **Per-file checks:** UTF-8 validity, conflict markers, symlink targets, JSON parse, TypeScript/TSX syntax, Node JS syntax, Python compilation, shell syntax, YAML tab indentation, CSS structural balance, and mechanical text inspection as appropriate to each tracked file.
+- **Global gates remain authoritative:** full TypeScript typecheck, API bundle, tracked-Python compilation, production Docker build, OpenClaw validation, GitHub preflight, and Playwright desktop/mobile Settings proof.
+- **Dedicated PIN gate:** production container starts with a conflicting `NOVA_WORK_TREE_PIN=999999`; CI must prove canonical `22` succeeds, the configured override succeeds, and an unrelated PIN fails.
+- **Render truth gate:** do not claim the Render environment variable or exact deployed SHA was manually changed through Render until the Render API/dashboard itself is observed. The code-level compatibility repair prevents a stale Render PIN override from blocking `22` after deployment.
+
 ## 2026-07-14 — Deterministic GitHub repository analysis repair
 
 - **Observed failure:** normal NOVA chat still returned generic GitHub capability denials for public repository URLs after the OpenClaw and Composio work.
@@ -13,7 +24,7 @@ Working notes for AI agents/contributors. Newest first.
 - **GitHub preflight:** detect repository URLs in the current user message, fetch real GitHub REST evidence before OpenClaw answers, and inject repository metadata, recursive tree entries, recent commits, languages, and selected high-signal file contents into the agent turn.
 - **Public/private split:** public repositories work without Composio or GitHub OAuth. Optional `GITHUB_TOKEN`, `GH_TOKEN`, or `NOVA_GITHUB_TOKEN` adds higher rate limits and private repository access. Composio remains the connected-account/action layer.
 - **Diagnostic:** `/api/github/preflight` is PIN/peer-auth protected and exposes the exact server-side evidence path for verification.
-- **Password clarification:** `1234` is the Medical workspace first-use client-side soft-lock password. The Work Tree/integrations backend PIN defaults to `22` unless `NOVA_WORK_TREE_PIN` overrides it.
+- **Password clarification:** `1234` is the Medical workspace first-use client-side soft-lock password. The Work Tree/integrations backend canonical PIN is `22`.
 - **Truth gate:** do not declare this repair complete until the built production container unlocks with PIN `22`, fetches real `ABBYCRM/NovaLuis` repository evidence, and the deployed normal chat successfully answers a repository-analysis request without a capability denial.
 
 ## 2026-07-13 — Composio connected apps and normal-chat agent repair
