@@ -85,6 +85,6 @@ assert.ok(contradicted < claimed, `contradicted=${contradicted} must rank below 
 
 console.log(JSON.stringify({
   ok: true,
-  checks: 12,
+  checks: 11,
   scores: { verified, claimed, otherMission, contradicted },
 }));
