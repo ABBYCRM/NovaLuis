@@ -63,7 +63,7 @@ artifacts/api-server/src/routes/openai-proxy.ts
 openclaw/openclaw.json                strict Gateway/model/tool configuration
 openclaw/workspace/skills/nova-services
                                       authenticated native + Composio service adapter
-scripts/start-openclaw.mjs            process supervisor and readiness gate
+scripts/start-openclaw.mjs            process supervisor, secret self-heal and readiness gate
 scripts/repo-audit.mjs                one-by-one tracked-file audit and JSON evidence manifest
 skills/*                              existing repository skill catalog
 ```
@@ -103,6 +103,10 @@ or enter the project API key in **Settings → Composio Apps**. The API key is w
 
 **Passwords are separate surfaces:** `1234` is the Medical workspace first-use client-side soft-lock password. The canonical Work Tree/integrations operator PIN is `22`. If Render supplies `NOVA_WORK_TREE_PIN`, that configured value is accepted **in addition to** `22`, so a stale deployment override can no longer lock the operator out.
 
+## Session authentication self-heal
+
+Operator unlock cookies require a signing secret. A persistent `SESSION_SECRET` is preferred so existing cookies survive restarts. If Render does not provide one, `scripts/start-openclaw.mjs` now generates a cryptographically random process-local secret before launching the API. This keeps the PIN/Composio/Work Tree surfaces operational instead of returning `503 auth not configured`; the tradeoff is that existing unlock cookies expire on the next process restart.
+
 ## Deployment revision proof
 
 `GET /api/version` exposes non-secret deployment metadata so the active Render revision can be verified directly:
@@ -136,7 +140,7 @@ node --check openclaw/workspace/skills/nova-services/nova-services.mjs
 
 Repository Verification enumerates **every Git-tracked path one by one** and writes a machine-readable audit artifact. Each tracked text source receives UTF-8 and merge-conflict checks plus extension-specific validation where applicable: JSON parsing, TypeScript/TSX syntax, Node JS syntax, Python compilation, shell syntax, YAML indentation checks, CSS structural checks, and symlink/gitlink classification. Global gates then run full TypeScript checking, API bundling, tracked-Python compilation, production Docker build, OpenClaw readiness, GitHub evidence tests, and desktop/mobile Playwright proof for the Composio Settings UI.
 
-A separate production-container compatibility gate starts NOVA with a conflicting `NOVA_WORK_TREE_PIN` and proves both canonical PIN `22` and the deployment override are accepted while a wrong PIN is rejected. The same gate injects deterministic Render metadata and verifies `/api/version` reports the exact commit/branch/repository values.
+A separate production-container compatibility gate deliberately omits `SESSION_SECRET`, starts NOVA with a conflicting `NOVA_WORK_TREE_PIN`, and proves the supervisor self-generates session signing material, canonical PIN `22` works, the deployment override also works, and a wrong PIN is rejected. The same gate injects deterministic Render metadata and verifies `/api/version` reports exact commit/branch/repository values.
 
 Documentation and templates use accurate extensions: the governance design is `GOVERNANCE.md`, and the commented strict TypeScript template is `tsconfig-strict.jsonc`. `scripts/agentic_demo.py` is stored as runnable Python rather than a Markdown-fenced paste.
 
@@ -151,6 +155,7 @@ The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At sta
 | `COMPOSIO_USER_ID` | Stable connected-account owner ID; defaults to `nova-luis` |
 | `PUBLIC_BASE_URL` | Public callback origin used for hosted Composio Connect Links |
 | `NOVA_WORK_TREE_PIN` | Optional additional Work Tree/integrations PIN. Canonical operator PIN `22` remains accepted. |
+| `SESSION_SECRET` | Recommended persistent cookie-signing secret. If absent, the supervisor generates an ephemeral cryptographic secret for the current process. |
 | `RENDER_GIT_COMMIT` | Render-provided active deploy commit, exposed read-only through `/api/version` |
 | `OPENCLAW_GATEWAY_TOKEN` | Optional persistent Gateway bearer token; generated at boot when absent |
 | `OPENCLAW_STATE_DIR` | OpenClaw sessions/state directory; point this at a persistent Render disk path to retain state across deploys |
