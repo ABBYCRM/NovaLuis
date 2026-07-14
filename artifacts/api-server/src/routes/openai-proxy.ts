@@ -77,9 +77,75 @@ function extractDeltas(buffer: string): { text: string; rest: string } {
   return { text, rest };
 }
 
+async function proxyBrowserChatToAgent(
+  req: import("express").Request,
+  res: import("express").Response,
+): Promise<void> {
+  const port = Number(process.env.PORT || 8080);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+  timer.unref?.();
+  try {
+    const upstream = await fetch(
+      `http://127.0.0.1:${port}/api/agent/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: req.headers.accept ?? "text/event-stream, application/json",
+          "x-nova-rerouted-from": "/api/v1/chat/completions",
+        },
+        body: JSON.stringify(req.body),
+        signal: controller.signal,
+        duplex: "half",
+      },
+    );
+
+    res.status(upstream.status);
+    const skipHeaders = new Set([
+      "transfer-encoding",
+      "connection",
+      "keep-alive",
+      "upgrade",
+      "content-encoding",
+      "content-length",
+    ]);
+    upstream.headers.forEach((value, key) => {
+      if (!skipHeaders.has(key.toLowerCase())) res.setHeader(key, value);
+    });
+
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+
+    const reader = upstream.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const writable = res.write(value);
+      if (!writable) await new Promise<void>((resolve) => res.once("drain", resolve));
+    }
+    res.end();
+  } catch (error) {
+    req.log.error({ err: error }, "browser chat reroute to OpenClaw failed");
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: "OpenClaw agent runtime unreachable",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    } else {
+      res.end();
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Streaming proxy — mounted on the router at /api, so req.path within this router
-// is e.g. /v1/chat/completions or /v1/audio/speech. Forwards everything under
-// /v1/* to OpenAI with the server-side key, so the key never reaches the browser.
+// is e.g. /v1/chat/completions or /v1/audio/speech. Browser chat is deliberately
+// rerouted into the OpenClaw agent endpoint. Only OpenClaw's authenticated internal
+// model-provider call is allowed to continue to raw inference, preventing recursion.
 router.all("/v1/*splat", async (req, res) => {
   const qs = req.url.slice(req.path.length);
 
@@ -89,16 +155,22 @@ router.all("/v1/*splat", async (req, res) => {
     req.body != null &&
     Array.isArray(req.body.messages);
 
-  // Memory injection + capture setup (best-effort; never blocks the chat).
-  let convKey: string | null = null;
-  let userText = "";
-  const model: string = isChat ? String(req.body.model ?? "") : "";
-  const provider = pickProvider(model);
   const internalProxyKey = process.env.NOVA_OPENCLAW_PROXY_KEY || "";
   const authHeader = String(req.headers.authorization || "");
   const isInternalOpenClaw = Boolean(
     internalProxyKey && authHeader === `Bearer ${internalProxyKey}`,
   );
+
+  if (isChat && !isInternalOpenClaw) {
+    await proxyBrowserChatToAgent(req, res);
+    return;
+  }
+
+  // Memory injection + capture setup for raw/internal inference calls.
+  let convKey: string | null = null;
+  let userText = "";
+  const model: string = isChat ? String(req.body.model ?? "") : "";
+  const provider = pickProvider(model);
   const upstreamUrl = `${provider.url(req.path)}${qs}`;
   const API_KEY = provider.key;
   if (isChat) {

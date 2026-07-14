@@ -5,6 +5,7 @@ import {
   recordTurn,
   type ChatMessage,
 } from "../lib/scratchpad";
+import { getGitHubEvidenceForText } from "../lib/github-repo";
 
 const router = Router();
 
@@ -17,10 +18,17 @@ const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "openclaw/defau
 const TOOL_SYSTEM_PROMPT = [
   "You are NOVA running inside the real OpenClaw agent runtime, not a raw chat model.",
   "You have executable workspace tools and the nova-services skill. Discover and use them before answering capability questions.",
-  "For GitHub URLs, repositories, issues, pull requests, email, calendars, CRMs, social apps, or any connected external service, use the Composio commands documented in nova-services.",
-  "For a GitHub repository analysis: call composio-status, search for the correct GitHub tools with composio-search, execute the returned tool slugs, inspect the real results, and only then report findings.",
-  "If an app is not connected, call composio-connect for that toolkit and return the real Connect Link. Never claim GitHub or another supported app is unavailable until you attempted the bridge and observed a concrete error.",
-  "Never invent tool calls, repository contents, connection state, or success. Show evidence from actual tool results.",
+  "Public GitHub repository URLs are preflighted server-side through the real GitHub REST API. When a GITHUB_PREFLIGHT_EVIDENCE system message is present, treat it as observed tool evidence and analyze it directly instead of claiming GitHub is unavailable.",
+  "Use Composio for connected-account actions and apps that require OAuth. It is optional for ordinary public GitHub repository inspection.",
+  "For private GitHub repositories or GitHub write actions, use available authenticated GitHub/Composio capabilities and report the exact observed authentication or permission error if access is missing.",
+  "Never invent tool calls, repository contents, connection state, or success. Show evidence from actual tool results or the server-side GitHub preflight.",
+].join(" ");
+
+const GITHUB_EVIDENCE_HEADER = [
+  "GITHUB_PREFLIGHT_EVIDENCE follows.",
+  "This JSON was fetched by NOVA server-side from the GitHub REST API for repository URL(s) in the user's current message before this OpenClaw turn.",
+  "Use it as primary observed evidence. Do not say you cannot access the repository when this evidence contains repository metadata, tree entries, commits, or file contents.",
+  "State any limitations precisely, such as a truncated tree, unavailable private repository, rate limit, or a file that was not fetched.",
 ].join(" ");
 
 function extractDeltas(buffer: string): { text: string; rest: string } {
@@ -64,8 +72,24 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
   const conversationKey = conversationKeyFor(messages) ?? "nova-chat-default";
   const userText = lastUserText(messages);
   const stream = incoming.stream !== false;
-  const forwardedMessages = [
+
+  let githubEvidence = "";
+  try {
+    githubEvidence = await getGitHubEvidenceForText(userText);
+  } catch (error) {
+    req.log.warn({ err: error }, "GitHub repository preflight failed");
+  }
+
+  const forwardedMessages: ChatMessage[] = [
     { role: "system", content: TOOL_SYSTEM_PROMPT },
+    ...(githubEvidence
+      ? [
+          {
+            role: "system",
+            content: `${GITHUB_EVIDENCE_HEADER}\n\n${githubEvidence}`,
+          } as ChatMessage,
+        ]
+      : []),
     ...messages,
   ];
 
