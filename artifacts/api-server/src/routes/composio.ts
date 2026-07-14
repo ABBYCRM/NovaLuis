@@ -40,18 +40,20 @@ function publicBaseUrl(req: Request): string {
 }
 
 router.get("/integrations/composio/status", async (_req, res) => {
-  try {
-    const config = await getComposioConfig();
-    if (!config.configured) {
-      res.json({
-        configured: false,
-        userId: config.userId,
-        sessionId: null,
-        connected: [],
-      });
-      return;
-    }
+  const config = await getComposioConfig();
+  if (!config.configured) {
+    res.json({
+      configured: false,
+      ready: false,
+      credentialState: "missing",
+      userId: config.userId,
+      sessionId: null,
+      connected: [],
+    });
+    return;
+  }
 
+  try {
     const session = await ensureComposioSession();
     const query = new URLSearchParams({ limit: "50", is_connected: "true" });
     const data = await composioRequest<{ items?: unknown[] }>(
@@ -61,12 +63,39 @@ router.get("/integrations/composio/status", async (_req, res) => {
 
     res.json({
       configured: true,
+      ready: true,
+      credentialState: "ready",
+      credentialSource: session.credentialSource,
+      projectId: session.projectId || config.projectId || null,
       userId: session.userId,
       sessionId: session.sessionId,
       connected: Array.isArray(data.items) ? data.items : [],
     });
   } catch (error) {
-    sendError(res, error);
+    if (error instanceof ComposioApiError) {
+      const invalid = error.status === 401 || error.status === 403;
+      const needsProject = error.status === 409;
+      res.json({
+        configured: true,
+        ready: false,
+        credentialState: invalid ? "invalid" : needsProject ? "needs_project" : "error",
+        userId: config.userId,
+        sessionId: null,
+        connected: [],
+        upstreamStatus: error.status,
+        error: error.message,
+      });
+      return;
+    }
+    res.json({
+      configured: true,
+      ready: false,
+      credentialState: "error",
+      userId: config.userId,
+      sessionId: null,
+      connected: [],
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 });
 
