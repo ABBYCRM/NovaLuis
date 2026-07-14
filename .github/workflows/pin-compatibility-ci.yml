@@ -30,18 +30,29 @@ jobs:
           pnpm run typecheck
           pnpm run build:api
           docker build --tag nova-pin-compat:ci .
-      - name: Prove canonical PIN 22 works despite deployment override
+      - name: Prove canonical PIN and deployment revision reporting
         run: |
           set -euo pipefail
           docker run --detach --name nova-pin-compat \
             -e SESSION_SECRET=ci-session-secret-not-production \
             -e NOVA_WORK_TREE_PIN=999999 \
+            -e RENDER=true \
+            -e RENDER_GIT_COMMIT=ci-render-revision \
+            -e RENDER_GIT_BRANCH=main \
+            -e RENDER_GIT_REPO_SLUG=ABBYCRM/NovaLuis \
+            -e RENDER_SERVICE_ID=srv-ci \
+            -e RENDER_SERVICE_NAME=nova-luis \
             -p 18081:8080 nova-pin-compat:ci
           trap 'docker logs nova-pin-compat || true; docker rm --force nova-pin-compat || true' EXIT
           for attempt in $(seq 1 120); do
             if curl --fail --silent http://127.0.0.1:18081/api/healthz >/tmp/health.json; then break; fi
             sleep 1
           done
+          curl --fail --silent http://127.0.0.1:18081/api/version >/tmp/version.json
+          grep -q '"commit":"ci-render-revision"' /tmp/version.json
+          grep -q '"branch":"main"' /tmp/version.json
+          grep -q '"repository":"ABBYCRM/NovaLuis"' /tmp/version.json
+          grep -q '"render":true' /tmp/version.json
           curl --fail --silent --cookie-jar /tmp/canonical-cookie.txt \
             -H 'Content-Type: application/json' -d '{"pin":"22"}' \
             http://127.0.0.1:18081/api/work-tree/unlock >/tmp/canonical.json
