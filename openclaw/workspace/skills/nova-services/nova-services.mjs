@@ -41,6 +41,15 @@ function intOption(args, key, fallback, min, max) {
   return value;
 }
 
+function numberOption(args, key, fallback, min, max) {
+  if (args[key] == null) return fallback;
+  const value = Number(args[key]);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`--${key} must be a number from ${min} to ${max}`);
+  }
+  return value;
+}
+
 function jsonObjectOption(args, key, fallback = {}) {
   if (args[key] == null) return fallback;
   const raw = required(args, key);
@@ -93,7 +102,7 @@ async function request(path, options = {}) {
 async function run(command, args) {
   switch (command) {
     case "status": {
-      const [api, openclaw, composio] = await Promise.all([
+      const [api, openclaw, composio, vectorMemory] = await Promise.all([
         request("/healthz"),
         request("/openclaw/status").catch((error) => ({
           status: "unavailable",
@@ -105,8 +114,13 @@ async function run(command, args) {
           error: error.message,
           details: error.details,
         })),
+        request("/vector-memory/status").catch((error) => ({
+          available: false,
+          error: error.message,
+          details: error.details,
+        })),
       ]);
-      return { api, openclaw, composio };
+      return { api, openclaw, composio, vectorMemory };
     }
     case "integrations":
       return request("/integrations");
@@ -204,6 +218,65 @@ async function run(command, args) {
         timeoutMs: 180_000,
       });
     }
+    case "vector-status":
+      return request("/vector-memory/status");
+    case "vector-search": {
+      const body = {
+        query: required(args, "query"),
+        limit: intOption(args, "limit", 8, 1, 20),
+        minimumScore: numberOption(args, "minimum-score", 0.25, 0, 1),
+        includeContext: true,
+        ...(typeof args["mission-id"] === "string" ? { missionId: args["mission-id"] } : {}),
+        ...(typeof args["scope-key"] === "string" ? { scopeKey: args["scope-key"] } : {}),
+        ...(typeof args.phase === "string" ? { phase: args.phase.toUpperCase() } : {}),
+        ...(typeof args.intent === "string" ? { intent: args.intent.toLowerCase() } : {}),
+        ...(typeof args.types === "string"
+          ? { memoryTypes: args.types.split(",").map((value) => value.trim()).filter(Boolean) }
+          : {}),
+      };
+      return request("/vector-memory/search", {
+        method: "POST",
+        body: JSON.stringify(body),
+        timeoutMs: 180_000,
+      });
+    }
+    case "vector-ingest": {
+      let content = typeof args.content === "string" ? args.content : "";
+      if (typeof args.file === "string") content = await fs.readFile(args.file, "utf8");
+      if (!content.trim()) throw new Error("Provide --content or --file for vector-ingest");
+      const body = {
+        content,
+        memoryType: typeof args.type === "string" ? args.type : "semantic",
+        scope: typeof args.scope === "string" ? args.scope : "global",
+        scopeKey: typeof args["scope-key"] === "string" ? args["scope-key"] : "",
+        source: typeof args.source === "string" ? args.source : "openclaw",
+        verification: typeof args.verification === "string" ? args.verification : "claimed",
+        confidence: numberOption(args, "confidence", 0.5, 0, 1),
+        importance: numberOption(args, "importance", 0.5, 0, 1),
+        salience: numberOption(args, "salience", 0.5, 0, 1),
+        metadata: jsonObjectOption(args, "metadata-json", {}),
+        ...(typeof args["mission-id"] === "string" ? { missionId: args["mission-id"] } : {}),
+        ...(typeof args["agent-id"] === "string" ? { agentId: args["agent-id"] } : {}),
+        ...(typeof args["external-id"] === "string" ? { externalId: args["external-id"] } : {}),
+      };
+      return request("/vector-memory/ingest", {
+        method: "POST",
+        body: JSON.stringify(body),
+        timeoutMs: 180_000,
+      });
+    }
+    case "vector-feedback": {
+      const ids = required(args, "ids")
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isInteger(value) && value > 0);
+      if (!ids.length) throw new Error("--ids must contain at least one positive integer id");
+      const successful = String(args.successful ?? "true").toLowerCase() !== "false";
+      return request("/vector-memory/feedback", {
+        method: "POST",
+        body: JSON.stringify({ ids, successful }),
+      });
+    }
     case "skills": {
       if (typeof args.name === "string" && args.name.trim()) {
         return request(`/skills/${encodeURIComponent(args.name.trim())}`);
@@ -214,7 +287,7 @@ async function run(command, args) {
       return request("/scratchpad");
     default:
       throw new Error(
-        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, skills, scratchpad",
+        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad",
       );
   }
 }
