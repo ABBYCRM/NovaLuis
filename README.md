@@ -12,6 +12,10 @@ NOVA is a personal AI assistant, connected-service hub, and persistent Work-Tree
 
 NOVA accepts both Composio **project API keys** and **organization access tokens**. Project keys are sent as `x-api-key`. Organization tokens are sent as `x-org-api-key`, used to select the intended NOVA/production project, and the resolved project key is then used for Tool Router. Previously saved organization tokens in the legacy key field are auto-classified so a valid organization credential is not rejected as an invalid project key. See [`docs/COMPOSIO.md`](docs/COMPOSIO.md).
 
+## Cross-replica session stability
+
+When `SESSION_SECRET` is absent, NOVA now derives a domain-separated session-signing key from an existing stable server-side secret source such as `NOVA_SESSION_SEED`, an internal peer key, or `DATABASE_URL`. The source credential is never used directly as the cookie key. Only when no stable source exists does NOVA fall back to process-random signing material. This keeps PIN/Composio cookies valid across rolling deploys and multiple Render instances.
+
 ## Runtime topology
 
 ```text

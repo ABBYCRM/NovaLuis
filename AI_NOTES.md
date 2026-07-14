@@ -4,6 +4,17 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — Stable fallback session signing across replicas
+
+- **Observed live failure:** PIN `22` returned `ok:true`, but the immediately following protected request returned `locked`.
+- **Root cause:** the missing-`SESSION_SECRET` fallback was random per process, so cookies could fail across rolling-deploy instances or multiple replicas.
+- **Repair:** derive a domain-separated HMAC signing key from the first available stable server-side seed; explicit `SESSION_SECRET` still wins.
+- **Seed priority:** `NOVA_SESSION_SEED`, internal peer keys, `DATABASE_URL`, then configured provider secrets. Raw source credentials are never used directly as the cookie key.
+- **Last resort:** process-random signing only when no stable source exists, with an explicit warning that cookies cannot span restarts/replicas.
+- **Proof:** two independent production containers with no `SESSION_SECRET` but the same stable seed; replica A mints a PIN-22 cookie and replica B must accept it on a protected endpoint.
+- **Live truth gate:** exact Render revision must match `main`, PIN `22` must succeed, and the cookie issued by the live service must authenticate the immediately following protected request.
+
+
 ## 2026-07-14 — Composio organization-token auto-resolution
 
 - **Observed live failure:** after PIN/session auth succeeded, Composio returned HTTP 401 because the live organization access token was sent as a project API key.

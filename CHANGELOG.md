@@ -4,6 +4,15 @@ All notable changes to **NOVA** (primary twin of SUPERNOVA/ABBY).
 
 ---
 
+## 2026-07-14 — Keep operator sessions valid across replicas
+
+- Live PIN `22` succeeded, but the next protected request could return `locked` because process-random fallback signing keys differed across Render instances.
+- Added domain-separated stable fallback session-key derivation from existing server-side secret material when `SESSION_SECRET` is absent.
+- Explicit `SESSION_SECRET` remains the preferred and highest-priority configuration.
+- Random process-local signing is now only the last resort when no stable seed exists.
+- Dedicated CI starts two independent production containers with the same stable seed, mints the PIN cookie on replica A, and requires replica B to accept that exact cookie.
+
+
 ## 2026-07-14 — Resolve Composio organization credentials correctly
 
 - Live PIN/session auth succeeded, but the configured Composio credential was rejected because NOVA sent an organization access token as `x-api-key`.
