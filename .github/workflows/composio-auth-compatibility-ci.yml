@@ -82,6 +82,23 @@ jobs:
               if (req.headers['x-api-key'] !== 'ak_ci_project') return json(res, 401, { error: { message: 'wrong project header' } });
               return json(res, 200, { items: [] });
             }
+            if (req.url === '/api/v3.1/tool_router/session/session_ci/search' && req.method === 'POST') {
+              if (req.headers['x-api-key'] !== 'ak_ci_project') return json(res, 401, { error: { message: 'wrong project header' } });
+              const parsed = JSON.parse(body || '{}');
+              const useCase = String(parsed?.queries?.[0]?.use_case || '');
+              if (!useCase.toLowerCase().includes('microsoft teams')) {
+                return json(res, 400, { error: { message: 'Teams use case was not forwarded' } });
+              }
+              return json(res, 200, {
+                items: [
+                  {
+                    tool_slug: 'MICROSOFT_TEAMS_LIST_TEAMS',
+                    toolkit: 'microsoft_teams',
+                    description: 'List the Microsoft Teams the connected user belongs to',
+                  },
+                ],
+              });
+            }
             return json(res, 404, { error: { message: 'not found', url: req.url } });
           });
           server.listen(19090, '0.0.0.0', () => console.log('fake Composio listening on 19090'));
@@ -92,7 +109,38 @@ jobs:
             if grep -q 'listening' /tmp/fake-composio.log; then break; fi
             sleep 1
           done
-      - name: Prove organization token creates a dedicated project with a project key
+      - name: Start deterministic fake OpenClaw gateway
+        run: |
+          cat > /tmp/fake-openclaw.mjs <<'NODE'
+          import http from 'node:http';
+          import fs from 'node:fs';
+
+          const server = http.createServer(async (req, res) => {
+            const chunks = [];
+            for await (const chunk of req) chunks.push(chunk);
+            const body = Buffer.concat(chunks).toString('utf8');
+            if (req.url !== '/v1/chat/completions' || req.method !== 'POST') {
+              res.writeHead(404, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: 'not found' }));
+              return;
+            }
+            fs.writeFileSync('/tmp/fake-openclaw-body.json', body);
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({
+              id: 'chatcmpl_ci',
+              object: 'chat.completion',
+              choices: [{ index: 0, message: { role: 'assistant', content: 'Teams preflight received.' }, finish_reason: 'stop' }],
+            }));
+          });
+          server.listen(19091, '0.0.0.0', () => console.log('fake OpenClaw listening on 19091'));
+          NODE
+          node /tmp/fake-openclaw.mjs >/tmp/fake-openclaw.log 2>&1 &
+          echo $! >/tmp/fake-openclaw.pid
+          for attempt in $(seq 1 30); do
+            if grep -q 'listening' /tmp/fake-openclaw.log; then break; fi
+            sleep 1
+          done
+      - name: Prove organization token creates a dedicated project and Teams chat preflights Composio
         run: |
           set -euo pipefail
           docker run --detach --name nova-composio-auth \
@@ -101,8 +149,11 @@ jobs:
             -e NOVA_WORK_TREE_PIN=22 \
             -e COMPOSIO_API_KEY=oak_ci_org \
             -e COMPOSIO_BASE_URL=http://host.docker.internal:19090/api/v3.1 \
+            -e OPENCLAW_GATEWAY_URL=http://host.docker.internal:19091 \
+            -e OPENCLAW_GATEWAY_TOKEN=ci-openclaw-token \
+            -e OPENCLAW_AGENT_MODEL=openclaw/default \
             -p 18082:8080 nova-composio-auth:ci
-          trap 'docker logs nova-composio-auth || true; docker rm --force nova-composio-auth || true; kill $(cat /tmp/fake-composio.pid) 2>/dev/null || true' EXIT
+          trap 'docker logs nova-composio-auth || true; docker rm --force nova-composio-auth || true; kill $(cat /tmp/fake-composio.pid) 2>/dev/null || true; kill $(cat /tmp/fake-openclaw.pid) 2>/dev/null || true' EXIT
           for attempt in $(seq 1 120); do
             if curl --fail --silent http://127.0.0.1:18082/api/healthz >/tmp/health.json; then break; fi
             sleep 1
@@ -112,6 +163,10 @@ jobs:
             http://127.0.0.1:18082/api/work-tree/unlock >/tmp/unlock.json
           curl --fail --silent --cookie /tmp/cookie.txt \
             http://127.0.0.1:18082/api/integrations/composio/status >/tmp/composio-status.json
+          curl --fail --silent --cookie /tmp/cookie.txt \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"nova","stream":false,"messages":[{"role":"user","content":"how many groups am i in in microsoft teams?"}]}' \
+            http://127.0.0.1:18082/api/agent/v1/chat/completions >/tmp/teams-chat.json
 
           grep -q '"configured":true' /tmp/composio-status.json
           grep -q '"ready":true' /tmp/composio-status.json
@@ -120,14 +175,20 @@ jobs:
           jq -e 'select(.url == "/api/v3.1/org/owner/project/list?limit=100" and .xOrgApiKey == "oak_ci_org")' /tmp/fake-composio-requests.jsonl >/dev/null
           jq -e 'select(.url == "/api/v3.1/org/owner/project/new" and .xOrgApiKey == "oak_ci_org" and ((.body | fromjson).name == "nova-luis") and ((.body | fromjson).should_create_api_key == true))' /tmp/fake-composio-requests.jsonl >/dev/null
           jq -e 'select(.url == "/api/v3.1/tool_router/session" and .xApiKey == "ak_ci_project")' /tmp/fake-composio-requests.jsonl >/dev/null
-      - name: Upload Composio auth evidence
+          jq -e 'select(.url == "/api/v3.1/tool_router/session/session_ci/search" and .xApiKey == "ak_ci_project" and (((.body | fromjson).queries[0].use_case | ascii_downcase) | contains("how many groups am i in in microsoft teams?")))' /tmp/fake-composio-requests.jsonl >/dev/null
+          jq -e '[.messages[] | select(.role == "system") | .content] | join("\n") | contains("CONNECTED_APP_PREFLIGHT_EVIDENCE") and contains("MICROSOFT_TEAMS_LIST_TEAMS") and contains("Microsoft Teams")' /tmp/fake-openclaw-body.json >/dev/null
+          jq -e '.choices[0].message.content == "Teams preflight received."' /tmp/teams-chat.json >/dev/null
+      - name: Upload Composio auth and Teams routing evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: composio-auth-compatibility-proof
           path: |
             /tmp/composio-status.json
+            /tmp/teams-chat.json
             /tmp/fake-composio-requests.jsonl
             /tmp/fake-composio.log
+            /tmp/fake-openclaw-body.json
+            /tmp/fake-openclaw.log
           if-no-files-found: warn
           retention-days: 7
