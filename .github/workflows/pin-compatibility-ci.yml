@@ -1,0 +1,57 @@
+name: Operator PIN Compatibility CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-pin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+      - name: Install and build
+        run: |
+          pnpm install --frozen-lockfile --shamefully-hoist
+          pnpm run typecheck
+          pnpm run build:api
+          docker build --tag nova-pin-compat:ci .
+      - name: Prove canonical PIN 22 works despite deployment override
+        run: |
+          set -euo pipefail
+          docker run --detach --name nova-pin-compat \
+            -e SESSION_SECRET=ci-session-secret-not-production \
+            -e NOVA_WORK_TREE_PIN=999999 \
+            -p 18081:8080 nova-pin-compat:ci
+          trap 'docker logs nova-pin-compat || true; docker rm --force nova-pin-compat || true' EXIT
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:18081/api/healthz >/tmp/health.json; then break; fi
+            sleep 1
+          done
+          curl --fail --silent --cookie-jar /tmp/canonical-cookie.txt \
+            -H 'Content-Type: application/json' -d '{"pin":"22"}' \
+            http://127.0.0.1:18081/api/work-tree/unlock >/tmp/canonical.json
+          grep -q '"ok":true' /tmp/canonical.json
+          curl --fail --silent --cookie-jar /tmp/override-cookie.txt \
+            -H 'Content-Type: application/json' -d '{"pin":"999999"}' \
+            http://127.0.0.1:18081/api/work-tree/unlock >/tmp/override.json
+          grep -q '"ok":true' /tmp/override.json
+          wrong_code="$(curl --silent --output /tmp/wrong.json --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -d '{"pin":"000000"}' \
+            http://127.0.0.1:18081/api/work-tree/unlock)"
+          test "$wrong_code" = '403'
+          grep -q 'wrong pin' /tmp/wrong.json
