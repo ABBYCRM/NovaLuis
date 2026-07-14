@@ -4,6 +4,16 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — Production session-signing secret self-heal
+
+- **Observed live failure:** Render was on the exact latest commit and OpenClaw was ready, but `POST /api/work-tree/unlock` returned HTTP 503 with `{"error":"auth not configured"}`.
+- **Root cause:** `SESSION_SECRET` was absent from the live Render environment. The auth module intentionally fails closed in production when no cookie-signing key exists.
+- **Repair:** `scripts/start-openclaw.mjs` now resolves `SESSION_SECRET` before launching the API. It preserves an explicit deployment value when present; otherwise it generates a cryptographically random 48-byte process-local secret and passes it only to child processes.
+- **Security behavior:** no predictable production fallback is introduced. Generated material is random and is not printed. Existing unlock cookies expire on process restart when the generated fallback is used.
+- **CI proof:** the dedicated production-container compatibility workflow deliberately omits `SESSION_SECRET`, then proves `/api/version`, canonical PIN `22`, the configured alternate PIN, and wrong-PIN rejection all behave correctly.
+- **Production recommendation:** set a persistent `SESSION_SECRET` in Render to keep operator cookies valid across restarts, but its absence no longer makes Work Tree and Composio unusable.
+- **Live truth gate:** after deployment, live PIN `22` must return HTTP 200 and `ok:true` while `/api/version.commit` exactly matches GitHub `main`.
+
 ## 2026-07-14 — Render deployment revision proof
 
 - **Objective:** remove inference from deployment verification by exposing the exact active Render Git revision through the application itself.
