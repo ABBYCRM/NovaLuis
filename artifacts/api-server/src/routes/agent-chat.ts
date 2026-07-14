@@ -6,22 +6,75 @@ import {
   type ChatMessage,
 } from "../lib/scratchpad";
 import { getGitHubEvidenceForText } from "../lib/github-repo";
+import {
+  ComposioApiError,
+  composioRequest,
+  ensureComposioSession,
+} from "../lib/composio";
 
 const router = Router();
 
 const OPENCLAW_GATEWAY_URL = (
-  process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789"
+  process.env.NOVA_AGENT_CHAT_GATEWAY_URL ||
+  process.env.OPENCLAW_GATEWAY_URL ||
+  "http://127.0.0.1:18789"
 ).replace(/\/$/, "");
 const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
 const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "openclaw/default";
+
+interface ConnectedAppIntent {
+  app: string;
+  toolkitHints: string[];
+}
+
+const CONNECTED_APP_RULES: Array<{
+  pattern: RegExp;
+  intent: ConnectedAppIntent;
+}> = [
+  {
+    pattern: /\bmicrosoft\s+teams?\b|\bms\s+teams?\b|\bteams\b/i,
+    intent: { app: "Microsoft Teams", toolkitHints: ["microsoft_teams", "microsoftteams", "teams"] },
+  },
+  {
+    pattern: /\boutlook\b|\bmicrosoft\s+365\b|\boffice\s*365\b/i,
+    intent: { app: "Microsoft 365 / Outlook", toolkitHints: ["outlook", "microsoft_365", "office365"] },
+  },
+  {
+    pattern: /\bslack\b/i,
+    intent: { app: "Slack", toolkitHints: ["slack"] },
+  },
+  {
+    pattern: /\bnotion\b/i,
+    intent: { app: "Notion", toolkitHints: ["notion"] },
+  },
+  {
+    pattern: /\bgmail\b/i,
+    intent: { app: "Gmail", toolkitHints: ["gmail"] },
+  },
+  {
+    pattern: /\bgoogle\s+(?:drive|docs|sheets|calendar)\b/i,
+    intent: { app: "Google Workspace", toolkitHints: ["googledrive", "googledocs", "googlesheets", "googlecalendar"] },
+  },
+  {
+    pattern: /\bsalesforce\b/i,
+    intent: { app: "Salesforce", toolkitHints: ["salesforce"] },
+  },
+  {
+    pattern: /\bhubspot\b/i,
+    intent: { app: "HubSpot", toolkitHints: ["hubspot"] },
+  },
+];
 
 const TOOL_SYSTEM_PROMPT = [
   "You are NOVA running inside the real OpenClaw agent runtime, not a raw chat model.",
   "You have executable workspace tools and the nova-services skill. Discover and use them before answering capability questions.",
   "Public GitHub repository URLs are preflighted server-side through the real GitHub REST API. When a GITHUB_PREFLIGHT_EVIDENCE system message is present, treat it as observed tool evidence and analyze it directly instead of claiming GitHub is unavailable.",
+  "For Microsoft Teams, Outlook, Slack, Notion, Gmail, Google Workspace, Salesforce, HubSpot, and every other connected external account, use Composio through nova-services before answering. Microsoft Teams requests include checking new messages, chats, channels, teams, groups, memberships, notifications, and counts.",
+  "When CONNECTED_APP_PREFLIGHT_EVIDENCE is present, NOVA attempted a real Composio preflight for the user's exact request. Inspect its observed field. If observed is true, use the returned discovery evidence and execute the relevant tool slug with nova-services composio-execute before answering. If observed is false, report or recover from the concrete observed Composio failure instead of inventing access or replacing execution with generic manual UI instructions.",
+  "If execution reports that the app is disconnected, use composio-connect with the best toolkit slug discovered from the evidence and return the real Connect Link. Never claim a supported connected app is unavailable until a real Composio preflight or execution produced a concrete error.",
   "Use Composio for connected-account actions and apps that require OAuth. It is optional for ordinary public GitHub repository inspection.",
   "For private GitHub repositories or GitHub write actions, use available authenticated GitHub/Composio capabilities and report the exact observed authentication or permission error if access is missing.",
-  "Never invent tool calls, repository contents, connection state, or success. Show evidence from actual tool results or the server-side GitHub preflight.",
+  "Never invent tool calls, repository contents, connection state, messages, counts, memberships, or success. Show evidence from actual tool results or the server-side preflight.",
 ].join(" ");
 
 const GITHUB_EVIDENCE_HEADER = [
@@ -30,6 +83,76 @@ const GITHUB_EVIDENCE_HEADER = [
   "Use it as primary observed evidence. Do not say you cannot access the repository when this evidence contains repository metadata, tree entries, commits, or file contents.",
   "State any limitations precisely, such as a truncated tree, unavailable private repository, rate limit, or a file that was not fetched.",
 ].join(" ");
+
+const CONNECTED_APP_EVIDENCE_HEADER = [
+  "CONNECTED_APP_PREFLIGHT_EVIDENCE follows.",
+  "This JSON was produced by NOVA server-side while attempting to establish a real Composio Tool Router session and search for tools for the user's exact current request.",
+  "Read the observed field literally: observed=true means the real Tool Router search completed and toolSearch contains discovery evidence; observed=false means preflight failed and the included error/status/details are the observed evidence.",
+  "Discovery is not completion. When observed=true, you MUST use nova-services composio-execute with the relevant returned tool slug or slugs and inspect the real execution result before answering the user.",
+  "For read requests such as new messages, team memberships, groups, channels, unread items, or counts, execute the necessary read-only tools and compute the answer only from observed results.",
+  "If execution reports a disconnected account, use nova-services composio-connect with a toolkit slug supported by the discovery evidence and return the real Connect Link.",
+  "Do not answer with generic manual instructions or say you cannot directly access the app unless the preflight evidence or a subsequent real execution contains a concrete failure.",
+].join(" ");
+
+export function connectedAppIntentForText(text: string): ConnectedAppIntent | null {
+  const normalized = String(text || "").trim();
+  if (!normalized) return null;
+  for (const rule of CONNECTED_APP_RULES) {
+    if (rule.pattern.test(normalized)) return rule.intent;
+  }
+  return null;
+}
+
+async function getConnectedAppEvidenceForText(text: string): Promise<string> {
+  const intent = connectedAppIntentForText(text);
+  if (!intent) return "";
+
+  try {
+    const session = await ensureComposioSession();
+    const searchResult = await composioRequest<unknown>(
+      session.apiKey,
+      `/tool_router/session/${encodeURIComponent(session.sessionId)}/search`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          queries: [
+            {
+              use_case: `Use ${intent.app} to satisfy this exact user request: ${text}`,
+            },
+          ],
+        }),
+      },
+    );
+
+    return JSON.stringify(
+      {
+        observed: true,
+        app: intent.app,
+        toolkitHints: intent.toolkitHints,
+        credentialSource: session.credentialSource,
+        projectId: session.projectId || null,
+        userId: session.userId,
+        toolSearch: searchResult,
+      },
+      null,
+      2,
+    );
+  } catch (error) {
+    return JSON.stringify(
+      {
+        observed: false,
+        app: intent.app,
+        toolkitHints: intent.toolkitHints,
+        error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof ComposioApiError
+          ? { upstreamStatus: error.status, details: error.details }
+          : {}),
+      },
+      null,
+      2,
+    );
+  }
+}
 
 function extractDeltas(buffer: string): { text: string; rest: string } {
   let text = "";
@@ -73,12 +196,13 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
   const userText = lastUserText(messages);
   const stream = incoming.stream !== false;
 
-  let githubEvidence = "";
-  try {
-    githubEvidence = await getGitHubEvidenceForText(userText);
-  } catch (error) {
-    req.log.warn({ err: error }, "GitHub repository preflight failed");
-  }
+  const [githubEvidence, connectedAppEvidence] = await Promise.all([
+    getGitHubEvidenceForText(userText).catch((error) => {
+      req.log.warn({ err: error }, "GitHub repository preflight failed");
+      return "";
+    }),
+    getConnectedAppEvidenceForText(userText),
+  ]);
 
   const forwardedMessages: ChatMessage[] = [
     { role: "system", content: TOOL_SYSTEM_PROMPT },
@@ -87,6 +211,14 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
           {
             role: "system",
             content: `${GITHUB_EVIDENCE_HEADER}\n\n${githubEvidence}`,
+          } as ChatMessage,
+        ]
+      : []),
+    ...(connectedAppEvidence
+      ? [
+          {
+            role: "system",
+            content: `${CONNECTED_APP_EVIDENCE_HEADER}\n\n${connectedAppEvidence}`,
           } as ChatMessage,
         ]
       : []),
