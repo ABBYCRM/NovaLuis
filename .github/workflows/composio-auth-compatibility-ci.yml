@@ -149,11 +149,11 @@ jobs:
             -e NOVA_WORK_TREE_PIN=22 \
             -e COMPOSIO_API_KEY=oak_ci_org \
             -e COMPOSIO_BASE_URL=http://host.docker.internal:19090/api/v3.1 \
-            -e OPENCLAW_GATEWAY_URL=http://host.docker.internal:19091 \
+            -e NOVA_AGENT_CHAT_GATEWAY_URL=http://host.docker.internal:19091 \
             -e OPENCLAW_GATEWAY_TOKEN=ci-openclaw-token \
             -e OPENCLAW_AGENT_MODEL=openclaw/default \
             -p 18082:8080 nova-composio-auth:ci
-          trap 'docker logs nova-composio-auth || true; docker rm --force nova-composio-auth || true; kill $(cat /tmp/fake-composio.pid) 2>/dev/null || true; kill $(cat /tmp/fake-openclaw.pid) 2>/dev/null || true' EXIT
+          trap 'docker logs nova-composio-auth >/tmp/nova-container.log 2>&1 || true; docker rm --force nova-composio-auth || true; kill $(cat /tmp/fake-composio.pid) 2>/dev/null || true; kill $(cat /tmp/fake-openclaw.pid) 2>/dev/null || true' EXIT
           for attempt in $(seq 1 120); do
             if curl --fail --silent http://127.0.0.1:18082/api/healthz >/tmp/health.json; then break; fi
             sleep 1
@@ -190,5 +190,6 @@ jobs:
             /tmp/fake-composio.log
             /tmp/fake-openclaw-body.json
             /tmp/fake-openclaw.log
+            /tmp/nova-container.log
           if-no-files-found: warn
           retention-days: 7
