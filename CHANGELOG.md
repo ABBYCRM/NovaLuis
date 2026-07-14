@@ -4,6 +4,13 @@ All notable changes to **NOVA** (primary twin of SUPERNOVA/ABBY).
 
 ---
 
+## 2026-07-14 — Self-heal missing session signing configuration
+
+- Live Render was on the expected commit and OpenClaw was ready, but operator unlock failed because production had no session-signing secret.
+- The startup supervisor now preserves a configured `SESSION_SECRET` or generates cryptographically random process-local signing material before launching the API.
+- The generated fallback is never printed; cookies expire on restart when the fallback is used.
+- CI now deliberately omits `SESSION_SECRET` and proves version reporting, PIN `22`, the configured alternate PIN, and wrong-PIN rejection.
+
 ## 2026-07-14 — Expose exact Render deployment revision
 
 Summary:
