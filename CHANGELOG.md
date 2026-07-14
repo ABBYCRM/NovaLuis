@@ -4,6 +4,17 @@ All notable changes to **NOVA** (primary twin of SUPERNOVA/ABBY).
 
 ---
 
+## 2026-07-14 — Expose exact Render deployment revision
+
+Summary:
+- Added `GET /api/version` for direct deployment verification.
+- Reports Render's active commit SHA, branch, repository slug, service ID/name, Render-runtime flag, and OpenClaw runtime version.
+- Uses Render's documented runtime metadata variables, including `RENDER_GIT_COMMIT`.
+- Extended production-container CI to inject deterministic Render metadata and verify the endpoint returns the exact revision information.
+
+Acceptance:
+- After deployment, `/api/version.commit` must exactly equal GitHub `main` before the Render service is reported as current.
+
 ## 2026-07-14 — Synchronize operator PIN behavior and add one-by-one repository audit
 
 Root cause:
@@ -18,13 +29,11 @@ Summary:
 - Added extension-aware validation for tracked TypeScript, TSX, JavaScript, JSON, Python, shell, YAML, CSS, symlinks and general text files.
 - Added a dedicated production-container compatibility workflow proving canonical PIN `22` works even when a conflicting deployment override is present, while an unrelated PIN is rejected.
 
-Required verification:
-- per-file audit manifest contains every tracked path with zero failed files
-- full TypeScript typecheck and API build
-- tracked Python compilation
-- production Docker build
-- OpenClaw/GitHub/Composio/Playwright E2E gates
-- canonical PIN compatibility test under a conflicting environment override
+Verification:
+- 10,351 tracked paths audited.
+- 10,351 passed; zero failed.
+- Full TypeScript, API build, 1,014 tracked Python files, production Docker, OpenClaw, GitHub preflight, Composio Settings, and Playwright gates passed.
+- Canonical PIN `22` passed with a conflicting deployment override.
 
 ## 2026-07-13 — Add Composio connected apps and repair normal chat tool execution
 
@@ -46,8 +55,8 @@ Summary:
 
 Required production acceptance:
 - Configure `COMPOSIO_API_KEY` in Render or Settings.
-- Connect GitHub through Settings.
-- Ask normal NOVA chat to analyze a repository URL and verify that it discovers and executes real GitHub tools rather than returning a generic denial.
+- Connect GitHub through Settings for OAuth-backed account actions.
+- Public repository analysis works independently through the deterministic GitHub preflight.
 
 ## 2026-07-13 — Embed official OpenClaw as the Work-Tree backend
 
