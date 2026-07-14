@@ -1,0 +1,54 @@
+name: Synchronize Cross-Replica Session Notes Once
+
+on:
+  push:
+    branches:
+      - 2026-07-14/stable-session-key-across-replicas
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 2026-07-14/stable-session-key-across-replicas
+          fetch-depth: 1
+      - name: Prepend required notes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          sections = {
+            'README.md': '''## Cross-replica session stability\n\nWhen `SESSION_SECRET` is absent, NOVA now derives a domain-separated session-signing key from an existing stable server-side secret source such as `NOVA_SESSION_SEED`, an internal peer key, or `DATABASE_URL`. The source credential is never used directly as the cookie key. Only when no stable source exists does NOVA fall back to process-random signing material. This keeps PIN/Composio cookies valid across rolling deploys and multiple Render instances.\n\n''',
+            'CHANGELOG.md': '''## 2026-07-14 — Keep operator sessions valid across replicas\n\n- Live PIN `22` succeeded, but the next protected request could return `locked` because process-random fallback signing keys differed across Render instances.\n- Added domain-separated stable fallback session-key derivation from existing server-side secret material when `SESSION_SECRET` is absent.\n- Explicit `SESSION_SECRET` remains the preferred and highest-priority configuration.\n- Random process-local signing is now only the last resort when no stable seed exists.\n- Dedicated CI starts two independent production containers with the same stable seed, mints the PIN cookie on replica A, and requires replica B to accept that exact cookie.\n\n''',
+            'AI_NOTES.md': '''## 2026-07-14 — Stable fallback session signing across replicas\n\n- **Observed live failure:** PIN `22` returned `ok:true`, but the immediately following protected request returned `locked`.\n- **Root cause:** the missing-`SESSION_SECRET` fallback was random per process, so cookies could fail across rolling-deploy instances or multiple replicas.\n- **Repair:** derive a domain-separated HMAC signing key from the first available stable server-side seed; explicit `SESSION_SECRET` still wins.\n- **Seed priority:** `NOVA_SESSION_SEED`, internal peer keys, `DATABASE_URL`, then configured provider secrets. Raw source credentials are never used directly as the cookie key.\n- **Last resort:** process-random signing only when no stable source exists, with an explicit warning that cookies cannot span restarts/replicas.\n- **Proof:** two independent production containers with no `SESSION_SECRET` but the same stable seed; replica A mints a PIN-22 cookie and replica B must accept it on a protected endpoint.\n- **Live truth gate:** exact Render revision must match `main`, PIN `22` must succeed, and the cookie issued by the live service must authenticate the immediately following protected request.\n\n''',
+          }
+          for name, section in sections.items():
+            p = Path(name)
+            text = p.read_text()
+            marker = section.splitlines()[0]
+            if marker in text:
+              continue
+            if name == 'README.md':
+              anchor = '\n## Runtime topology\n'
+              if anchor not in text: raise SystemExit('README anchor missing')
+              text = text.replace(anchor, '\n' + section + '## Runtime topology\n', 1)
+            else:
+              anchor = '\n---\n'
+              if anchor not in text: raise SystemExit(f'{name} anchor missing')
+              text = text.replace(anchor, '\n---\n\n' + section, 1)
+            p.write_text(text)
+          PY
+          git diff --check
+      - name: Commit notes and remove helper
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/session-docs-sync-once.yml
+          git add README.md CHANGELOG.md AI_NOTES.md
+          git diff --cached --check
+          git commit -m 'docs: record cross-replica session stability'
+          git push origin HEAD:2026-07-14/stable-session-key-across-replicas
