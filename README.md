@@ -99,7 +99,7 @@ skills/*                              existing repository skill catalog
 
 Settings contains a searchable dropdown-style app showcase. It loads Composio's live toolkit catalog, displays featured apps, opens hosted OAuth Connect Links, and refreshes connection state when the connection window returns.
 
-Use either:
+Use a project credential:
 
 ```text
 COMPOSIO_API_KEY=<project API key>
@@ -107,13 +107,23 @@ COMPOSIO_USER_ID=nova-luis
 PUBLIC_BASE_URL=https://nova-luis.onrender.com
 ```
 
-or enter the project API key in **Settings → Composio Apps**. The API key is write-only from the browser and connected-app OAuth credentials remain outside NOVA chat.
+Or use an organization credential and optionally select the intended project explicitly:
+
+```text
+COMPOSIO_ORG_API_KEY=<organization access token>
+COMPOSIO_PROJECT_ID=<project id>
+COMPOSIO_PROJECT_NAME=NOVA
+COMPOSIO_USER_ID=nova-luis
+PUBLIC_BASE_URL=https://nova-luis.onrender.com
+```
+
+A project key or organization token can also be entered in **Settings → Composio Apps**. Credentials are write-only from the browser, legacy organization tokens stored in the project-key field are auto-classified, and connected-app OAuth credentials remain outside NOVA chat.
 
 **Passwords are separate surfaces:** `1234` is the Medical workspace first-use client-side soft-lock password. The canonical Work Tree/integrations operator PIN is `22`. If Render supplies `NOVA_WORK_TREE_PIN`, that configured value is accepted **in addition to** `22`, so a stale deployment override can no longer lock the operator out.
 
 ## Session authentication self-heal
 
-Operator unlock cookies require a signing secret. A persistent `SESSION_SECRET` is preferred so existing cookies survive restarts. If Render does not provide one, `scripts/start-openclaw.mjs` now generates a cryptographically random process-local secret before launching the API. This keeps the PIN/Composio/Work Tree surfaces operational instead of returning `503 auth not configured`; the tradeoff is that existing unlock cookies expire on the next process restart.
+Operator unlock cookies require a signing secret. An explicit persistent `SESSION_SECRET` remains preferred. When it is absent, `scripts/start-openclaw.mjs` derives a domain-separated signing key from the first available stable server-side seed, prioritizing `NOVA_SESSION_SEED`, internal peer credentials, `DATABASE_URL`, and configured model-provider keys. This preserves cookies across restarts and replicas that share the same seed without directly reusing that credential as the cookie key. A process-random secret is generated only when no stable seed exists; in that last-resort mode, cookies expire on restart and cannot be shared across replicas.
 
 ## Deployment revision proof
 
@@ -148,22 +158,25 @@ node --check openclaw/workspace/skills/nova-services/nova-services.mjs
 
 Repository Verification enumerates **every Git-tracked path one by one** and writes a machine-readable audit artifact. Each tracked text source receives UTF-8 and merge-conflict checks plus extension-specific validation where applicable: JSON parsing, TypeScript/TSX syntax, Node JS syntax, Python compilation, shell syntax, YAML indentation checks, CSS structural checks, and symlink/gitlink classification. Global gates then run full TypeScript checking, API bundling, tracked-Python compilation, production Docker build, OpenClaw readiness, GitHub evidence tests, and desktop/mobile Playwright proof for the Composio Settings UI.
 
-A separate production-container compatibility gate deliberately omits `SESSION_SECRET`, starts NOVA with a conflicting `NOVA_WORK_TREE_PIN`, and proves the supervisor self-generates session signing material, canonical PIN `22` works, the deployment override also works, and a wrong PIN is rejected. The same gate injects deterministic Render metadata and verifies `/api/version` reports exact commit/branch/repository values.
+A separate production-container compatibility gate deliberately omits `SESSION_SECRET`, gives two independent replicas the same stable fallback seed, and proves a cookie minted by replica A authenticates on replica B. It also starts NOVA with a conflicting `NOVA_WORK_TREE_PIN`, proves canonical PIN `22` and the deployment override both work, rejects an unrelated PIN, injects deterministic Render metadata, and verifies `/api/version` reports exact commit/branch/repository values.
 
 Documentation and templates use accurate extensions: the governance design is `GOVERNANCE.md`, and the commented strict TypeScript template is `tsconfig-strict.jsonc`. `scripts/agentic_demo.py` is stored as runnable Python rather than a Markdown-fenced paste.
 
-The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At startup, `scripts/start-openclaw.mjs` generates missing internal secrets in memory, starts the loopback Gateway, waits for `/readyz`, and starts the API only after the Gateway is ready.
+The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At startup, `scripts/start-openclaw.mjs` derives or generates missing internal secrets in memory, starts the loopback Gateway, waits for `/readyz`, and starts the API only after the Gateway is ready.
 
 ## Important environment variables
 
 | Variable | Purpose |
 |---|---|
 | `GITHUB_TOKEN` / `GH_TOKEN` / `NOVA_GITHUB_TOKEN` | Optional server-side GitHub token for higher rate limits and private repository reads; public repositories work without it |
-| `COMPOSIO_API_KEY` | Composio project API key used by the server-side Tool Router client |
+| `COMPOSIO_API_KEY` | Composio project API key. Legacy organization tokens supplied here are auto-classified. |
+| `COMPOSIO_ORG_API_KEY` | Composio organization access token used to discover a project and resolve its project API key. |
+| `COMPOSIO_PROJECT_ID` / `COMPOSIO_PROJECT_NAME` | Optional preferred project selection when using an organization token. |
 | `COMPOSIO_USER_ID` | Stable connected-account owner ID; defaults to `nova-luis` |
 | `PUBLIC_BASE_URL` | Public callback origin used for hosted Composio Connect Links |
 | `NOVA_WORK_TREE_PIN` | Optional additional Work Tree/integrations PIN. Canonical operator PIN `22` remains accepted. |
-| `SESSION_SECRET` | Recommended persistent cookie-signing secret. If absent, the supervisor generates an ephemeral cryptographic secret for the current process. |
+| `SESSION_SECRET` | Preferred explicit cookie-signing secret. When absent, the supervisor derives a domain-separated key from a stable seed or uses process-random material only as a last resort. |
+| `NOVA_SESSION_SEED` | Preferred dedicated stable seed for cross-replica session signing when `SESSION_SECRET` is not configured. |
 | `RENDER_GIT_COMMIT` | Render-provided active deploy commit, exposed read-only through `/api/version` |
 | `OPENCLAW_GATEWAY_TOKEN` | Optional persistent Gateway bearer token; generated at boot when absent |
 | `OPENCLAW_STATE_DIR` | OpenClaw sessions/state directory; point this at a persistent Render disk path to retain state across deploys |
@@ -171,5 +184,5 @@ The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At sta
 | `OPENAI_API_KEY` | Used by NOVA proxy for `gpt-*` models |
 | `GEMINI_API_KEY` | Used by NOVA proxy for `gemini-*` models |
 | `BITDEER_API_KEY` | Used by NOVA proxy for other configured model IDs |
-| `SUPERNOVA_API_KEY` / `OPENCLAW_API_KEY` | Internal peer authentication for gated NOVA service endpoints |
-| `DATABASE_URL` | Work-Tree, knowledge and integration persistence |
+| `SUPERNOVA_API_KEY` / `OPENCLAW_API_KEY` | Internal peer authentication for gated NOVA service endpoints and stable fallback session signing |
+| `DATABASE_URL` | Work-Tree, knowledge and integration persistence; also an eligible stable fallback session seed when no dedicated seed exists |
