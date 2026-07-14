@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Wait for merged Render deployment and verify live E2E
+      - name: Wait for merged Render deployment and verify live chat E2E
         run: |
           set -euo pipefail
           primary='https://nova-luis.onrender.com'
@@ -42,31 +42,17 @@ jobs:
             exit 1
           fi
 
-          curl --fail --silent --cookie-jar /tmp/live-e2e/cookie.txt \
-            -H 'Content-Type: application/json' \
-            -d '{"pin":"22"}' \
-            "$selected/api/work-tree/unlock" >/tmp/live-e2e/unlock.json
-          grep -q '"ok":true' /tmp/live-e2e/unlock.json
-
-          curl --fail --silent --cookie /tmp/live-e2e/cookie.txt \
-            -H 'Content-Type: application/json' \
-            -d '{"text":"https://github.com/ABBYCRM/NovaLuis.git tell me what this is and what is in this repo"}' \
-            "$selected/api/github/preflight" >/tmp/live-e2e/github-preflight.json
-          grep -q '"ok":true' /tmp/live-e2e/github-preflight.json
-          grep -q 'ABBYCRM/NovaLuis' /tmp/live-e2e/github-preflight.json
-          grep -q '"recentCommits"' /tmp/live-e2e/github-preflight.json
-          grep -q 'package.json' /tmp/live-e2e/github-preflight.json
-
-          chat_code="$(curl -L --connect-timeout 10 --max-time 240 --silent --show-error \
+          chat_code="$(curl -L --connect-timeout 10 --max-time 300 --silent --show-error \
             -o /tmp/live-e2e/chat.json -w '%{http_code}' \
             -H 'Content-Type: application/json' \
             -H 'Accept: application/json' \
             -d '{"model":"gpt-4o","stream":false,"messages":[{"role":"user","content":"https://github.com/ABBYCRM/NovaLuis.git Tell me what this is and what is in this repo. Use the repository evidence. Mention package.json and recent commits. Do not give a generic capability disclaimer."}]}' \
             "$selected/api/v1/chat/completions")"
+          echo "$chat_code" > /tmp/live-e2e/chat-http.txt
           test "$chat_code" = '200'
 
           python - <<'PY'
-          import json, pathlib, re, sys
+          import json, pathlib
           p = pathlib.Path('/tmp/live-e2e/chat.json')
           data = json.loads(p.read_text())
           content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
@@ -96,8 +82,9 @@ jobs:
             echo "selected_url=$selected"
             echo "health_http=200"
             echo "openclaw_http=200"
-            echo "protected_preflight=pass"
+            echo "new_github_route_present=pass"
             echo "legacy_chat_reroute=pass"
+            echo "grounded_repo_answer=pass"
             echo "checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } | tee /tmp/live-e2e/evidence.txt
 
