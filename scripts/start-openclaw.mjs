@@ -28,6 +28,7 @@ const sharedInternalKey =
   randomBytes(32).toString("hex");
 const gatewayToken =
   process.env.OPENCLAW_GATEWAY_TOKEN || randomBytes(32).toString("hex");
+const sessionSecret = process.env.SESSION_SECRET || randomBytes(48).toString("hex");
 const modelId = normalizeModelId(
   process.env.NOVA_OPENCLAW_MODEL_ID || process.env.WORK_TREE_MODEL,
 );
@@ -40,9 +41,16 @@ if (!fs.existsSync(configPath)) {
   process.exit(78);
 }
 
+if (!process.env.SESSION_SECRET) {
+  console.warn(
+    "start-openclaw: SESSION_SECRET not provided; generated an ephemeral cryptographic session secret for this process. Existing operator cookies will expire on restart.",
+  );
+}
+
 const childEnv = {
   ...process.env,
   PORT: String(apiPort),
+  SESSION_SECRET: sessionSecret,
   OPENCLAW_GATEWAY_PORT: String(gatewayPort),
   OPENCLAW_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}`,
   OPENCLAW_GATEWAY_TOKEN: gatewayToken,
