@@ -4,6 +4,19 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — AURA-VECTOR mission-aware runtime memory
+
+- **Objective:** replace generic dense-only chunk retrieval as the agentic memory mechanism with a runtime-aware hybrid memory layer while preserving the legacy document knowledge API.
+- **Storage:** `vector_memories` contains memory type, scope, mission/agent IDs, verification level, confidence/importance/salience, nullable pgvector embedding, generated PostgreSQL full-text vector, validity/supersession metadata, relationships, entities and retrieval utility counters.
+- **Retrieval:** dense pgvector HNSW + PostgreSQL FTS/GIN candidates are merged and rescored by intent, execution phase, mission compatibility, verification strength, temporal decay, importance, salience and historical outcome utility. Contradicted/expired memories are filtered and near-duplicates are removed.
+- **Provider degradation:** embedding failures do not break ingestion or OpenClaw. Memories without embeddings remain searchable lexically and can receive an embedding on a later idempotent upsert.
+- **Critical-path wiring:** `vector-memory-fetch-hook.ts` wraps only the loopback OpenClaw chat-completions boundary, so both normal agent chat and Work Tree receive the same automatic memory retrieval without duplicating route logic.
+- **Write truth:** mission/user input is `observed`; gateway HTTP failures are `observed` failure memory; returned model final payloads are only `claimed` episodic memory. A model response is never auto-promoted to `verified`.
+- **Agent tools:** `nova-services` exposes `vector-status`, `vector-search`, `vector-ingest` and `vector-feedback`; its skill protocol requires memory search before non-trivial planning and failure-memory search before repeating an unchanged failed action.
+- **Protected surface:** `/api/vector-memory/*` uses the existing Work Tree PIN or trusted peer bearer-key gate.
+- **Deterministic checks:** `vector-memory.self-test.ts` covers intent/phase inference, atomic splitting, normalized hashing, evidence ranking, mission ranking and contradiction penalties.
+- **Truth gate:** source integration is not enough. Completion requires GitHub diff inspection plus typecheck/build/self-test/Node syntax evidence from CI or another executable environment. Live production remains unverified until Render runs the merged revision and a database-backed memory smoke test passes.
+
 ## 2026-07-14 — Stable fallback session signing across replicas
 
 - **Observed live failure:** PIN `22` returned `ok:true`, but the immediately following protected request returned `locked`.
@@ -40,7 +53,7 @@ Working notes for AI agents/contributors. Newest first.
 - **Objective:** remove inference from deployment verification by exposing the exact active Render Git revision through the application itself.
 - **Endpoint:** `GET /api/version` returns Render-provided commit, branch, repository slug, service ID/name, Render-runtime flag, and OpenClaw runtime version.
 - **Source of truth:** Render officially provides `RENDER_GIT_COMMIT`, `RENDER_GIT_BRANCH`, `RENDER_GIT_REPO_SLUG`, `RENDER_SERVICE_ID`, and `RENDER_SERVICE_NAME` at runtime.
-- **CI proof:** the production-container compatibility workflow injects deterministic Render metadata and verifies `/api/version` returns the exact values before testing operator PIN behavior.
+- **CI proof:** the production-container compatibility workflow injects deterministic Render metadata and verifies the endpoint returns the exact values before testing operator PIN behavior.
 - **Truth gate:** after merge/deploy, compare live `/api/version.commit` to GitHub `main`; only an exact SHA match counts as proof that Render has the latest revision.
 
 ## 2026-07-14 — Canonical operator PIN and one-by-one repository audit
@@ -98,33 +111,3 @@ Working notes for AI agents/contributors. Newest first.
 ## 2026-07-13 — Repository integrity audit corrections
 
 - **JSON evidence:** repository validation found three mislabeled or broken artifacts, not valid JSON defects: Markdown stored as `GOVERNANCE.json`, JSONC stored as `tsconfig-strict.json`, and a broken workspace governance link.
-- **JSON repair:** renamed the files to `GOVERNANCE.md` and `tsconfig-strict.jsonc`, repaired the workspace link, and updated Docker copy paths. Every actual `.json` file now parses.
-- **Python evidence:** tracked-source compilation found `scripts/agentic_demo.py` wrapped in a Markdown response with prose and code fences.
-- **Python repair:** removed only the wrapper and retained the complete 3,315-line program. CI then compiled all 1,014 tracked Python files successfully.
-- **Workflow correction:** repository Python validation uses `git ls-files '*.py'` so it inspects source under version control rather than generated pnpm dependency trees.
-- **Final proof:** Repository Verification and OpenClaw Backend CI both passed on a clean commit with no temporary repair workflow present.
-
-## 2026-07-13 — Repair frozen install and establish repository verification
-
-- **Observed failure:** `pnpm install --frozen-lockfile --shamefully-hoist` failed in GitHub Actions with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
-- **Root cause:** the repository pinned pnpm 9 while `pnpm-workspace.yaml` and `pnpm-lock.yaml` use the pnpm 10 workspace-level configuration model.
-- **Repair:** pin `pnpm@10.32.1` in `package.json`, use the same version in the production Docker builder and OpenClaw CI, and retain the main-branch verification workflow.
-- **Verification scope:** JSON parse, frozen dependency install, TypeScript typecheck, API build, Python bytecode compilation, OpenClaw validation, Docker build and container smoke tests.
-- **Preservation:** no application source or existing runtime behavior was removed while reconciling concurrent `main` changes.
-
-## 2026-07-13 — Trigger Render deployment after package manifest repair
-
-- **Objective:** Trigger a fresh Render auto-deploy after repairing the root `package.json` and production `Dockerfile`.
-- **Expected source:** `ABBYCRM/NovaLuis`, branch `main`.
-- **Expected repair commit:** `f577e1995755ca1df1206a1c965e3faf6c401110` or a later descendant containing the same fix.
-- **Required verification:** Render build completes, deploy reaches `live`, the deployed commit matches the expected Git revision, `/api/healthz` responds, and the Nova UI loads.
-- **Security:** No GitHub or Render credentials are stored in this repository.
-
-## 2026-07-04 — Repoint NOVA → new SUPERNOVA URL
-
-- **Model:** claude-opus-4-8 (Claude Code).
-- **Objective:** Make NOVA call the new SUPERNOVA build (`https://supernova-ai1.onrender.com`), not the old one (`supernova-ekbj.onrender.com`).
-- **Changed:** both frontend "Open Super Nova" buttons (`index.html`), the `SUPERNOVA_BASE_URL` default in `work-tree.ts`, `ARCHITECTURE.md`, and the twin-system-doctrine memory. Rebuilt the api-server dist.
-- **Why:** the old SUPERNOVA build is superseded by the freshly deployed `supernova-ai1` service.
-- **Risks / next steps:** the programmatic Work-Tree dispatch also needs `SUPERNOVA_API_KEY` on NOVA to equal the new SUPERNOVA service's `OPENCLAW_API_KEY`. The browser buttons need no key. NOVA's live redeploy is controlled by its own Render service.
-- **Verified:** 0 old-URL refs remain in source or rebuilt dist; typecheck clean; new URL HTTP 200.
