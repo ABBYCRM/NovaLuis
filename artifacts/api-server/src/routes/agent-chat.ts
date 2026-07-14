@@ -15,7 +15,9 @@ import {
 const router = Router();
 
 const OPENCLAW_GATEWAY_URL = (
-  process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789"
+  process.env.NOVA_AGENT_CHAT_GATEWAY_URL ||
+  process.env.OPENCLAW_GATEWAY_URL ||
+  "http://127.0.0.1:18789"
 ).replace(/\/$/, "");
 const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
 const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "openclaw/default";
