@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { getCredentials, setCredentials, maskFields } from "../lib/integrations";
-import { clearComposioSessionCache } from "../lib/composio";
+import {
+  clearComposioSessionCache,
+  normalizeComposioCredentialFields,
+} from "../lib/composio";
 import { getGoogleAccessToken, googleGet } from "../lib/google";
 
 const router = Router();
@@ -20,7 +23,9 @@ router.get("/integrations", async (_req, res) => {
   const services: Record<string, Record<string, boolean>> = {};
   for (const s of SERVICES) services[s] = maskFields(await getCredentials(s));
   if (process.env.COMPOSIO_API_KEY) services.composio.api_key = true;
+  if (process.env.COMPOSIO_ORG_API_KEY) services.composio.org_api_key = true;
   if (process.env.COMPOSIO_USER_ID) services.composio.user_id = true;
+  if (process.env.COMPOSIO_PROJECT_ID) services.composio.project_id = true;
   res.json({ services });
 });
 
@@ -37,7 +42,11 @@ router.post("/integrations/:service", async (req, res) => {
     res.status(400).json({ error: "invalid body", details: parsed.error.issues });
     return;
   }
-  await setCredentials(service, parsed.data.fields);
+  const fields =
+    service === "composio"
+      ? normalizeComposioCredentialFields(parsed.data.fields)
+      : parsed.data.fields;
+  await setCredentials(service, fields);
   if (service === "composio") clearComposioSessionCache();
   res.json({ ok: true, service, fields: maskFields(await getCredentials(service)) });
 });
