@@ -4,6 +4,18 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — Deterministic GitHub repository analysis repair
+
+- **Observed failure:** normal NOVA chat still returned generic GitHub capability denials for public repository URLs after the OpenClaw and Composio work.
+- **Root cause 1:** stale clients could still post to `/api/v1/chat/completions`; the frontend fetch shim was not a sufficient architectural guarantee that every chat turn reached OpenClaw.
+- **Root cause 2:** public repository analysis depended on Composio/OAuth plus model tool selection. The model could refuse before a tool was ever invoked.
+- **Critical-path repair:** every non-internal chat request to `/api/v1/chat/completions` is now rerouted server-side to `/api/agent/v1/chat/completions`. Only calls authenticated with `NOVA_OPENCLAW_PROXY_KEY` remain raw provider inference, preventing recursion.
+- **GitHub preflight:** detect repository URLs in the current user message, fetch real GitHub REST evidence before OpenClaw answers, and inject repository metadata, recursive tree entries, recent commits, languages, and selected high-signal file contents into the agent turn.
+- **Public/private split:** public repositories work without Composio or GitHub OAuth. Optional `GITHUB_TOKEN`, `GH_TOKEN`, or `NOVA_GITHUB_TOKEN` adds higher rate limits and private repository access. Composio remains the connected-account/action layer.
+- **Diagnostic:** `/api/github/preflight` is PIN/peer-auth protected and exposes the exact server-side evidence path for verification.
+- **Password clarification:** `1234` is the Medical workspace first-use client-side soft-lock password. The Work Tree/integrations backend PIN defaults to `22` unless `NOVA_WORK_TREE_PIN` overrides it.
+- **Truth gate:** do not declare this repair complete until the built production container unlocks with PIN `22`, fetches real `ABBYCRM/NovaLuis` repository evidence, and the deployed normal chat successfully answers a repository-analysis request without a capability denial.
+
 ## 2026-07-13 — Composio connected apps and normal-chat agent repair
 
 - **Observed failure:** normal NOVA chat repeatedly claimed GitHub was inaccessible even though the runtime documentation claimed tool access.
@@ -18,7 +30,7 @@ Working notes for AI agents/contributors. Newest first.
 - **Mandatory GitHub protocol:** status/connections → search use case → inspect returned schemas → execute minimum read-only tools. If disconnected, generate and return the real GitHub Connect Link. Generic capability denials are forbidden until a concrete bridge attempt fails.
 - **Security:** Composio routes remain under the existing PIN/peer-auth integration gate. The browser never reads back the project API key, and app OAuth credentials are not entered into chat.
 - **Production configuration:** prefer `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID=nova-luis`, and `PUBLIC_BASE_URL=https://nova-luis.onrender.com` in Render. Settings storage is an available fallback.
-- **Truth gate:** do not claim GitHub execution works until a Composio project key is configured, GitHub is connected, and normal NOVA chat successfully analyzes a real repository using observed Composio tool results.
+- **Truth gate:** Composio actions remain unverified until a project key is configured and the target app is connected. Public GitHub repository reads no longer depend on this gate after the 2026-07-14 repair.
 
 ## 2026-07-13 — Official OpenClaw backend integration
 
