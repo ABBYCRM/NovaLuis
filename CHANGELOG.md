@@ -4,6 +4,16 @@ All notable changes to **NOVA** (primary twin of SUPERNOVA/ABBY).
 
 ---
 
+## 2026-07-14 — Resolve Composio organization credentials correctly
+
+- Live PIN/session auth succeeded, but the configured Composio credential was rejected because NOVA sent an organization access token as `x-api-key`.
+- Added project-vs-organization credential classification and `COMPOSIO_ORG_API_KEY` support.
+- Organization credentials now use `x-org-api-key` to discover/select a project and retrieve its project API key; only the resolved project key reaches Tool Router as `x-api-key`.
+- Distinct stored/environment credentials are tried independently so one stale credential cannot mask a valid fallback.
+- Composio status now reports recoverable credential state/source instead of converting credential failures into a generic application outage.
+- Dedicated production-container CI proves `oak_ci_org` is used as an organization credential and `ak_ci_project` as the resolved Tool Router project credential.
+
+
 ## 2026-07-14 — Self-heal missing session signing configuration
 
 - Live Render was on the expected commit and OpenClaw was ready, but operator unlock failed because production had no session-signing secret.
