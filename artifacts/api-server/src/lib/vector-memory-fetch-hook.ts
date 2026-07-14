@@ -97,7 +97,7 @@ async function captureDispatchInput(
     content: missionId ? `Work Tree mission ${missionId}: ${userText}` : `Observed user request: ${userText}`,
     memoryType: missionId ? "operational" : "episodic",
     scope: missionId ? "mission" : "session",
-    scopeKey: missionId ?? sessionKey || "nova-chat",
+    scopeKey: (missionId ?? sessionKey) || "nova-chat",
     missionId: missionId ?? null,
     source: "openclaw-dispatch",
     verification: "observed",
