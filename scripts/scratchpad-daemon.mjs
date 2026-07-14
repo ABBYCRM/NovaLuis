@@ -24,7 +24,12 @@ const { Pool } = pg;
 const DATABASE_URL =
   process.env.SCRATCHPAD_DATABASE_URL || process.env.DATABASE_URL;
 const BITDEER_KEY = process.env.BITDEER_API_KEY;
-const BASE_URL = process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1";
+const OPENAI_KEY = process.env.OPENAI_API_KEY;
+// Resolve the active LLM key and base URL — BITDEER first, OpenAI as fallback.
+const ACTIVE_LLM_KEY = BITDEER_KEY || OPENAI_KEY;
+const BASE_URL = BITDEER_KEY
+  ? (process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1")
+  : (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
 const MODEL = process.env.SCRATCHPAD_MODEL || "XiaomiMiMo/MiMo-V2-Flash";
 const POLL_MS = Number(process.env.SCRATCHPAD_POLL_MS || 15000);
 const BATCH_CONVERSATIONS = Number(process.env.SCRATCHPAD_BATCH || 5);
@@ -49,12 +54,27 @@ if (!DATABASE_URL) {
   console.error("scratchpad-daemon: FATAL — DATABASE_URL missing");
   process.exit(78);
 }
-if (!BITDEER_KEY) {
-  console.error("scratchpad-daemon: FATAL — BITDEER_API_KEY missing");
-  process.exit(78);
+if (!ACTIVE_LLM_KEY) {
+  console.warn("scratchpad-daemon: no LLM key (BITDEER_API_KEY or OPENAI_API_KEY) — idling. Distillation will begin once a key is available.");
+  setInterval(() => {
+    const k = process.env.BITDEER_API_KEY || process.env.OPENAI_API_KEY;
+    if (k) { console.log("scratchpad-daemon: LLM key detected — restarting to activate."); process.exit(0); }
+  }, 60_000).unref();
 }
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+// Force SSL for any non-localhost Postgres URL (Render, Railway, etc.).
+const _poolSsl = (() => {
+  if (!DATABASE_URL) return undefined;
+  try {
+    const host = new URL(DATABASE_URL).hostname;
+    if (host === "localhost" || host === "127.0.0.1") return undefined;
+  } catch { /* unparseable — default to SSL */ }
+  return { rejectUnauthorized: false };
+})();
+const pool = new Pool({ connectionString: DATABASE_URL, ssl: _poolSsl });
+pool.on("error", (err) => {
+  console.warn("scratchpad-daemon: pool background error (will retry):", err.message);
+});
 
 function clip(s, n) {
   s = String(s || "");
@@ -121,7 +141,7 @@ async function callLLM(prompt) {
     const res = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${BITDEER_KEY}`,
+        Authorization: `Bearer ${ACTIVE_LLM_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -234,7 +254,14 @@ async function tick() {
   running = true;
   // Acquire a global advisory lock on its own session so only one daemon
   // instance processes per tick, even if several are deployed.
-  const client = await pool.connect();
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (connErr) {
+    console.warn("scratchpad-daemon: DB connect failed (will retry next tick):", connErr.message);
+    running = false;
+    return;
+  }
   let locked = false;
   try {
     const lk = await client.query("SELECT pg_try_advisory_lock($1) AS ok", [
@@ -258,12 +285,14 @@ async function tick() {
   } catch (e) {
     console.error("scratchpad-daemon: tick error", e.message || e);
   } finally {
-    if (locked) {
-      await client
-        .query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_ID])
-        .catch(() => {});
+    if (client) {
+      if (locked) {
+        await client
+          .query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_ID])
+          .catch(() => {});
+      }
+      client.release();
     }
-    client.release();
     running = false;
   }
 }
