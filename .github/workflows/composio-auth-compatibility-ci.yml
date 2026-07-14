@@ -117,10 +117,9 @@ jobs:
           grep -q '"ready":true' /tmp/composio-status.json
           grep -q '"credentialSource":"organization"' /tmp/composio-status.json
           grep -q '"projectId":"proj_nova"' /tmp/composio-status.json
-          grep -q '"xOrgApiKey":"oak_ci_org"' /tmp/fake-composio-requests.jsonl
-          grep -q '"url":"/api/v3.1/org/owner/project/new"' /tmp/fake-composio-requests.jsonl
-          grep -q '"should_create_api_key":true' /tmp/fake-composio-requests.jsonl
-          grep -q '"xApiKey":"ak_ci_project"' /tmp/fake-composio-requests.jsonl
+          jq -e 'select(.url == "/api/v3.1/org/owner/project/list?limit=100" and .xOrgApiKey == "oak_ci_org")' /tmp/fake-composio-requests.jsonl >/dev/null
+          jq -e 'select(.url == "/api/v3.1/org/owner/project/new" and .xOrgApiKey == "oak_ci_org" and ((.body | fromjson).name == "nova-luis") and ((.body | fromjson).should_create_api_key == true))' /tmp/fake-composio-requests.jsonl >/dev/null
+          jq -e 'select(.url == "/api/v3.1/tool_router/session" and .xApiKey == "ak_ci_project")' /tmp/fake-composio-requests.jsonl >/dev/null
       - name: Upload Composio auth evidence
         if: always()
         uses: actions/upload-artifact@v4
