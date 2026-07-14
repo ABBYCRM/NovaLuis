@@ -37,6 +37,7 @@ jobs:
           import fs from 'node:fs';
 
           const log = '/tmp/fake-composio-requests.jsonl';
+          let dedicatedCreated = false;
           function write(entry) {
             fs.appendFileSync(log, JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n');
           }
@@ -52,11 +53,22 @@ jobs:
 
             if (req.url === '/api/v3.1/org/owner/project/list?limit=100' && req.method === 'GET') {
               if (req.headers['x-org-api-key'] !== 'oak_ci_org') return json(res, 401, { error: { message: 'wrong org header' } });
-              return json(res, 200, { items: [{ id: 'proj_ci', name: 'NOVA' }] });
+              const items = [{ id: 'intake_workspace_first_project', name: 'intake_workspace_first_project' }];
+              if (dedicatedCreated) items.push({ id: 'proj_nova', name: 'nova-luis' });
+              return json(res, 200, { items });
             }
-            if (req.url === '/api/v3.1/org/owner/project/proj_ci' && req.method === 'GET') {
+            if (req.url === '/api/v3.1/org/owner/project/new' && req.method === 'POST') {
               if (req.headers['x-org-api-key'] !== 'oak_ci_org') return json(res, 401, { error: { message: 'wrong org header' } });
-              return json(res, 200, { id: 'proj_ci', name: 'NOVA', api_keys: [{ key: 'ak_ci_project' }] });
+              const parsed = JSON.parse(body || '{}');
+              if (parsed.name !== 'nova-luis' || parsed.should_create_api_key !== true) {
+                return json(res, 400, { error: { message: 'wrong project creation body' } });
+              }
+              dedicatedCreated = true;
+              return json(res, 200, { id: 'proj_nova', name: 'nova-luis', api_key: 'ak_ci_project' });
+            }
+            if (req.url === '/api/v3.1/org/owner/project/proj_nova' && req.method === 'GET') {
+              if (req.headers['x-org-api-key'] !== 'oak_ci_org') return json(res, 401, { error: { message: 'wrong org header' } });
+              return json(res, 200, { id: 'proj_nova', name: 'nova-luis', api_keys: [{ key: 'ak_ci_project' }] });
             }
             if (req.url === '/api/v3.1/tool_router/session' && req.method === 'POST') {
               if (req.headers['x-api-key'] !== 'ak_ci_project') return json(res, 401, { error: { message: 'wrong project header' } });
@@ -77,11 +89,10 @@ jobs:
           node /tmp/fake-composio.mjs >/tmp/fake-composio.log 2>&1 &
           echo $! >/tmp/fake-composio.pid
           for attempt in $(seq 1 30); do
-            if curl --silent --fail http://127.0.0.1:19090/not-found >/dev/null 2>&1; then break; fi
             if grep -q 'listening' /tmp/fake-composio.log; then break; fi
             sleep 1
           done
-      - name: Prove an organization token stored as COMPOSIO_API_KEY resolves to a project key
+      - name: Prove organization token creates a dedicated project with a project key
         run: |
           set -euo pipefail
           docker run --detach --name nova-composio-auth \
@@ -105,8 +116,10 @@ jobs:
           grep -q '"configured":true' /tmp/composio-status.json
           grep -q '"ready":true' /tmp/composio-status.json
           grep -q '"credentialSource":"organization"' /tmp/composio-status.json
-          grep -q '"projectId":"proj_ci"' /tmp/composio-status.json
+          grep -q '"projectId":"proj_nova"' /tmp/composio-status.json
           grep -q '"xOrgApiKey":"oak_ci_org"' /tmp/fake-composio-requests.jsonl
+          grep -q '"url":"/api/v3.1/org/owner/project/new"' /tmp/fake-composio-requests.jsonl
+          grep -q '"should_create_api_key":true' /tmp/fake-composio-requests.jsonl
           grep -q '"xApiKey":"ak_ci_project"' /tmp/fake-composio-requests.jsonl
       - name: Upload Composio auth evidence
         if: always()
