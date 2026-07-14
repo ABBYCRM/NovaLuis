@@ -282,7 +282,80 @@ function chooseProject(
     );
     if (partial) return partial;
   }
-  return projects[0] ?? null;
+  return null;
+}
+
+function autoCreateDedicatedProjectEnabled(): boolean {
+  return process.env.COMPOSIO_AUTO_CREATE_PROJECT !== "0";
+}
+
+async function credentialFromExistingProject(
+  orgApiKey: string,
+  selected: Record<string, unknown>,
+): Promise<DerivedProjectCredential> {
+  const selectedId = projectId(selected);
+  if (!selectedId) {
+    throw new ComposioApiError(
+      "Composio returned a project without an identifier",
+      502,
+      selected,
+    );
+  }
+
+  let apiKey = extractProjectApiKey(selected);
+  if (!apiKey) {
+    const details = await composioOrgRequest<unknown>(
+      orgApiKey,
+      `/org/owner/project/${encodeURIComponent(selectedId)}`,
+    );
+    apiKey = extractProjectApiKey(details);
+  }
+  if (!apiKey) {
+    throw new ComposioApiError(
+      `Composio project ${projectName(selected) || selectedId} did not expose a project API key to the organization token`,
+      409,
+    );
+  }
+  return { orgApiKey, projectId: selectedId, apiKey };
+}
+
+async function createDedicatedProjectCredential(
+  orgApiKey: string,
+  requestedName: string,
+): Promise<DerivedProjectCredential> {
+  const name = requestedName || "nova-luis";
+  try {
+    const created = await composioOrgRequest<unknown>(
+      orgApiKey,
+      "/org/owner/project/new",
+      {
+        method: "POST",
+        body: JSON.stringify({ name, should_create_api_key: true }),
+      },
+    );
+    const createdRecord = record(created);
+    const createdId = createdRecord ? projectId(createdRecord) : "";
+    const apiKey = extractProjectApiKey(created);
+    if (!createdId || !apiKey) {
+      throw new ComposioApiError(
+        `Composio created project ${name} without returning its project API key`,
+        502,
+        created,
+      );
+    }
+    return { orgApiKey, projectId: createdId, apiKey };
+  } catch (error) {
+    if (!(error instanceof ComposioApiError) || ![400, 409].includes(error.status)) {
+      throw error;
+    }
+
+    // A concurrent process may have created the same dedicated project. Re-list
+    // and reuse it instead of creating duplicates or rotating any existing key.
+    const refreshed = await listOrgProjects(orgApiKey);
+    const existing = chooseProject(refreshed, "", name);
+    if (!existing) throw error;
+    return credentialFromExistingProject(orgApiKey, existing);
+  }
 }
 
 async function listOrgProjects(orgApiKey: string): Promise<Record<string, unknown>[]> {
@@ -319,38 +392,23 @@ async function resolveProjectApiKeyFromOrgKey(
 
   const projects = await listOrgProjects(orgApiKey);
   const selected = chooseProject(projects, preferredId, preferredName);
-  if (!selected) {
+
+  if (selected) {
+    derivedProjectCredential = await credentialFromExistingProject(orgApiKey, selected);
+    return derivedProjectCredential;
+  }
+
+  if (!autoCreateDedicatedProjectEnabled()) {
     throw new ComposioApiError(
-      "Composio organization key is valid but no project was available. Create or select a project before connecting apps.",
+      "Composio organization key is valid but no matching NOVA project exists. Set COMPOSIO_PROJECT_ID/COMPOSIO_PROJECT_NAME or enable project auto-creation.",
       409,
     );
   }
 
-  const selectedId = projectId(selected);
-  if (!selectedId) {
-    throw new ComposioApiError(
-      "Composio returned a project without an identifier",
-      502,
-      selected,
-    );
-  }
-
-  let apiKey = extractProjectApiKey(selected);
-  if (!apiKey) {
-    const details = await composioOrgRequest<unknown>(
-      orgApiKey,
-      `/org/owner/project/${encodeURIComponent(selectedId)}`,
-    );
-    apiKey = extractProjectApiKey(details);
-  }
-  if (!apiKey) {
-    throw new ComposioApiError(
-      `Composio project ${projectName(selected) || selectedId} did not expose a project API key to the organization token`,
-      409,
-    );
-  }
-
-  derivedProjectCredential = { orgApiKey, projectId: selectedId, apiKey };
+  derivedProjectCredential = await createDedicatedProjectCredential(
+    orgApiKey,
+    preferredName || "nova-luis",
+  );
   return derivedProjectCredential;
 }
 
