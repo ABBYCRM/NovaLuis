@@ -64,6 +64,7 @@ openclaw/openclaw.json                strict Gateway/model/tool configuration
 openclaw/workspace/skills/nova-services
                                       authenticated native + Composio service adapter
 scripts/start-openclaw.mjs            process supervisor and readiness gate
+scripts/repo-audit.mjs                one-by-one tracked-file audit and JSON evidence manifest
 skills/*                              existing repository skill catalog
 ```
 
@@ -100,7 +101,7 @@ PUBLIC_BASE_URL=https://nova-luis.onrender.com
 
 or enter the project API key in **Settings → Composio Apps**. The API key is write-only from the browser and connected-app OAuth credentials remain outside NOVA chat.
 
-**Passwords are separate surfaces:** `1234` is the Medical workspace first-use client-side soft-lock password. The backend Work Tree/integrations PIN defaults to `22` unless `NOVA_WORK_TREE_PIN` overrides it in the deployment environment.
+**Passwords are separate surfaces:** `1234` is the Medical workspace first-use client-side soft-lock password. The canonical Work Tree/integrations operator PIN is `22`. If Render supplies `NOVA_WORK_TREE_PIN`, that configured value is accepted **in addition to** `22`, so a stale deployment override can no longer lock the operator out.
 
 ## Build and validation
 
@@ -108,13 +109,16 @@ or enter the project API key in **Settings → Composio Apps**. The API key is w
 
 ```bash
 pnpm install --frozen-lockfile
+node scripts/repo-audit.mjs
 pnpm run typecheck
 pnpm --filter @workspace/api-server run build
 node --check artifacts/nova/public/assets/composio-settings.js
 node --check openclaw/workspace/skills/nova-services/nova-services.mjs
 ```
 
-GitHub verification parses every real `.json` file, compiles every Git-tracked `.py` file, validates the pinned OpenClaw configuration and `nova-services` skill, builds the production image, starts the container, unlocks the protected API with PIN `22` in CI, calls the real GitHub API for `ABBYCRM/NovaLuis`, verifies repository/file/commit evidence, checks OpenClaw readiness, and runs desktop/mobile Playwright proof for the Composio Settings UI.
+Repository Verification now enumerates **every Git-tracked path one by one** and writes a machine-readable audit artifact. Each tracked text source receives UTF-8 and merge-conflict checks plus extension-specific validation where applicable: JSON parsing, TypeScript/TSX syntax, Node JS syntax, Python compilation, shell syntax, YAML indentation checks, CSS structural checks, and symlink-target validation. Global gates then run full TypeScript checking, API bundling, tracked-Python compilation, production Docker build, OpenClaw readiness, GitHub evidence tests, and desktop/mobile Playwright proof for the Composio Settings UI.
+
+A separate production-container compatibility gate starts NOVA with a conflicting `NOVA_WORK_TREE_PIN` and proves both canonical PIN `22` and the deployment override are accepted while a wrong PIN is rejected.
 
 Documentation and templates use accurate extensions: the governance design is `GOVERNANCE.md`, and the commented strict TypeScript template is `tsconfig-strict.jsonc`. `scripts/agentic_demo.py` is stored as runnable Python rather than a Markdown-fenced paste.
 
@@ -128,7 +132,7 @@ The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At sta
 | `COMPOSIO_API_KEY` | Composio project API key used by the server-side Tool Router client |
 | `COMPOSIO_USER_ID` | Stable connected-account owner ID; defaults to `nova-luis` |
 | `PUBLIC_BASE_URL` | Public callback origin used for hosted Composio Connect Links |
-| `NOVA_WORK_TREE_PIN` | Work Tree/integrations operator PIN; defaults to `22` when unset |
+| `NOVA_WORK_TREE_PIN` | Optional additional Work Tree/integrations PIN. Canonical operator PIN `22` remains accepted. |
 | `OPENCLAW_GATEWAY_TOKEN` | Optional persistent Gateway bearer token; generated at boot when absent |
 | `OPENCLAW_STATE_DIR` | OpenClaw sessions/state directory; point this at a persistent Render disk to retain state across deploys |
 | `NOVA_OPENCLAW_MODEL_ID` | Model ID sent through NOVA's server-side proxy; defaults to `WORK_TREE_MODEL` or `gpt-4o-mini` |
