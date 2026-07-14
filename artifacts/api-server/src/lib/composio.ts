@@ -1,6 +1,8 @@
-import { getCredentials, setCredentials } from "./integrations";
+import { getCredentials, setCredentials, type ServiceFields } from "./integrations";
 
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v3.1";
+const COMPOSIO_BASE = (
+  process.env.COMPOSIO_BASE_URL || "https://backend.composio.dev/api/v3.1"
+).replace(/\/$/, "");
 const DEFAULT_USER_ID = "nova-luis";
 
 export class ComposioApiError extends Error {
@@ -16,9 +18,12 @@ export class ComposioApiError extends Error {
 }
 
 export interface ComposioConfig {
-  apiKey: string;
+  projectApiKeys: string[];
+  orgApiKeys: string[];
   userId: string;
   storedSessionId: string;
+  projectId: string;
+  projectName: string;
   configured: boolean;
 }
 
@@ -26,20 +31,72 @@ export interface ComposioSession {
   sessionId: string;
   apiKey: string;
   userId: string;
+  credentialSource: "project" | "organization";
+  projectId?: string;
+}
+
+interface DerivedProjectCredential {
+  orgApiKey: string;
+  projectId: string;
+  apiKey: string;
 }
 
 let processSessionId = "";
+let derivedProjectCredential: DerivedProjectCredential | null = null;
+
+function clean(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+export function looksLikeComposioOrgApiKey(value: string): boolean {
+  return /^oak(?:_|-)?/i.test(value.trim());
+}
+
+export function normalizeComposioCredentialFields(fields: ServiceFields): ServiceFields {
+  const normalized = { ...fields };
+  const supplied = clean(normalized.api_key);
+  if (supplied && looksLikeComposioOrgApiKey(supplied)) {
+    normalized.org_api_key = supplied;
+    normalized.api_key = "";
+  }
+  return normalized;
+}
 
 export async function getComposioConfig(): Promise<ComposioConfig> {
   const stored = await getCredentials("composio");
-  const apiKey = (process.env.COMPOSIO_API_KEY || stored.api_key || "").trim();
-  const userId = (process.env.COMPOSIO_USER_ID || stored.user_id || DEFAULT_USER_ID).trim();
-  const storedSessionId = (stored.session_id || "").trim();
+  const rawProjectCandidates = unique([
+    clean(process.env.COMPOSIO_API_KEY),
+    clean(stored.api_key),
+  ]);
+  const explicitOrgCandidates = unique([
+    clean(process.env.COMPOSIO_ORG_API_KEY),
+    clean(stored.org_api_key),
+  ]);
+
+  const projectApiKeys = rawProjectCandidates.filter(
+    (key) => !looksLikeComposioOrgApiKey(key),
+  );
+  const orgApiKeys = unique([
+    ...explicitOrgCandidates,
+    ...rawProjectCandidates.filter(looksLikeComposioOrgApiKey),
+  ]);
+  const userId = clean(process.env.COMPOSIO_USER_ID || stored.user_id || DEFAULT_USER_ID);
+  const storedSessionId = clean(stored.session_id);
+  const projectId = clean(process.env.COMPOSIO_PROJECT_ID || stored.project_id);
+  const projectName = clean(process.env.COMPOSIO_PROJECT_NAME || stored.project_name);
+
   return {
-    apiKey,
+    projectApiKeys,
+    orgApiKeys,
     userId: userId || DEFAULT_USER_ID,
     storedSessionId,
-    configured: Boolean(apiKey),
+    projectId,
+    projectName,
+    configured: projectApiKeys.length > 0 || orgApiKeys.length > 0,
   };
 }
 
@@ -56,14 +113,15 @@ function errorMessage(details: unknown): string {
   return "Composio request failed";
 }
 
-export async function composioRequest<T>(
-  apiKey: string,
+async function requestWithAuth<T>(
+  headerName: "x-api-key" | "x-org-api-key",
+  key: string,
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  if (!apiKey) {
+  if (!key) {
     throw new ComposioApiError(
-      "Composio is not configured. Add COMPOSIO_API_KEY in Render or save a project API key in Settings.",
+      "Composio is not configured. Add a Composio project or organization API key in Render or Settings.",
       503,
     );
   }
@@ -77,7 +135,7 @@ export async function composioRequest<T>(
       ...init,
       headers: {
         Accept: "application/json",
-        "x-api-key": apiKey,
+        [headerName]: key,
         ...(init.body == null ? {} : { "Content-Type": "application/json" }),
         ...(init.headers ?? {}),
       },
@@ -115,6 +173,187 @@ export async function composioRequest<T>(
   }
 }
 
+export async function composioRequest<T>(
+  apiKey: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  return requestWithAuth<T>("x-api-key", apiKey, path, init);
+}
+
+export async function composioOrgRequest<T>(
+  orgApiKey: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  return requestWithAuth<T>("x-org-api-key", orgApiKey, path, init);
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function projectList(value: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 4) return [];
+  if (Array.isArray(value)) {
+    return value.filter((item): item is Record<string, unknown> => Boolean(record(item)));
+  }
+  const root = record(value);
+  if (!root) return [];
+  for (const key of ["items", "projects", "results", "data"]) {
+    if (Array.isArray(root[key])) return projectList(root[key], depth + 1);
+  }
+  for (const key of ["data", "result", "response"]) {
+    const nested = projectList(root[key], depth + 1);
+    if (nested.length) return nested;
+  }
+  return [];
+}
+
+function projectId(project: Record<string, unknown>): string {
+  return clean(project.id || project.nano_id || project.nanoId || project.project_id);
+}
+
+function projectName(project: Record<string, unknown>): string {
+  return clean(project.name || project.project_name || project.slug);
+}
+
+function extractProjectApiKey(value: unknown, depth = 0): string {
+  if (depth > 6 || value == null) return "";
+  if (typeof value === "string") {
+    const candidate = value.trim();
+    return /^ak(?:_|-)?/i.test(candidate) ? candidate : "";
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractProjectApiKey(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+  const root = record(value);
+  if (!root) return "";
+
+  for (const key of ["api_key", "apiKey", "project_api_key", "projectApiKey"]) {
+    const found = extractProjectApiKey(root[key], depth + 1);
+    if (found) return found;
+  }
+  for (const key of ["api_keys", "apiKeys", "keys", "project", "data", "result"]) {
+    const found = extractProjectApiKey(root[key], depth + 1);
+    if (found) return found;
+  }
+  for (const item of Object.values(root)) {
+    const found = extractProjectApiKey(item, depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+
+function chooseProject(
+  projects: Record<string, unknown>[],
+  preferredId: string,
+  preferredName: string,
+): Record<string, unknown> | null {
+  if (!projects.length) return null;
+  if (preferredId) {
+    const exact = projects.find((project) => projectId(project) === preferredId);
+    if (exact) return exact;
+  }
+
+  const names = unique([
+    preferredName,
+    "nova-luis",
+    "novaluis",
+    "nova",
+    "production",
+  ]).map((name) => name.toLowerCase());
+
+  for (const wanted of names) {
+    const exact = projects.find(
+      (project) => projectName(project).toLowerCase() === wanted,
+    );
+    if (exact) return exact;
+  }
+  for (const wanted of names) {
+    const partial = projects.find((project) =>
+      projectName(project).toLowerCase().includes(wanted),
+    );
+    if (partial) return partial;
+  }
+  return projects[0] ?? null;
+}
+
+async function listOrgProjects(orgApiKey: string): Promise<Record<string, unknown>[]> {
+  let lastError: unknown = null;
+  for (const path of [
+    "/org/owner/project/list?limit=100",
+    "/org/project/list?limit=100",
+  ]) {
+    try {
+      const data = await composioOrgRequest<unknown>(orgApiKey, path);
+      const projects = projectList(data);
+      if (projects.length) return projects;
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof ComposioApiError) || error.status !== 404) throw error;
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  return [];
+}
+
+async function resolveProjectApiKeyFromOrgKey(
+  orgApiKey: string,
+  preferredId: string,
+  preferredName: string,
+): Promise<DerivedProjectCredential> {
+  if (
+    derivedProjectCredential &&
+    derivedProjectCredential.orgApiKey === orgApiKey &&
+    (!preferredId || derivedProjectCredential.projectId === preferredId)
+  ) {
+    return derivedProjectCredential;
+  }
+
+  const projects = await listOrgProjects(orgApiKey);
+  const selected = chooseProject(projects, preferredId, preferredName);
+  if (!selected) {
+    throw new ComposioApiError(
+      "Composio organization key is valid but no project was available. Create or select a project before connecting apps.",
+      409,
+    );
+  }
+
+  const selectedId = projectId(selected);
+  if (!selectedId) {
+    throw new ComposioApiError(
+      "Composio returned a project without an identifier",
+      502,
+      selected,
+    );
+  }
+
+  let apiKey = extractProjectApiKey(selected);
+  if (!apiKey) {
+    const details = await composioOrgRequest<unknown>(
+      orgApiKey,
+      `/org/owner/project/${encodeURIComponent(selectedId)}`,
+    );
+    apiKey = extractProjectApiKey(details);
+  }
+  if (!apiKey) {
+    throw new ComposioApiError(
+      `Composio project ${projectName(selected) || selectedId} did not expose a project API key to the organization token`,
+      409,
+    );
+  }
+
+  derivedProjectCredential = { orgApiKey, projectId: selectedId, apiKey };
+  return derivedProjectCredential;
+}
+
 async function sessionExists(apiKey: string, sessionId: string): Promise<boolean> {
   if (!sessionId) return false;
   try {
@@ -124,28 +363,36 @@ async function sessionExists(apiKey: string, sessionId: string): Promise<boolean
     );
     return true;
   } catch (error) {
-    if (error instanceof ComposioApiError && error.status === 404) return false;
+    if (
+      error instanceof ComposioApiError &&
+      (error.status === 401 || error.status === 403 || error.status === 404)
+    ) {
+      return false;
+    }
     throw error;
   }
 }
 
-export async function ensureComposioSession(): Promise<ComposioSession> {
-  const config = await getComposioConfig();
-  if (!config.configured) {
-    throw new ComposioApiError(
-      "Composio is not configured. Add COMPOSIO_API_KEY in Render or save a project API key in Settings.",
-      503,
-    );
-  }
-
+async function ensureSessionForProjectKey(
+  apiKey: string,
+  config: ComposioConfig,
+  credentialSource: "project" | "organization",
+  resolvedProjectId?: string,
+): Promise<ComposioSession> {
   const candidate = processSessionId || config.storedSessionId;
-  if (candidate && (await sessionExists(config.apiKey, candidate))) {
+  if (candidate && (await sessionExists(apiKey, candidate))) {
     processSessionId = candidate;
-    return { sessionId: candidate, apiKey: config.apiKey, userId: config.userId };
+    return {
+      sessionId: candidate,
+      apiKey,
+      userId: config.userId,
+      credentialSource,
+      ...(resolvedProjectId ? { projectId: resolvedProjectId } : {}),
+    };
   }
 
   const created = await composioRequest<{ session_id?: string }>(
-    config.apiKey,
+    apiKey,
     "/tool_router/session",
     {
       method: "POST",
@@ -153,21 +400,88 @@ export async function ensureComposioSession(): Promise<ComposioSession> {
     },
   );
 
-  const sessionId = String(created.session_id || "").trim();
+  const sessionId = clean(created.session_id);
   if (!sessionId) {
     throw new ComposioApiError("Composio created a session without a session_id", 502, created);
   }
 
   processSessionId = sessionId;
   try {
-    await setCredentials("composio", { session_id: sessionId });
+    await setCredentials("composio", {
+      session_id: sessionId,
+      ...(resolvedProjectId ? { project_id: resolvedProjectId } : {}),
+    });
   } catch {
     // Environment-only deployments can still keep the session in process memory.
   }
 
-  return { sessionId, apiKey: config.apiKey, userId: config.userId };
+  return {
+    sessionId,
+    apiKey,
+    userId: config.userId,
+    credentialSource,
+    ...(resolvedProjectId ? { projectId: resolvedProjectId } : {}),
+  };
+}
+
+export async function ensureComposioSession(): Promise<ComposioSession> {
+  const config = await getComposioConfig();
+  if (!config.configured) {
+    throw new ComposioApiError(
+      "Composio is not configured. Add a Composio project or organization API key in Render or Settings.",
+      503,
+    );
+  }
+
+  let lastAuthError: unknown = null;
+  for (const apiKey of config.projectApiKeys) {
+    try {
+      return await ensureSessionForProjectKey(apiKey, config, "project");
+    } catch (error) {
+      if (
+        error instanceof ComposioApiError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        lastAuthError = error;
+        processSessionId = "";
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  for (const orgApiKey of config.orgApiKeys) {
+    try {
+      const resolved = await resolveProjectApiKeyFromOrgKey(
+        orgApiKey,
+        config.projectId,
+        config.projectName,
+      );
+      return await ensureSessionForProjectKey(
+        resolved.apiKey,
+        config,
+        "organization",
+        resolved.projectId,
+      );
+    } catch (error) {
+      if (
+        error instanceof ComposioApiError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        lastAuthError = error;
+        processSessionId = "";
+        derivedProjectCredential = null;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (lastAuthError instanceof Error) throw lastAuthError;
+  throw new ComposioApiError("No usable Composio credential was found", 503);
 }
 
 export function clearComposioSessionCache(): void {
   processSessionId = "";
+  derivedProjectCredential = null;
 }
