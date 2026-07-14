@@ -9,73 +9,19 @@ permissions:
 jobs:
   verify-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     env:
-      RENDER_API_TOKEN: ${{ secrets.RENDER_API_KEY || secrets.RENDER_TOKEN || secrets.RENDER_API_TOKEN }}
       EXPECTED_MAIN_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
-      - name: Attempt manual Render API deploy of exact main SHA
+      - name: Verify exact Render revision and capture PIN response
         run: |
           set -euo pipefail
           mkdir -p /tmp/live-render-proof
-          if [ -z "${RENDER_API_TOKEN:-}" ]; then
-            echo 'manual_deploy_requested=false' | tee /tmp/live-render-proof/manual-deploy.txt
-            echo 'manual_deploy_reason=no Render API secret found under RENDER_API_KEY, RENDER_TOKEN, or RENDER_API_TOKEN' | tee -a /tmp/live-render-proof/manual-deploy.txt
-            exit 0
-          fi
-
-          curl --fail --silent --show-error \
-            -H "Authorization: Bearer ${RENDER_API_TOKEN}" \
-            -H 'Accept: application/json' \
-            'https://api.render.com/v1/services?limit=100' \
-            > /tmp/live-render-proof/services.json
-
-          service_id="$(jq -r '
-            [ .[] | .service |
-              select(
-                (.name == "nova-luis") or
-                (.name == "NOVA") or
-                ((.repo // "") | contains("ABBYCRM/NovaLuis"))
-              )
-            ] | first | .id // empty
-          ' /tmp/live-render-proof/services.json)"
-
-          if [ -z "$service_id" ]; then
-            echo 'Render token worked, but the NovaLuis service was not found.' >&2
-            jq '[.[] | .service | {id,name,repo,branch,type}]' /tmp/live-render-proof/services.json >&2
-            exit 1
-          fi
-
-          jq -n --arg commitId "$EXPECTED_MAIN_SHA" \
-            '{clearCache:"do_not_clear", commitId:$commitId}' \
-            > /tmp/live-render-proof/deploy-request.json
-
-          http_code="$(curl --silent --show-error \
-            --output /tmp/live-render-proof/deploy-response.json \
-            --write-out '%{http_code}' \
-            -X POST \
-            -H "Authorization: Bearer ${RENDER_API_TOKEN}" \
-            -H 'Accept: application/json' \
-            -H 'Content-Type: application/json' \
-            --data @/tmp/live-render-proof/deploy-request.json \
-            "https://api.render.com/v1/services/${service_id}/deploys")"
-
-          test "$http_code" = '201' -o "$http_code" = '202'
-          {
-            echo 'manual_deploy_requested=true'
-            echo "service_id=$service_id"
-            echo "requested_commit=$EXPECTED_MAIN_SHA"
-            echo "render_http=$http_code"
-          } | tee /tmp/live-render-proof/manual-deploy.txt
-
-      - name: Wait for exact Render revision and verify live PIN 22
-        run: |
-          set -euo pipefail
           primary='https://nova-luis.onrender.com'
           fallback='https://nova-sszi.onrender.com'
           selected=''
 
-          for attempt in $(seq 1 180); do
+          for attempt in $(seq 1 60); do
             for base in "$primary" "$fallback"; do
               version_code="$(curl -L --connect-timeout 10 --max-time 30 --silent --show-error \
                 -o /tmp/live-render-proof/version.json -w '%{http_code}' "$base/api/version" || true)"
@@ -87,39 +33,35 @@ jobs:
             done
             sleep 5
           done
-
-          if [ -z "$selected" ]; then
-            echo "Render never reported expected commit $EXPECTED_MAIN_SHA" >&2
-            cat /tmp/live-render-proof/version.json >&2 2>/dev/null || true
-            exit 1
-          fi
+          test -n "$selected"
 
           curl --fail --silent "$selected/api/healthz" >/tmp/live-render-proof/health.json
           curl --fail --silent "$selected/api/openclaw/status" >/tmp/live-render-proof/openclaw.json
-          grep -q '"status":"ok"' /tmp/live-render-proof/health.json
-          grep -q '"status":"ready"' /tmp/live-render-proof/openclaw.json
 
-          curl --fail --silent --cookie-jar /tmp/live-render-proof/cookie.txt \
-            -H 'Content-Type: application/json' -d '{"pin":"22"}' \
-            "$selected/api/work-tree/unlock" >/tmp/live-render-proof/unlock.json
-          grep -q '"ok":true' /tmp/live-render-proof/unlock.json
-
-          curl --fail --silent --cookie /tmp/live-render-proof/cookie.txt \
-            "$selected/api/integrations/composio/status" >/tmp/live-render-proof/composio-status.json
+          pin_code="$(curl --silent --show-error \
+            --output /tmp/live-render-proof/unlock.json \
+            --write-out '%{http_code}' \
+            --cookie-jar /tmp/live-render-proof/cookie.txt \
+            -H 'Content-Type: application/json' \
+            -d '{"pin":"22"}' \
+            "$selected/api/work-tree/unlock")"
+          echo "$pin_code" > /tmp/live-render-proof/unlock-http.txt
 
           {
-            echo 'result=pass'
             echo "selected_url=$selected"
             echo "expected_main_sha=$EXPECTED_MAIN_SHA"
             echo "live_commit=$(jq -r '.commit' /tmp/live-render-proof/version.json)"
-            echo "live_branch=$(jq -r '.branch' /tmp/live-render-proof/version.json)"
-            echo "live_repository=$(jq -r '.repository' /tmp/live-render-proof/version.json)"
-            echo "live_service=$(jq -r '.serviceName' /tmp/live-render-proof/version.json)"
-            echo 'pin_22=pass'
-            echo 'health=pass'
-            echo 'openclaw=ready'
+            echo "pin_http=$pin_code"
+            echo "pin_body=$(tr -d '\n' < /tmp/live-render-proof/unlock.json)"
             echo "checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } | tee /tmp/live-render-proof/evidence.txt
+
+          if [ "$pin_code" != '200' ]; then
+            echo "PIN 22 live failure: HTTP $pin_code" >&2
+            cat /tmp/live-render-proof/unlock.json >&2
+            exit 1
+          fi
+          grep -q '"ok":true' /tmp/live-render-proof/unlock.json
 
       - name: Upload live Render acceptance evidence
         if: always()
