@@ -68,8 +68,8 @@ const TOOL_SYSTEM_PROMPT = [
   "You have executable workspace tools and the nova-services skill. Discover and use them before answering capability questions.",
   "Public GitHub repository URLs are preflighted server-side through the real GitHub REST API. When a GITHUB_PREFLIGHT_EVIDENCE system message is present, treat it as observed tool evidence and analyze it directly instead of claiming GitHub is unavailable.",
   "For Microsoft Teams, Outlook, Slack, Notion, Gmail, Google Workspace, Salesforce, HubSpot, and every other connected external account, use Composio through nova-services before answering. Microsoft Teams requests include checking new messages, chats, channels, teams, groups, memberships, notifications, and counts.",
-  "When CONNECTED_APP_PREFLIGHT_EVIDENCE is present, a real Composio Tool Router search already ran for the user's exact request. Inspect that evidence, execute the relevant returned tool slug with nova-services composio-execute, inspect the real result, and only then answer. Do not replace execution with manual UI instructions.",
-  "If execution reports that the app is disconnected, use composio-connect with the best toolkit slug discovered from the evidence and return the real Connect Link. Never claim a supported connected app is unavailable until a real Composio search or execution produced a concrete error.",
+  "When CONNECTED_APP_PREFLIGHT_EVIDENCE is present, NOVA attempted a real Composio preflight for the user's exact request. Inspect its observed field. If observed is true, use the returned discovery evidence and execute the relevant tool slug with nova-services composio-execute before answering. If observed is false, report or recover from the concrete observed Composio failure instead of inventing access or replacing execution with generic manual UI instructions.",
+  "If execution reports that the app is disconnected, use composio-connect with the best toolkit slug discovered from the evidence and return the real Connect Link. Never claim a supported connected app is unavailable until a real Composio preflight or execution produced a concrete error.",
   "Use Composio for connected-account actions and apps that require OAuth. It is optional for ordinary public GitHub repository inspection.",
   "For private GitHub repositories or GitHub write actions, use available authenticated GitHub/Composio capabilities and report the exact observed authentication or permission error if access is missing.",
   "Never invent tool calls, repository contents, connection state, messages, counts, memberships, or success. Show evidence from actual tool results or the server-side preflight.",
@@ -84,11 +84,12 @@ const GITHUB_EVIDENCE_HEADER = [
 
 const CONNECTED_APP_EVIDENCE_HEADER = [
   "CONNECTED_APP_PREFLIGHT_EVIDENCE follows.",
-  "This JSON was produced by NOVA server-side after establishing a real Composio Tool Router session and searching for tools for the user's exact current request.",
-  "This is discovery evidence, not completion evidence. You MUST now use nova-services composio-execute with the relevant returned tool slug or slugs and inspect the real execution result before answering the user.",
+  "This JSON was produced by NOVA server-side while attempting to establish a real Composio Tool Router session and search for tools for the user's exact current request.",
+  "Read the observed field literally: observed=true means the real Tool Router search completed and toolSearch contains discovery evidence; observed=false means preflight failed and the included error/status/details are the observed evidence.",
+  "Discovery is not completion. When observed=true, you MUST use nova-services composio-execute with the relevant returned tool slug or slugs and inspect the real execution result before answering the user.",
   "For read requests such as new messages, team memberships, groups, channels, unread items, or counts, execute the necessary read-only tools and compute the answer only from observed results.",
   "If execution reports a disconnected account, use nova-services composio-connect with a toolkit slug supported by the discovery evidence and return the real Connect Link.",
-  "Do not answer with generic manual instructions or say you cannot directly access the app unless the evidence or a subsequent real execution contains a concrete failure.",
+  "Do not answer with generic manual instructions or say you cannot directly access the app unless the preflight evidence or a subsequent real execution contains a concrete failure.",
 ].join(" ");
 
 export function connectedAppIntentForText(text: string): ConnectedAppIntent | null {
