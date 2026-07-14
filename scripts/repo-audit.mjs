@@ -30,9 +30,9 @@ function run(command, args) {
 }
 
 function gitEntries() {
-  const result = spawnSync("git", ["ls-files", "-s", "-z"], { cwd: root, encoding: "buffer" });
-  if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr?.toString() || "unknown"}`);
-  return result.stdout.toString("utf8").split("\0").filter(Boolean).map((entry) => {
+  const result = spawnSync("git", ["ls-files", "-s", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`git ls-files failed: ${result.error?.message || result.stderr || `status ${result.status}`}`);
+  return (result.stdout || "").split("\0").filter(Boolean).map((entry) => {
     const tab = entry.indexOf("\t");
     const meta = entry.slice(0, tab).split(" ");
     return { mode: meta[0], object: meta[1], stage: meta[2], file: entry.slice(tab + 1) };
@@ -50,9 +50,6 @@ function checkTs(file, text) {
 function checkWorkflowDsl(text) {
   try {
     const body = text.replace(/^\s*export\s+const\s+meta\s*=/, "const meta =");
-    // Parse only. The workflow runtime provides args/phase/agent/pipeline/parallel/log.
-    // Wrapping in an async function makes top-level await/return valid exactly as
-    // they are when this workflow body is executed by its host runtime.
     new Function(`return async function __novaWorkflowDsl__(){\n${body}\n}`);
     return [];
   } catch (error) {
