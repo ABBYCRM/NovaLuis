@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -12,6 +12,36 @@ function positiveInt(value, fallback) {
 function normalizeModelId(value) {
   const raw = String(value || "").trim() || "gpt-4o-mini";
   return raw.replace(/^(?:openai|google|gemini|bitdeer|nova)\//i, "");
+}
+
+function resolveSessionSecret() {
+  if (process.env.SESSION_SECRET) {
+    return { value: process.env.SESSION_SECRET, source: "SESSION_SECRET", stable: true };
+  }
+
+  const stableCandidates = [
+    ["NOVA_SESSION_SEED", process.env.NOVA_SESSION_SEED],
+    ["SUPERNOVA_API_KEY", process.env.SUPERNOVA_API_KEY],
+    ["OPENCLAW_API_KEY", process.env.OPENCLAW_API_KEY],
+    ["DATABASE_URL", process.env.DATABASE_URL],
+    ["OPENAI_API_KEY", process.env.OPENAI_API_KEY],
+    ["GEMINI_API_KEY", process.env.GEMINI_API_KEY],
+    ["BITDEER_API_KEY", process.env.BITDEER_API_KEY],
+  ];
+  const candidate = stableCandidates.find(([, value]) => String(value || "").trim());
+  if (candidate) {
+    const [source, seed] = candidate;
+    const value = createHmac("sha256", String(seed))
+      .update("nova-session-signing-key:v1")
+      .digest("hex");
+    return { value, source, stable: true };
+  }
+
+  return {
+    value: randomBytes(48).toString("hex"),
+    source: "process-random",
+    stable: false,
+  };
 }
 
 const apiPort = positiveInt(process.env.PORT, 8080);
@@ -28,7 +58,7 @@ const sharedInternalKey =
   randomBytes(32).toString("hex");
 const gatewayToken =
   process.env.OPENCLAW_GATEWAY_TOKEN || randomBytes(32).toString("hex");
-const sessionSecret = process.env.SESSION_SECRET || randomBytes(48).toString("hex");
+const sessionSecret = resolveSessionSecret();
 const modelId = normalizeModelId(
   process.env.NOVA_OPENCLAW_MODEL_ID || process.env.WORK_TREE_MODEL,
 );
@@ -42,15 +72,21 @@ if (!fs.existsSync(configPath)) {
 }
 
 if (!process.env.SESSION_SECRET) {
-  console.warn(
-    "start-openclaw: SESSION_SECRET not provided; generated an ephemeral cryptographic session secret for this process. Existing operator cookies will expire on restart.",
-  );
+  if (sessionSecret.stable) {
+    console.warn(
+      `start-openclaw: SESSION_SECRET not provided; derived a domain-separated stable session-signing key from ${sessionSecret.source}. Configure SESSION_SECRET explicitly to decouple session signing from other server credentials.`,
+    );
+  } else {
+    console.warn(
+      "start-openclaw: SESSION_SECRET and all stable server-side seed sources are absent; generated a process-local random session secret. Existing operator cookies will expire on restart and cannot be shared across replicas.",
+    );
+  }
 }
 
 const childEnv = {
   ...process.env,
   PORT: String(apiPort),
-  SESSION_SECRET: sessionSecret,
+  SESSION_SECRET: sessionSecret.value,
   OPENCLAW_GATEWAY_PORT: String(gatewayPort),
   OPENCLAW_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}`,
   OPENCLAW_GATEWAY_TOKEN: gatewayToken,
