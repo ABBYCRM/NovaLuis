@@ -1,0 +1,121 @@
+name: Composio Credential Compatibility CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: composio-auth-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+      - name: Install, typecheck, build, and create production image
+        run: |
+          pnpm install --frozen-lockfile --shamefully-hoist
+          pnpm run typecheck
+          pnpm run build:api
+          docker build --tag nova-composio-auth:ci .
+      - name: Start deterministic fake Composio API
+        run: |
+          cat > /tmp/fake-composio.mjs <<'NODE'
+          import http from 'node:http';
+          import fs from 'node:fs';
+
+          const log = '/tmp/fake-composio-requests.jsonl';
+          function write(entry) {
+            fs.appendFileSync(log, JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n');
+          }
+          function json(res, status, value) {
+            res.writeHead(status, { 'content-type': 'application/json' });
+            res.end(JSON.stringify(value));
+          }
+          const server = http.createServer(async (req, res) => {
+            const chunks = [];
+            for await (const chunk of req) chunks.push(chunk);
+            const body = Buffer.concat(chunks).toString('utf8');
+            write({ method: req.method, url: req.url, xApiKey: req.headers['x-api-key'] || '', xOrgApiKey: req.headers['x-org-api-key'] || '', body });
+
+            if (req.url === '/api/v3.1/org/owner/project/list?limit=100' && req.method === 'GET') {
+              if (req.headers['x-org-api-key'] !== 'oak_ci_org') return json(res, 401, { error: { message: 'wrong org header' } });
+              return json(res, 200, { items: [{ id: 'proj_ci', name: 'NOVA' }] });
+            }
+            if (req.url === '/api/v3.1/org/owner/project/proj_ci' && req.method === 'GET') {
+              if (req.headers['x-org-api-key'] !== 'oak_ci_org') return json(res, 401, { error: { message: 'wrong org header' } });
+              return json(res, 200, { id: 'proj_ci', name: 'NOVA', api_keys: [{ key: 'ak_ci_project' }] });
+            }
+            if (req.url === '/api/v3.1/tool_router/session' && req.method === 'POST') {
+              if (req.headers['x-api-key'] !== 'ak_ci_project') return json(res, 401, { error: { message: 'wrong project header' } });
+              return json(res, 200, { session_id: 'session_ci' });
+            }
+            if (req.url === '/api/v3.1/tool_router/session/session_ci' && req.method === 'GET') {
+              if (req.headers['x-api-key'] !== 'ak_ci_project') return json(res, 401, { error: { message: 'wrong project header' } });
+              return json(res, 200, { session_id: 'session_ci' });
+            }
+            if (req.url?.startsWith('/api/v3.1/tool_router/session/session_ci/toolkits?') && req.method === 'GET') {
+              if (req.headers['x-api-key'] !== 'ak_ci_project') return json(res, 401, { error: { message: 'wrong project header' } });
+              return json(res, 200, { items: [] });
+            }
+            return json(res, 404, { error: { message: 'not found', url: req.url } });
+          });
+          server.listen(19090, '0.0.0.0', () => console.log('fake Composio listening on 19090'));
+          NODE
+          node /tmp/fake-composio.mjs >/tmp/fake-composio.log 2>&1 &
+          echo $! >/tmp/fake-composio.pid
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:19090/not-found >/dev/null 2>&1; then break; fi
+            if grep -q 'listening' /tmp/fake-composio.log; then break; fi
+            sleep 1
+          done
+      - name: Prove an organization token stored as COMPOSIO_API_KEY resolves to a project key
+        run: |
+          set -euo pipefail
+          docker run --detach --name nova-composio-auth \
+            --add-host=host.docker.internal:host-gateway \
+            -e SESSION_SECRET=ci-session-secret \
+            -e NOVA_WORK_TREE_PIN=22 \
+            -e COMPOSIO_API_KEY=oak_ci_org \
+            -e COMPOSIO_BASE_URL=http://host.docker.internal:19090/api/v3.1 \
+            -p 18082:8080 nova-composio-auth:ci
+          trap 'docker logs nova-composio-auth || true; docker rm --force nova-composio-auth || true; kill $(cat /tmp/fake-composio.pid) 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:18082/api/healthz >/tmp/health.json; then break; fi
+            sleep 1
+          done
+          curl --fail --silent --cookie-jar /tmp/cookie.txt \
+            -H 'Content-Type: application/json' -d '{"pin":"22"}' \
+            http://127.0.0.1:18082/api/work-tree/unlock >/tmp/unlock.json
+          curl --fail --silent --cookie /tmp/cookie.txt \
+            http://127.0.0.1:18082/api/integrations/composio/status >/tmp/composio-status.json
+
+          grep -q '"configured":true' /tmp/composio-status.json
+          grep -q '"ready":true' /tmp/composio-status.json
+          grep -q '"credentialSource":"organization"' /tmp/composio-status.json
+          grep -q '"projectId":"proj_ci"' /tmp/composio-status.json
+          grep -q '"xOrgApiKey":"oak_ci_org"' /tmp/fake-composio-requests.jsonl
+          grep -q '"xApiKey":"ak_ci_project"' /tmp/fake-composio-requests.jsonl
+      - name: Upload Composio auth evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composio-auth-compatibility-proof
+          path: |
+            /tmp/composio-status.json
+            /tmp/fake-composio-requests.jsonl
+            /tmp/fake-composio.log
+          if-no-files-found: warn
+          retention-days: 7
