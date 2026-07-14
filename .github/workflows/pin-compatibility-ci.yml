@@ -14,7 +14,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,38 +30,69 @@ jobs:
           pnpm run typecheck
           pnpm run build:api
           docker build --tag nova-pin-compat:ci .
-      - name: Prove session self-heal, canonical PIN, and deployment revision
+      - name: Prove stable fallback session signing across independent replicas
         run: |
           set -euo pipefail
-          # Intentionally do NOT provide SESSION_SECRET. The production supervisor
-          # must generate a cryptographically random process-local signing secret.
-          docker run --detach --name nova-pin-compat \
-            -e NOVA_WORK_TREE_PIN=999999 \
-            -e RENDER=true \
-            -e RENDER_GIT_COMMIT=ci-render-revision \
-            -e RENDER_GIT_BRANCH=main \
-            -e RENDER_GIT_REPO_SLUG=ABBYCRM/NovaLuis \
-            -e RENDER_SERVICE_ID=srv-ci \
-            -e RENDER_SERVICE_NAME=nova-luis \
-            -p 18081:8080 nova-pin-compat:ci
-          trap 'docker logs nova-pin-compat || true; docker rm --force nova-pin-compat || true' EXIT
-          for attempt in $(seq 1 120); do
-            if curl --fail --silent http://127.0.0.1:18081/api/healthz >/tmp/health.json; then break; fi
-            sleep 1
+          # Neither replica receives SESSION_SECRET. Both receive the same stable
+          # server-side secret, so the supervisor must derive the same domain-
+          # separated session-signing key without exposing or directly reusing it.
+          for spec in 'nova-pin-a:18081' 'nova-pin-b:18083'; do
+            name="${spec%%:*}"
+            port="${spec##*:}"
+            docker run --detach --name "$name" \
+              -e SUPERNOVA_API_KEY=ci-shared-server-secret \
+              -e NOVA_WORK_TREE_PIN=999999 \
+              -e RENDER=true \
+              -e RENDER_GIT_COMMIT=ci-render-revision \
+              -e RENDER_GIT_BRANCH=main \
+              -e RENDER_GIT_REPO_SLUG=ABBYCRM/NovaLuis \
+              -e RENDER_SERVICE_ID=srv-ci \
+              -e RENDER_SERVICE_NAME=nova-luis \
+              -p "${port}:8080" nova-pin-compat:ci
           done
+          cleanup() {
+            docker logs nova-pin-a || true
+            docker logs nova-pin-b || true
+            docker rm --force nova-pin-a nova-pin-b || true
+          }
+          trap cleanup EXIT
+
+          for port in 18081 18083; do
+            for attempt in $(seq 1 120); do
+              if curl --fail --silent "http://127.0.0.1:${port}/api/healthz" >/tmp/health-${port}.json; then break; fi
+              sleep 1
+            done
+          done
+
           curl --fail --silent http://127.0.0.1:18081/api/version >/tmp/version.json
           grep -q '"commit":"ci-render-revision"' /tmp/version.json
           grep -q '"branch":"main"' /tmp/version.json
           grep -q '"repository":"ABBYCRM/NovaLuis"' /tmp/version.json
           grep -q '"render":true' /tmp/version.json
+
+          # Mint the canonical PIN cookie on replica A.
           curl --fail --silent --cookie-jar /tmp/canonical-cookie.txt \
             -H 'Content-Type: application/json' -d '{"pin":"22"}' \
             http://127.0.0.1:18081/api/work-tree/unlock >/tmp/canonical.json
           grep -q '"ok":true' /tmp/canonical.json
+          session_token="$(awk '$6 == "wt_session" { print $7 }' /tmp/canonical-cookie.txt)"
+          test -n "$session_token"
+
+          # The exact cookie minted by replica A must authenticate on independent
+          # replica B. Cookies ignore TCP ports; the explicit header avoids local
+          # HTTP Secure-cookie transport semantics from weakening this test.
+          cross_code="$(curl --silent --output /tmp/cross-replica.json --write-out '%{http_code}' \
+            -H "Cookie: wt_session=${session_token}" \
+            http://127.0.0.1:18083/api/integrations/composio/status)"
+          test "$cross_code" = '200'
+          grep -q '"configured":false' /tmp/cross-replica.json
+
+          # The deployment override remains an additional accepted PIN.
           curl --fail --silent --cookie-jar /tmp/override-cookie.txt \
             -H 'Content-Type: application/json' -d '{"pin":"999999"}' \
-            http://127.0.0.1:18081/api/work-tree/unlock >/tmp/override.json
+            http://127.0.0.1:18083/api/work-tree/unlock >/tmp/override.json
           grep -q '"ok":true' /tmp/override.json
+
           wrong_code="$(curl --silent --output /tmp/wrong.json --write-out '%{http_code}' \
             -H 'Content-Type: application/json' -d '{"pin":"000000"}' \
             http://127.0.0.1:18081/api/work-tree/unlock)"
