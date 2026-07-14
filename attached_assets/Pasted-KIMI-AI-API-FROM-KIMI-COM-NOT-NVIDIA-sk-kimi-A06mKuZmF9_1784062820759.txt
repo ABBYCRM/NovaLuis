@@ -1,0 +1,366 @@
+KIMI AI API FROM KIMI.COM NOT NVIDIA 
+sk-kimi-A06mKuZmF9BWIQqoycpaWNgG2s9b5Sr2EdgsUMML8PoEPm7v73BIIHuhq2i1GIKe
+scrapingbee.com
+T3BTBG9EZWT70BAIJAEUWJXVFC8DSG80SMYT2UGBO735I4V8J4MOBGO9DVBWA1MCIJSBG18NF88A7511 
+© 2026 Cloudflare, Inc.
+Need more help?
+Good afternoon.
+What are we doing today?
+Chats are recorded to improve the service and are processed in accordance with our Privacy Policy.
+04:00
+Token created successfully
+NEW TOKEN FOR AURA
+Account ID
+c833bc68502ad32de05030fec1e82810
+Important: Copy your token nowThis is the only time you will see this token. Make sure to copy it and store it securely. You will not be able to retrieve it later.
+Your API Token
+cfat_MyisxbzTO4HJzctsOAizwvqxDiAxDyzvmrPCEE6cfcb926e7
+Use these S3-compatible credentials with the R2 API or any S3 client.
+Access Key ID
+095245748b0d2cd4d4185e325eab85ac
+Secret Access Key
+e0146d11028bc9c3ef0af9de73b318ffff381825bd7327151d06bf2c7cafc4a0
+S3 API endpoint
+https://c833bc68502ad32de05030fec1e82810.r2.cloudflarestorage.com
+Example Usage
+curl -X GET "https://api.cloudflare.com/client/v4/accounts/c833bc68502ad32de05030fec1e82810/tokens/verify" \
+    -H "Authorization: Bearer cfat_MyisxbzTO4HJzctsOAizwvqxDiAxDy
+
+ORG TOKEN FOR COMPOSIO oak_R3of0RLfLbm1yz4cRsNw
+
+CLOUDFARE
+cfut_Afpj5ziUlDWQoYFKPkyPzvptNHbAQQLXfCHT6PH99e4340f5 curl "https://api.cloudflare.com/client/v4/user/tokens/verify" \ -H "Authorization: Bearer cfut_Afpj5ziUlDWQoYFKPkyPzvptNHbAQQLXfCHT6PH99e4340f5"
+
+firecrwal
+
+fc-b4f8c7cf999f4764a2b399db56c05e3e
+steel.dev
+
+ste-nnQtMB1MhlY8Y6DCWw1LEFRWsjvXAEHl0zbGcHUTaUYKYvwMjX9wVYvoo3d5cyVUe97k6uP1r6YaDx4Ca3gIOBjw5MCuz1VxcAi 
+Discord bot token 
+MTUxODg0NDI0MjIyNTc5MTA5Nw.GJBvrt.-qfRHm14M5hZbHgAObu_FoVXjBOZymXPOF9e8k
+
+SCRAPFLY
+API=
+
+ scp-live-9fa7998a539e42ddbd9c2c5375277b53
+MCP_URL = https://mcp.scrapfly.io/mcp?key=scp-live-9fa7998a539e42ddbd9c2c5375277b53
+
+CLOUDFARE.COM
+
+ACCOUNT ID =90fe3671d44f855f07d7bcfddaed3887
+API =cfat_p7GXaBiw6aoUmYgaWbeqWD0Vz8GFzCcOWTWhNpQe69b85dc6
+ACCESS KEY ID =d02b78dfb7485d05755e7fc294a5145d
+SECRET ACCESS KEY ID =1044af826f899bae86affaedb4b9692d4d2a09ba62092766717bac0c2040a179
+S3 API ENDPOINT =https://90fe3671d44f855f07d7bcfddaed3887.r2.cloudflarestorage.com
+
+
+-------------------------------------------------------------------------------
+ort Security Issues
+Privacy Policy
+
+© 2026 Cloudflare, Inc.
+Need more help?
+Good evening.
+What are we doing today?
+Chats are recorded to improve the service and are processed in accordance with our Privacy Policy.
+Token created successfully
+OPUS-KILLER
+Account ID
+90fe3671d44f855f07d7bcfddaed3887
+Important: Copy your token nowThis is the only time you will see this token. Make sure to copy it and store it securely. You will not be able to retrieve it later.
+Your API Token
+cfat_p7GXaBiw6aoUmYgaWbeqWD0Vz8GFzCcOWTWhNpQe69b85dc6
+Use these S3-compatible credentials with the R2 API or any S3 client.
+Access Key ID
+d02b78dfb7485d05755e7fc294a5145d
+Secret Access Key
+1044af826f899bae86affaedb4b9692d4d2a09ba62092766717bac0c2040a179
+S3 API endpoint
+https://90fe3671d44f855f07d7bcfddaed3887.r2.cloudflarestorage.com
+Example Usage
+curl -X GET "https://api.cloudflare.com/client/v4/accounts/90fe3671d44f855f07d7bcfddaed3887/tokens/verify" \
+    -H "Authorization: Bearer cfat_p7GXaBiw6aoUmYgaWbeqWD0Vz8GFzCcOWTWhNpQe69b85dc6"
+--------------------------------------------------------------------
+
+SCREENSHOTONE_API_KEY
+Access Key = 1c02b82d51b5fb0cb656
+Secret Key = f00b62342ba51b0b6ded
+
+composio
+ak_xh7J8BHdQStDk9awKotj
+
+GEMINI_API_KEY 
+AQ.Ab8RN6IL5hy2v4bFd2cbHtKAuMCkcy_YnkQB7c1D2kE-qp0gvw
+
+
+OPENROUTER_API_KEY
+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
+OPENAI_API_KEY
+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
+
+EMBEDDINGS_API_KEY
+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 
+
+
+MASSIVE_API_KEY
+333JKrGiNmxdTI49KI1zBORNlWKkeRn_
+
+PINECONE_API_KEY
+pcsk_2fnCTc_ipfLmPh3NYSuxAzvskdkduf8Ctz7kRrvtnK6bdX3SrXLV5KcWyjwhdHrUcbAf6
+PINECONE_INDEX 
+
+COMPOSIO_API_KEY
+ak_J31SO5IbwEMo7jI-SufX
+EXA API 
+0f120136-25c1-483a-85cb-63a035ab3b0a
+LANGCHAIN 
+API
+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
+
+INNGEST
+https://inn.gs/e/7cuhgcLMp4tMtO6Wm4wIwwYUd-0jWO5VcQqUQtJC-I1wnavcO4JknX1ySBtcuofpIbT9vU6MpqU8rJUPSqsrqQ
+// transform accepts the incoming JSON payload from your
+// webhook and must return an object that is in the Inngest event format.
+//
+// The raw argument is the original stringified request body. This is useful
+// when you want to perform HMAC validation within your Inngest functions.
+function transform(evt, headers = {}, queryParams = {}, raw = "") {
+  return {
+    // Rename this webhook to give the events a unique name,
+    // or use a field from the incoming event as the event name.
+    name: "webhook/request.received",
+    data: evt,
+  };
+};
+{
+  "example": "paste the incoming JSON payload here to test your transform"
+}
+{
+  "name": "webhook/request.received",
+  "data": {
+    "example": "paste the incoming JSON payload here to test your transform"
+  }
+}
+https://api-docs.inngest.com/
+# Inngest API
+
+
+sk-inn-apiJQCVoidqNT+fwplLfCGjIurnzT+64kB+KeIbTRtQYxEEJXw6PpYUkDpt0GC5DJUZOw4VKiUoaa5ZKQeqr09RPg 
+
+
+- [API Overview](/): Complete reference documentation for the Inngest REST API.
+- [Authentication](/authentication): How to authenticate with the Inngest REST API.
+- v1
+  - [v1 REST API](/v1)
+
+  - **Events**
+  - [List events](/v1/events/ListEvents): Fetches recent events from your environment.
+  - [Get an event](/v1/events/GetEvent): Retrieve a single event within your environment, given its internal ID
+  - [List event function runs](/v1/events/ListEventRuns): Returns function runs initialized by the given event
+
+  - **Function runs**
+  - [Get a function run](/v1/function-runs/GetRun): Returns a single function run by its run ID
+  - [Cancel a function run](/v1/function-runs/CancelRun): Cancels a running function immediately.  No new steps will run after a function is cancelled.
+  - [Fetch function run jobs](/v1/function-runs/GetRunJobs): An endpoint to fetch a subset of the function run's jobs within the function_id queue, in order of earliest to latest. This primarily allows you to see the order of the run's jobs within the function queue.
+
+A single function enqueues all function run jobs wihtin the same queue.  This endpoint fetches a subset of jobs for a given function run.
+
+This endpoint is rate limited and cached for 5 seconds.
+
+  - **Signals**
+  - [Resume signal](/v1/signals/ResumeSignal): Sends data to resume a given signal
+
+  - **Cancellations**
+  - [List cancellations](/v1/cancellations/ListCancellations): Returns all cancellations in your environment
+  - [Create a cancellation](/v1/cancellations/CreateCancellation): Creates a bulk cancellation, cancelling all functions in the given time range matching an optional expression
+  - [Delete a cancellation](/v1/cancellations/DeleteCancellation): Delete a cancellation, preventing the cancellation from stopping function runs between the given dates with a given expression.
+
+  - **Webhooks**
+  - [Get webhooks](/v1/webhooks/ListWebhooks): Get all webhook endpoints in the given environment.
+  - [Create webhook](/v1/webhooks/CreateWebhook): Create a new webhook endpoint with the given configuration.
+  - [Get webhook](/v1/webhooks/GetWebhook): Get a webhook endpoint's configuration
+  - [Delete webhook](/v1/webhooks/DeleteWebhook): Delete a webhook endpoint
+  - [Update webhook](/v1/webhooks/UpdateWebhook): Update a webhook endpoint's configuration
+- v2
+
+  - **Account**
+  - [Get account](/v2/account/FetchAccount): Returns the account for the authenticated user
+
+  - **Functions**
+  - [Invoke function](/v2/functions/InvokeFunction): Invokes a function, executing the function either asynchronously or synchronously based on the mode parameter in the request body
+
+  - **Apps**
+  - [Sync app](/v2/apps/SyncApp): Sync an app at the provided URL.
+
+  - **Webhooks**
+  - [List webhooks](/v2/webhooks/ListWebhooks): Lists all webhooks in the specified environment
+  - [Create webhook](/v2/webhooks/CreateWebhook): Creates a new webhook for receiving events
+
+  - **Environments**
+  - [List environments](/v2/environments/FetchAccountEnvs): List of all custom environments.
+  - [Create environment](/v2/environments/CreateEnv): Create custom environment
+  - [Update environment](/v2/environments/PatchEnv): Partially updates an environment. Only the provided fields will be modified.
+
+  - **Runs**
+  - [Get event runs](/v2/runs/GetEventRuns): Lists function runs triggered by a specific event
+  - [Get function run](/v2/runs/GetFunctionRun): Fetches the canonical run summary for a single function run
+  - [Get function trace](/v2/runs/GetFunctionTrace): Fetches the trace tree for a single function run
+
+  - **Keys**
+  - [List account event keys](/v2/keys/FetchAccountEventKeys): Lists event keys for a specific account, optionally filtered by environment. If the environment header isn't specified, this returns the default production environment's keys.
+  - [List account signing keys](/v2/keys/FetchAccountSigningKeys): Lists signing keys for a specific account, optionally filtered by environment.  If the environment header isn't specified, this returns the default production environment's keys.
+
+  - **Partner API**
+  - [List partner accounts](/v2/partner-api/FetchPartnerAccounts): Lists sub-accounts (if you have partner access)
+  - [Create partner account](/v2/partner-api/CreatePartnerAccount): Creates a sub-account (if you have partner access)
+
+
+HELICONE:
+sk-helicone-ys2ngti-3y7egdy-xmhpcpi-2svxyiy
+
+TAVILY:
+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
+https://mcp.tavily.com/mcp/?tavilyApiKey=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
+
+E2B:
+https://e2b.dev/dashboard/luiss-default-team-b016/keys
+e2b_9ea5e58ac0a51557965867d5471a75e0a723b95a
+
+OPEN ROUTER AI 
+
+ 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
+
+import { OpenRouter } from "@openrouter/sdk";
+
+const openrouter = new OpenRouter({
+  apiKey: "<OPENROUTER_API_KEY>"
+});
+
+// Stream the response to get reasoning tokens in usage
+const stream = await openrouter.chat.send({
+  model: "qwen/qwen3.7-plus",
+  messages: [
+    {
+      role: "user",
+      content: "How many r's are in the word 'strawberry'?"
+    }
+  ],
+  stream: true
+});
+
+let response = "";
+for await (const chunk of stream) {
+  const content = chunk.choices[0]?.delta?.content;
+  if (content) {
+    response += content;
+    process.stdout.write(content);
+  }
+
+  // Usage information comes in the final chunk
+  if (chunk.usage) {
+    console.log("\nReasoning tokens:", chunk.usage.reasoningTokens);
+  }
+}
+curl -N https://openrouter.ai/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+  -d '{
+  "model": "qwen/qwen3.7-plus",
+  "stream": true,
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ]
+}'
+
+import { OpenRouter } from "@openrouter/sdk";
+
+const openrouter = new OpenRouter({
+  apiKey: "<OPENROUTER_API_KEY>"
+});
+
+// Stream the response to get reasoning tokens in usage
+const stream = await openrouter.chat.send({
+  model: "x-ai/grok-build-0.1",
+  messages: [
+    {
+      role: "user",
+      content: "How many r's are in the word 'strawberry'?"
+    }
+  ],
+  stream: true
+});
+
+let response = "";
+for await (const chunk of stream) {
+  const content = chunk.choices[0]?.delta?.content;
+  if (content) {
+    response += content;
+    process.stdout.write(content);
+  }
+
+  // Usage information comes in the final chunk
+  if (chunk.usage) {
+    console.log("\nReasoning tokens:", chunk.usage.reasoningTokens);
+  }
+}
+
+curl -N https://openrouter.ai/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+  -d '{
+  "model": "x-ai/grok-build-0.1",
+  "stream": true,
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ]
+}'
+x-ai/grok-4.3
+import { OpenRouter } from "@openrouter/sdk";
+
+const openrouter = new OpenRouter({
+  apiKey: "<OPENROUTER_API_KEY>"
+});
+
+// Stream the response to get reasoning tokens in usage
+const stream = await openrouter.chat.send({
+  model: "x-ai/grok-4.3",
+  messages: [
+    {
+      role: "user",
+      content: "How many r's are in the word 'strawberry'?"
+    }
+  ],
+  stream: true
+});
+
+let response = "";
+for await (const chunk of stream) {
+  const content = chunk.choices[0]?.delta?.content;
+  if (content) {
+    response += content;
+    process.stdout.write(content);
+  }
+
+  // Usage information comes in the final chunk
+  if (chunk.usage) {
+    console.log("\nReasoning tokens:", chunk.usage.reasoningTokens);
+  }
+}
+
+curl -N https://openrouter.ai/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+  -d '{
+  "model": "x-ai/grok-4.3",
+  "stream": true,
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ]
+}'
+they need to land in Render's env vars, not in the repo 
+
+COMPOSIO
+ak_4QW_8IDyOBqp1sCS6-3y
+
+
