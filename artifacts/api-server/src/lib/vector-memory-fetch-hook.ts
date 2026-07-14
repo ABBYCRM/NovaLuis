@@ -8,6 +8,7 @@ import {
 const ORIGINAL_FETCH = globalThis.fetch.bind(globalThis);
 const CONTEXT_MARKER = "NOVA_VECTOR_MEMORY_CONTEXT";
 const REPOSITORY_SCOPE = process.env.RENDER_GIT_REPO_SLUG || "ABBYCRM/NovaLuis";
+type FetchInput = Parameters<typeof globalThis.fetch>[0];
 
 const gatewayOrigins = new Set(
   [
@@ -31,7 +32,7 @@ interface GatewayBody {
   [key: string]: unknown;
 }
 
-function requestUrl(input: RequestInfo | URL): string {
+function requestUrl(input: FetchInput): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
   return input.url;
@@ -165,7 +166,7 @@ export function installVectorMemoryFetchHook(): void {
   if ((globalThis as typeof globalThis & { __novaVectorMemoryFetchHook?: boolean }).__novaVectorMemoryFetchHook) return;
   (globalThis as typeof globalThis & { __novaVectorMemoryFetchHook?: boolean }).__novaVectorMemoryFetchHook = true;
 
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  globalThis.fetch = async (input: FetchInput, init?: RequestInit): Promise<Response> => {
     const url = requestUrl(input);
     if (!isOpenClawChat(url) || typeof init?.body !== "string") {
       return ORIGINAL_FETCH(input, init);
@@ -198,7 +199,7 @@ export function installVectorMemoryFetchHook(): void {
       });
       const context = formatVectorMemoryContext(hits);
       if (context) parsed.messages = insertSystemContext(parsed.messages, context);
-      await captureDispatchInput(userText, sessionKey, missionId).catch(() => undefined);
+      void captureDispatchInput(userText, sessionKey, missionId).catch(() => undefined);
     } catch {
       // Memory is an enhancement, never a reason to make OpenClaw unavailable.
     }
