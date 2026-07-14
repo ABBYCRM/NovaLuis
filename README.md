@@ -1,6 +1,6 @@
 # NOVA
 
-NOVA is a personal AI assistant, connected-service hub, and persistent Work-Tree mission interface. The production backend embeds the **official OpenClaw runtime** as its local agent control plane and uses **Composio** as the dynamic connected-app tool layer.
+NOVA is a personal AI assistant, connected-service hub, and persistent Work-Tree mission interface. The production backend embeds the **official OpenClaw runtime** as its local agent control plane, uses a deterministic server-side GitHub repository preflight for repository URLs, and uses **Composio** as the scalable connected-app layer for OAuth-backed services and account actions.
 
 - **Production:** `https://nova-luis.onrender.com/` (fallback: `https://nova-sszi.onrender.com`)
 - **Repository:** `https://github.com/ABBYCRM/NovaLuis`
@@ -13,36 +13,53 @@ NOVA is a personal AI assistant, connected-service hub, and persistent Work-Tree
 ```text
 Browser / NOVA UI
         │
-        ├─ chat → /api/agent/v1/chat/completions
-        │             │
-        │             ▼
-        │       OpenClaw Gateway 127.0.0.1:18789
-        │         ├─ real agent loop, tools, skills and sessions
-        │         ├─ model calls → /api/v1/chat/completions
-        │         └─ nova-services → /api/integrations/composio/*
-        │                                   │
-        │                                   ▼
-        │                         Composio connected apps
-        │                  GitHub · Gmail · Slack · Notion · etc.
+        ├─ /api/agent/v1/chat/completions ─────────────┐
+        │                                              │
+        ├─ legacy /api/v1/chat/completions             │
+        │      └─ server reroutes all non-internal     │
+        │         chat into the same agent path ───────┤
+        │                                              ▼
+        │                                  OpenClaw Gateway
+        │                                  127.0.0.1:18789
+        │                                    │
+        │              GitHub URL detected?  │
+        │                     │              │
+        │                     ▼              │
+        │             GitHub REST preflight  │
+        │          metadata · tree · commits │
+        │            high-signal file text   │
+        │                     │              │
+        │                     └──── evidence ┤
+        │                                    │
+        │                                    ├─ model calls → internal /api/v1
+        │                                    └─ nova-services → Composio/native apps
         │
         └─ settings/integrations → Express API :8080
 ```
 
-The Gateway binds to loopback only. Normal browser chat and Work Tree both execute through OpenClaw. `/api/v1/*` remains the private server-side model-provider proxy and is not the browser's agent endpoint.
+The Gateway binds to loopback only. Normal browser chat and Work Tree execute through OpenClaw. `/api/v1/*` remains the server-side model-provider path **only for authenticated internal OpenClaw inference calls**; any non-internal chat request that still reaches the old browser path is rerouted into the agent endpoint before raw inference.
+
+For a public GitHub repository URL, NOVA does **not** require Composio or GitHub OAuth. The API fetches observed repository evidence directly from GitHub before OpenClaw answers. Composio remains the preferred connected-account layer for OAuth-backed apps, private-account actions, and broader third-party automation.
 
 ## Workspace layout
 
 ```text
 artifacts/nova                         frontend SPA
 artifacts/nova/public/assets/composio-settings.js
-                                      Composio Settings app picker + chat route shim
+                                      Composio Settings app picker + agent route compatibility shim
 artifacts/api-server                  Express API and Work-Tree persistence
+artifacts/api-server/src/lib/github-repo.ts
+                                      deterministic GitHub URL parser, API client, cache and evidence builder
+artifacts/api-server/src/routes/github.ts
+                                      PIN-protected GitHub preflight diagnostic
 artifacts/api-server/src/lib/composio.ts
                                       Composio session and REST client
 artifacts/api-server/src/routes/composio.ts
                                       catalog, connection, search and execution routes
 artifacts/api-server/src/routes/agent-chat.ts
-                                      browser chat → OpenClaw agent gateway
+                                      GitHub preflight + browser chat → OpenClaw agent gateway
+artifacts/api-server/src/routes/openai-proxy.ts
+                                      internal model proxy + legacy browser-chat server reroute
 openclaw/openclaw.json                strict Gateway/model/tool configuration
 openclaw/workspace/skills/nova-services
                                       authenticated native + Composio service adapter
@@ -52,10 +69,12 @@ skills/*                              existing repository skill catalog
 
 ## Connected services available to OpenClaw
 
-| Capability | NOVA endpoint | OpenClaw access |
+| Capability | NOVA path | OpenClaw access |
 |---|---|---|
+| Public GitHub repository inspection | automatic server-side preflight; diagnostic `/api/github/preflight` | evidence is injected before the answer |
+| Private GitHub/API-authenticated reads | direct GitHub preflight when a server token is present | `GITHUB_TOKEN`, `GH_TOKEN`, or `NOVA_GITHUB_TOKEN` |
+| GitHub account/write actions | Composio when connected | `composio-search` then `composio-execute` |
 | Composio catalog and status | `/api/integrations/composio/*` | `nova-services composio-*` |
-| GitHub repositories/issues/PRs | discovered through Composio | `composio-search` then `composio-execute` |
 | Any connected Composio toolkit | discovered through Composio | `composio-search` then `composio-execute` |
 | Gmail message search | `/api/integrations/gmail/messages` | `nova-services gmail` |
 | Google Drive search | `/api/integrations/drive/files` | `nova-services drive` |
@@ -81,6 +100,8 @@ PUBLIC_BASE_URL=https://nova-luis.onrender.com
 
 or enter the project API key in **Settings → Composio Apps**. The API key is write-only from the browser and connected-app OAuth credentials remain outside NOVA chat.
 
+**Passwords are separate surfaces:** `1234` is the Medical workspace first-use client-side soft-lock password. The backend Work Tree/integrations PIN defaults to `22` unless `NOVA_WORK_TREE_PIN` overrides it in the deployment environment.
+
 ## Build and validation
 
 **pnpm is the only package manager for this workspace.** Production secrets belong in Render environment variables and must never be committed.
@@ -93,7 +114,7 @@ node --check artifacts/nova/public/assets/composio-settings.js
 node --check openclaw/workspace/skills/nova-services/nova-services.mjs
 ```
 
-GitHub verification also parses every real `.json` file, compiles every Git-tracked `.py` file, validates the pinned OpenClaw configuration and `nova-services` skill, builds the production image, starts the container, and checks the API, OpenClaw readiness, normal agent-chat route, Composio status route, UI, `bob.js`, and the Composio Settings asset.
+GitHub verification parses every real `.json` file, compiles every Git-tracked `.py` file, validates the pinned OpenClaw configuration and `nova-services` skill, builds the production image, starts the container, unlocks the protected API with PIN `22` in CI, calls the real GitHub API for `ABBYCRM/NovaLuis`, verifies repository/file/commit evidence, checks OpenClaw readiness, and runs desktop/mobile Playwright proof for the Composio Settings UI.
 
 Documentation and templates use accurate extensions: the governance design is `GOVERNANCE.md`, and the commented strict TypeScript template is `tsconfig-strict.jsonc`. `scripts/agentic_demo.py` is stored as runnable Python rather than a Markdown-fenced paste.
 
@@ -103,9 +124,11 @@ The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At sta
 
 | Variable | Purpose |
 |---|---|
+| `GITHUB_TOKEN` / `GH_TOKEN` / `NOVA_GITHUB_TOKEN` | Optional server-side GitHub token for higher rate limits and private repository reads; public repositories work without it |
 | `COMPOSIO_API_KEY` | Composio project API key used by the server-side Tool Router client |
 | `COMPOSIO_USER_ID` | Stable connected-account owner ID; defaults to `nova-luis` |
 | `PUBLIC_BASE_URL` | Public callback origin used for hosted Composio Connect Links |
+| `NOVA_WORK_TREE_PIN` | Work Tree/integrations operator PIN; defaults to `22` when unset |
 | `OPENCLAW_GATEWAY_TOKEN` | Optional persistent Gateway bearer token; generated at boot when absent |
 | `OPENCLAW_STATE_DIR` | OpenClaw sessions/state directory; point this at a persistent Render disk to retain state across deploys |
 | `NOVA_OPENCLAW_MODEL_ID` | Model ID sent through NOVA's server-side proxy; defaults to `WORK_TREE_MODEL` or `gpt-4o-mini` |
