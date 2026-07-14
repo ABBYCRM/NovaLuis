@@ -1,18 +1,39 @@
 ---
 name: nova-services
-description: Access NOVA's connected apps through Composio, plus Gmail, Google Drive, Docs, Sheets, YouTube, Instagram, knowledge, scratchpad, and repository skills through authenticated loopback APIs.
+description: Access NOVA's connected apps through Composio, mission-aware vector memory, Gmail, Google Drive, Docs, Sheets, YouTube, Instagram, knowledge, scratchpad, and repository skills through authenticated loopback APIs.
 metadata: {"openclaw":{"emoji":"🔌","requires":{"bins":["node"],"env":["NOVA_INTERNAL_API_BASE"]}}}
 ---
 
 # NOVA Services
 
-Use this skill whenever a mission needs an external app, GitHub repository, connected account, or capability exposed by the NOVA backend. The helper returns structured JSON and exits nonzero on failed or unauthorized requests.
+Use this skill whenever a mission needs prior runtime memory, an external app, GitHub repository, connected account, or capability exposed by the NOVA backend. The helper returns structured JSON and exits nonzero on failed or unauthorized requests.
 
 Run commands with:
 
 ```bash
 node {baseDir}/nova-services.mjs <command> [options]
 ```
+
+## Mandatory mission memory protocol
+
+For non-trivial missions, use the runtime memory as part of the execution loop rather than treating it as a passive document database.
+
+1. Before planning or acting, run `vector-search` with the exact current goal and the current phase.
+2. Inspect verification labels literally. `verified` and `observed` evidence outrank `claimed` model text. Never convert a claim into verified evidence without a real check.
+3. During correction, search failure memory before repeating an equivalent failed action.
+4. Persist high-value observations, failures, decisions, procedures, and evidence with `vector-ingest`. Do not save hidden reasoning, speculative chain-of-thought, or repetitive summaries.
+5. After retrieved memories materially contribute to an outcome, call `vector-feedback` with the returned memory ids and the real success/failure result.
+
+```bash
+node {baseDir}/nova-services.mjs vector-status
+node {baseDir}/nova-services.mjs vector-search --query 'exact mission or current problem' --phase PLAN --intent plan --limit 8 --mission-id <run-id>
+node {baseDir}/nova-services.mjs vector-search --query 'current failure and exact error' --phase CORRECT --intent debug --types failure,evidence,code,tool --limit 10 --mission-id <run-id>
+node {baseDir}/nova-services.mjs vector-ingest --type failure --scope mission --mission-id <run-id> --verification observed --importance 0.9 --content 'Observed command, error, environment, and failed result'
+node {baseDir}/nova-services.mjs vector-ingest --type evidence --scope mission --mission-id <run-id> --verification verified --importance 1 --content 'Exact verification command and observed result'
+node {baseDir}/nova-services.mjs vector-feedback --ids 12,19,22 --successful true
+```
+
+Use `verified` only for evidence established by an actual test, command, API response, build, deployment check, browser check, or other directly observed proof. A model response, plan, or assertion is `claimed` or at most `inferred`.
 
 ## Mandatory capability discovery
 
@@ -74,6 +95,8 @@ node {baseDir}/nova-services.mjs instagram
 
 ## NOVA knowledge and skill catalog
 
+The legacy `knowledge-*` commands remain available for document/SOP retrieval. Use `vector-*` for agentic runtime memory because it preserves memory type, scope, mission, verification, temporal validity, and utility feedback.
+
 ```bash
 node {baseDir}/nova-services.mjs skills
 node {baseDir}/nova-services.mjs skills --name <skill-name>
@@ -86,9 +109,10 @@ node {baseDir}/nova-services.mjs knowledge-ingest --source openclaw --title 'Tit
 ## Execution rules
 
 1. Inspect the returned `ok` field and actual payload before using a result.
-2. Never fabricate service data, tool availability, repository contents, or success.
-3. Search for the correct Composio tool before executing. Do not guess tool slugs or arguments.
-4. Prefer read-only tools for inspection and analysis. Perform writes only when the operator requested the external change.
-5. If a connection is missing, call `composio-connect` and return the real Connect Link.
-6. Do not print or inspect environment variables. Authentication is injected at runtime and must remain secret.
-7. Cite concrete repository names, file paths, SHAs, IDs, timestamps, counts, tool slugs, log IDs, or API errors in the final verification report.
+2. Never fabricate service data, tool availability, repository contents, memory evidence, or success.
+3. Search mission memory before a non-trivial plan and search failure memory before repeating a failed action.
+4. Search for the correct Composio tool before executing. Do not guess tool slugs or arguments.
+5. Prefer read-only tools for inspection and analysis. Perform writes only when the operator requested the external change.
+6. If a connection is missing, call `composio-connect` and return the real Connect Link.
+7. Do not print or inspect environment variables. Authentication is injected at runtime and must remain secret.
+8. Cite concrete repository names, file paths, SHAs, memory ids, timestamps, counts, tool slugs, log IDs, test outputs, or API errors in the final verification report.
