@@ -248,6 +248,10 @@ async function markFailed(ids) {
   );
 }
 
+// Exponential back-off for DB connection failures.
+let _dbBackoffMs = POLL_MS;
+const _dbBackoffMax = 120_000;
+
 let running = false;
 async function tick() {
   if (running) return;
@@ -257,9 +261,13 @@ async function tick() {
   let client;
   try {
     client = await pool.connect();
+    _dbBackoffMs = POLL_MS; // reset on success
   } catch (connErr) {
-    console.warn("scratchpad-daemon: DB connect failed (will retry next tick):", connErr.message);
+    console.warn(`scratchpad-daemon: DB connect failed (retry in ${Math.round(_dbBackoffMs / 1000)}s):`, connErr.message);
+    const wait = _dbBackoffMs;
+    _dbBackoffMs = Math.min(_dbBackoffMs * 2, _dbBackoffMax);
     running = false;
+    setTimeout(() => tick(), wait);
     return;
   }
   let locked = false;

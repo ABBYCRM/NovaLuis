@@ -1273,6 +1273,10 @@ async function finalizeRun(run, nodes, stageLogs, ts) {
   return nodes.length;
 }
 
+// Exponential back-off for DB connection failures so we don't flood logs.
+let _dbBackoffMs = POLL_MS;
+const _dbBackoffMax = 60_000;
+
 let running = false;
 let recovered = false;
 async function tick() {
@@ -1281,9 +1285,13 @@ async function tick() {
   let client;
   try {
     client = await pool.connect();
+    _dbBackoffMs = POLL_MS; // reset on success
   } catch (connErr) {
-    console.warn("work-tree-worker: DB connect failed (will retry next tick):", connErr.message);
+    console.warn(`work-tree-worker: DB connect failed (retry in ${Math.round(_dbBackoffMs / 1000)}s):`, connErr.message);
+    const wait = _dbBackoffMs;
+    _dbBackoffMs = Math.min(_dbBackoffMs * 2, _dbBackoffMax);
     running = false;
+    setTimeout(() => tick(), wait);
     return;
   }
   let locked = false;
