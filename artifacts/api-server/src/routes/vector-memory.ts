@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
-  getRuntimeMemoryContext,
+  formatVectorMemoryContext,
   ingestVectorMemory,
   recordVectorMemoryOutcome,
   retrieveVectorMemory,
@@ -84,9 +84,10 @@ router.post("/vector-memory/ingest", async (req, res) => {
     return;
   }
   try {
+    const { validUntil, ...memory } = parsed.data;
     const ids = await ingestVectorMemory({
-      ...parsed.data,
-      validUntil: parsed.data.validUntil ? new Date(parsed.data.validUntil) : parsed.data.validUntil,
+      ...memory,
+      validUntil: validUntil == null ? validUntil : new Date(validUntil),
     });
     res.json({ ok: true, ids, units: ids.length });
   } catch (error) {
@@ -117,7 +118,7 @@ router.post("/vector-memory/search", async (req, res) => {
   try {
     const { query, includeContext, ...options } = parsed.data;
     const results = await retrieveVectorMemory(query, options);
-    const context = includeContext ? await getRuntimeMemoryContext(query, options) : undefined;
+    const context = includeContext ? formatVectorMemoryContext(results) : undefined;
     res.json({ results, ...(includeContext ? { context } : {}) });
   } catch (error) {
     req.log.error({ err: error }, "vector memory search failed");
