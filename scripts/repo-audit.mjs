@@ -29,10 +29,14 @@ function run(command, args) {
   };
 }
 
-function gitFiles() {
-  const result = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "buffer" });
+function gitEntries() {
+  const result = spawnSync("git", ["ls-files", "-s", "-z"], { cwd: root, encoding: "buffer" });
   if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr?.toString() || "unknown"}`);
-  return result.stdout.toString("utf8").split("\0").filter(Boolean).sort();
+  return result.stdout.toString("utf8").split("\0").filter(Boolean).map((entry) => {
+    const tab = entry.indexOf("\t");
+    const meta = entry.slice(0, tab).split(" ");
+    return { mode: meta[0], object: meta[1], stage: meta[2], file: entry.slice(tab + 1) };
+  }).sort((a, b) => a.file.localeCompare(b.file));
 }
 
 function checkTs(file, text) {
@@ -41,6 +45,19 @@ function checkTs(file, text) {
   const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.ES2022, true, kind);
   const diagnostics = Array.isArray(sourceFile.parseDiagnostics) ? sourceFile.parseDiagnostics : [];
   return diagnostics.map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));
+}
+
+function checkWorkflowDsl(text) {
+  try {
+    const body = text.replace(/^\s*export\s+const\s+meta\s*=/, "const meta =");
+    // Parse only. The workflow runtime provides args/phase/agent/pipeline/parallel/log.
+    // Wrapping in an async function makes top-level await/return valid exactly as
+    // they are when this workflow body is executed by its host runtime.
+    new Function(`return async function __novaWorkflowDsl__(){\n${body}\n}`);
+    return [];
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
+  }
 }
 
 function balance(text, open, close) {
@@ -53,18 +70,23 @@ function balance(text, open, close) {
   return count === 0;
 }
 
-const files = gitFiles();
+const entries = gitEntries();
 const results = [];
 let failures = 0;
+let warnings = 0;
 
-for (const file of files) {
+for (const entry of entries) {
+  const { file, mode, object, stage } = entry;
   const absolute = path.join(root, file);
-  const stat = fs.lstatSync(absolute);
   const record = {
     file,
-    kind: stat.isSymbolicLink() ? "symlink" : stat.isFile() ? "file" : "other",
-    size: stat.size,
+    gitMode: mode,
+    gitObject: object,
+    gitStage: stage,
+    kind: mode === "160000" ? "gitlink" : mode === "120000" ? "symlink" : "file",
+    size: 0,
     checks: [],
+    warnings: [],
     status: "pass",
   };
 
@@ -72,17 +94,45 @@ for (const file of files) {
     record.checks.push({ name, ok, details: String(details || "").slice(0, 4000) });
     if (!ok) record.status = "fail";
   }
+  function warn(name, details = "") {
+    record.warnings.push({ name, details: String(details || "").slice(0, 4000) });
+    warnings += 1;
+  }
 
-  if (stat.isSymbolicLink()) {
+  if (mode === "160000") {
+    add("gitlink-recorded", Boolean(object), `submodule/gitlink object ${object}`);
+    results.push(record);
+    continue;
+  }
+
+  if (!fs.existsSync(absolute) && mode !== "120000") {
+    add("checkout-path-exists", false, "tracked path missing from checkout");
+    failures += 1;
+    results.push(record);
+    continue;
+  }
+
+  const stat = fs.lstatSync(absolute);
+  record.size = stat.size;
+
+  if (mode === "120000" || stat.isSymbolicLink()) {
     const target = fs.readlinkSync(absolute);
-    add("symlink-target", fs.existsSync(path.resolve(path.dirname(absolute), target)), target);
+    const resolved = path.resolve(path.dirname(absolute), target);
+    const exists = fs.existsSync(resolved);
+    const insideRepo = resolved === root || resolved.startsWith(`${root}${path.sep}`);
+    if (insideRepo) {
+      add("symlink-target", exists, target);
+    } else {
+      add("external-symlink-recorded", true, target);
+      if (!exists) warn("external-symlink-unresolved-in-ci", `${target} is outside repository checkout`);
+    }
     if (record.status === "fail") failures += 1;
     results.push(record);
     continue;
   }
 
   if (!stat.isFile()) {
-    add("regular-file", false, "tracked path is not a regular file or symlink");
+    add("regular-file", false, "tracked path is not a regular file, symlink, or gitlink");
     failures += 1;
     results.push(record);
     continue;
@@ -95,8 +145,7 @@ for (const file of files) {
 
   add("readable", true, `${buffer.length} bytes`);
   if (likelyBinary && !textExtensions.has(ext)) {
-    add("binary-nonempty", buffer.length > 0 || stat.size === 0, ext || "no extension");
-    if (record.status === "fail") failures += 1;
+    add("binary-recorded", true, ext || "no extension");
     results.push(record);
     continue;
   }
@@ -121,6 +170,9 @@ for (const file of files) {
     } else if ([".ts", ".tsx", ".mts", ".cts", ".jsx"].includes(ext)) {
       const diagnostics = checkTs(file, text);
       add("typescript-syntax", diagnostics.length === 0, diagnostics.join(" | "));
+    } else if (ext === ".js" && /(^|\/)skills\/[^/]+\/scripts\/workflow-script\.js$/.test(file)) {
+      const diagnostics = checkWorkflowDsl(text);
+      add("workflow-dsl-syntax", diagnostics.length === 0, diagnostics.join(" | "));
     } else if ([".js", ".mjs", ".cjs"].includes(ext)) {
       const checked = run(process.execPath, ["--check", absolute]);
       add("node-syntax", checked.ok, checked.stderr || checked.stdout || checked.error || "");
@@ -148,19 +200,23 @@ for (const file of files) {
 }
 
 const byExtension = {};
+const byKind = {};
 for (const result of results) {
   const ext = path.extname(result.file).toLowerCase() || "[none]";
   byExtension[ext] = (byExtension[ext] || 0) + 1;
+  byKind[result.kind] = (byKind[result.kind] || 0) + 1;
 }
 const report = {
   generatedAt: new Date().toISOString(),
   root,
-  trackedFiles: results.length,
-  passedFiles: results.length - failures,
-  failedFiles: failures,
+  trackedPaths: results.length,
+  passedPaths: results.length - failures,
+  failedPaths: failures,
+  warnings,
+  byKind,
   byExtension,
   results,
 };
 fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
-console.log(JSON.stringify({ output: outPath, trackedFiles: report.trackedFiles, passedFiles: report.passedFiles, failedFiles: report.failedFiles, byExtension }, null, 2));
+console.log(JSON.stringify({ output: outPath, trackedPaths: report.trackedPaths, passedPaths: report.passedPaths, failedPaths: report.failedPaths, warnings, byKind, byExtension }, null, 2));
 if (failures) process.exit(1);
