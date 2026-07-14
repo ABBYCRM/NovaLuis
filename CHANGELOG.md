@@ -4,6 +4,28 @@ All notable changes to **NOVA** (primary twin of SUPERNOVA/ABBY).
 
 ---
 
+## 2026-07-14 — Synchronize operator PIN behavior and add one-by-one repository audit
+
+Root cause:
+- The live Settings/Composio unlock could reject PIN `22` even though source defaulted to `22`, because a stale `NOVA_WORK_TREE_PIN` deployment override replaced the source default.
+- Existing CI validated major language groups but did not produce a single machine-readable record showing the validation result for every tracked repository path.
+
+Summary:
+- Made `22` the canonical Work Tree/integrations operator PIN.
+- Kept `NOVA_WORK_TREE_PIN` as an additional accepted deployment credential instead of allowing it to replace and block the canonical PIN.
+- Added timing-safe PIN comparison.
+- Added `scripts/repo-audit.mjs` to enumerate every Git-tracked path and produce a per-file JSON evidence manifest.
+- Added extension-aware validation for tracked TypeScript, TSX, JavaScript, JSON, Python, shell, YAML, CSS, symlinks and general text files.
+- Added a dedicated production-container compatibility workflow proving canonical PIN `22` works even when a conflicting deployment override is present, while an unrelated PIN is rejected.
+
+Required verification:
+- per-file audit manifest contains every tracked path with zero failed files
+- full TypeScript typecheck and API build
+- tracked Python compilation
+- production Docker build
+- OpenClaw/GitHub/Composio/Playwright E2E gates
+- canonical PIN compatibility test under a conflicting environment override
+
 ## 2026-07-13 — Add Composio connected apps and repair normal chat tool execution
 
 Root cause:

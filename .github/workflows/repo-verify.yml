@@ -15,7 +15,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
 
     steps:
       - name: Check out exact source revision
@@ -41,10 +41,26 @@ jobs:
           corepack prepare pnpm@10.32.1 --activate
           pnpm --version
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --shamefully-hoist
+
+      - name: Audit every tracked repository file
+        env:
+          REPO_AUDIT_OUTPUT: /tmp/repo-audit.json
+        run: node scripts/repo-audit.mjs
+
+      - name: Upload per-file audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-file-by-file-audit
+          path: /tmp/repo-audit.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Validate JSON files
         run: |
-          set +e
-          node - <<'NODE' > /tmp/json-validation.txt 2>&1
+          node - <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
           const ignored = new Set(['node_modules', '.git', 'dist']);
@@ -73,22 +89,6 @@ jobs:
           }
           console.log('All JSON files parsed successfully.');
           NODE
-          status=$?
-          set -e
-          cat /tmp/json-validation.txt
-          exit "$status"
-
-      - name: Upload JSON diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: json-validation-diagnostics
-          path: /tmp/json-validation.txt
-          if-no-files-found: ignore
-          retention-days: 1
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --shamefully-hoist
 
       - name: Typecheck
         run: pnpm run typecheck
@@ -100,25 +100,11 @@ jobs:
         run: |
           mapfile -d '' python_files < <(git ls-files -z -- '*.py')
           if [ "${#python_files[@]}" -eq 0 ]; then
-            echo 'No tracked Python files found.' | tee /tmp/python-validation.txt
+            echo 'No tracked Python files found.'
             exit 0
           fi
-          printf 'Compiling %s tracked Python files.\n' "${#python_files[@]}" > /tmp/python-validation.txt
-          set +e
-          python -m py_compile "${python_files[@]}" >> /tmp/python-validation.txt 2>&1
-          status=$?
-          set -e
-          cat /tmp/python-validation.txt
-          exit "$status"
-
-      - name: Upload Python diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-validation-diagnostics
-          path: /tmp/python-validation.txt
-          if-no-files-found: ignore
-          retention-days: 1
+          printf 'Compiling %s tracked Python files.\n' "${#python_files[@]}"
+          python -m py_compile "${python_files[@]}"
 
       - name: Build production image
         run: docker build --tag nova-luis:verify .

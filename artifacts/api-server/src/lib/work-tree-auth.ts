@@ -8,6 +8,7 @@ import type { Request, Response, NextFunction } from "express";
 
 const COOKIE = "wt_session";
 const TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const CANONICAL_OPERATOR_PIN = "22";
 
 // Brute-force throttle: the PIN is short by design, so cap failed unlock
 // attempts per client IP and lock out for a cooldown once exceeded.
@@ -15,8 +16,25 @@ const MAX_FAILS = 8;
 const LOCKOUT_MS = 10 * 60 * 1000; // 10 minutes
 const attempts = new Map<string, { fails: number; until: number }>();
 
-function pin(): string {
-  return process.env.NOVA_WORK_TREE_PIN ?? "22";
+function acceptedPins(): string[] {
+  const configured = String(process.env.NOVA_WORK_TREE_PIN || "").trim();
+  return [...new Set([CANONICAL_OPERATOR_PIN, configured].filter(Boolean))];
+}
+
+function sameSecret(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  try {
+    return timingSafeEqual(left, right);
+  } catch {
+    return false;
+  }
+}
+
+function isAcceptedPin(supplied: string): boolean {
+  if (!supplied) return false;
+  return acceptedPins().some((candidate) => sameSecret(supplied, candidate));
 }
 
 // Fail closed: a missing SESSION_SECRET must NOT silently fall back to a
@@ -116,7 +134,7 @@ export function handleUnlock(req: Request, res: Response): void {
   const supplied = String(
     (req.body as { pin?: unknown } | undefined)?.pin ?? "",
   ).trim();
-  if (!supplied || supplied !== pin()) {
+  if (!isAcceptedPin(supplied)) {
     const fails = (rec?.fails ?? 0) + 1;
     attempts.set(who, {
       fails,
