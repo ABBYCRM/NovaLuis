@@ -4,6 +4,16 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — Composio organization-token auto-resolution
+
+- **Observed live failure:** after PIN/session auth succeeded, Composio returned HTTP 401 because the live organization access token was sent as a project API key.
+- **Official contract:** project API keys use `x-api-key`; organization access tokens use `x-org-api-key` and manage projects.
+- **Repair:** classify both credential types, preserve old Settings input compatibility, resolve the intended project with the organization API, retrieve its project key, and use only that project key for Tool Router.
+- **Fallback:** environment and stored credentials are distinct candidates, preventing one stale key from masking another valid key.
+- **Proof:** dedicated CI observes `x-org-api-key=oak_ci_org`, then `x-api-key=ak_ci_project`, and requires `credentialSource=organization` plus the selected project ID.
+- **Live truth gate:** exact Render revision must match `main`, PIN `22` must succeed, and protected Composio status must leave the previous invalid-project-key path.
+
+
 ## 2026-07-14 — Production session-signing secret self-heal
 
 - **Observed live failure:** Render was on the exact latest commit and OpenClaw was ready, but `POST /api/work-tree/unlock` returned HTTP 503 with `{"error":"auth not configured"}`.

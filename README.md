@@ -8,6 +8,10 @@ NOVA is a personal AI assistant, connected-service hub, and persistent Work-Tree
 - **OpenClaw runbook:** [`docs/OPENCLAW_BACKEND.md`](docs/OPENCLAW_BACKEND.md)
 - **Composio runbook:** [`docs/COMPOSIO.md`](docs/COMPOSIO.md)
 
+## Composio credential compatibility
+
+NOVA accepts both Composio **project API keys** and **organization access tokens**. Project keys are sent as `x-api-key`. Organization tokens are sent as `x-org-api-key`, used to select the intended NOVA/production project, and the resolved project key is then used for Tool Router. Previously saved organization tokens in the legacy key field are auto-classified so a valid organization credential is not rejected as an invalid project key. See [`docs/COMPOSIO.md`](docs/COMPOSIO.md).
+
 ## Runtime topology
 
 ```text
