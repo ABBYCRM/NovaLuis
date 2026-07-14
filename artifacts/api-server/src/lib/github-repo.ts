@@ -1,9 +1,10 @@
 const GITHUB_API = "https://api.github.com";
 const GITHUB_API_VERSION = "2026-03-10";
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_SNAPSHOT_CHARS = 42_000;
-const MAX_TREE_ENTRIES = 2_500;
-const MAX_FILE_CHARS = 8_000;
+const MAX_SNAPSHOT_CHARS = 55_000;
+const MAX_TREE_ENTRIES = 300;
+const MAX_FILE_CHARS = 3_000;
+const MAX_SELECTED_FILES = 8;
 
 interface CacheEntry {
   expiresAt: number;
@@ -163,19 +164,15 @@ function selectHighSignalFiles(tree: GitHubTreeEntry[]): string[] {
     "README.rst",
     "README.txt",
     "package.json",
-    "pnpm-workspace.yaml",
-    "pnpm-lock.yaml",
-    "package-lock.json",
-    "yarn.lock",
     "pyproject.toml",
     "requirements.txt",
-    "Pipfile",
     "Cargo.toml",
     "go.mod",
     "Dockerfile",
     "docker-compose.yml",
     "docker-compose.yaml",
     "render.yaml",
+    "pnpm-workspace.yaml",
     "tsconfig.json",
     "vite.config.ts",
     "next.config.js",
@@ -195,17 +192,17 @@ function selectHighSignalFiles(tree: GitHubTreeEntry[]): string[] {
   const fileSet = new Set(files);
   const selected: string[] = [];
   for (const path of exactPriority) {
-    if (fileSet.has(path)) selected.push(path);
+    if (fileSet.has(path) && selected.length < MAX_SELECTED_FILES) selected.push(path);
   }
   for (const path of files) {
-    if (selected.length >= 14) break;
+    if (selected.length >= MAX_SELECTED_FILES) break;
     const depth = path.split("/").length;
-    if (depth > 3) continue;
-    if (/^(?:\.github\/workflows\/[^/]+\.ya?ml|artifacts\/api-server\/src\/(?:index|app)\.ts|src\/routes?\/index\.ts)$/i.test(path)) {
+    if (depth > 4) continue;
+    if (/^(?:\.github\/workflows\/[^/]+\.ya?ml|artifacts\/api-server\/src\/(?:index|app)\.ts|artifacts\/api-server\/src\/routes\/index\.ts|src\/routes?\/index\.ts)$/i.test(path)) {
       if (!selected.includes(path)) selected.push(path);
     }
   }
-  return selected.slice(0, 14);
+  return selected.slice(0, MAX_SELECTED_FILES);
 }
 
 function compactTree(tree: GitHubTreeEntry[]): Array<Record<string, unknown>> {
@@ -267,6 +264,8 @@ async function buildSnapshot(ref: GitHubRepoRef): Promise<string> {
     selectedFiles.map((path) => fetchFile(ref.owner, ref.repo, path)),
   );
 
+  // High-signal evidence is deliberately serialized before the potentially large
+  // tree listing so the size guard can only truncate low-priority path inventory.
   const evidence = {
     source: "GitHub REST API",
     fetchedAt: new Date().toISOString(),
@@ -290,14 +289,6 @@ async function buildSnapshot(ref: GitHubRepoRef): Promise<string> {
       pushedAt: meta.pushed_at || null,
       updatedAt: meta.updated_at || null,
     },
-    tree: {
-      recursive: true,
-      truncated:
-        treeResult.status === "fulfilled" ? Boolean(treeResult.value.truncated) : null,
-      totalObservedEntries: tree.length,
-      entries: compactTree(tree),
-      error: treeResult.status === "rejected" ? String(treeResult.reason) : undefined,
-    },
     recentCommits: commits.slice(0, 12).map((commit) => ({
       sha: commit.sha || "",
       message: String(commit.commit?.message || "").split("\n")[0],
@@ -306,11 +297,20 @@ async function buildSnapshot(ref: GitHubRepoRef): Promise<string> {
       url: commit.html_url || null,
     })),
     selectedFiles: fileResults,
+    tree: {
+      recursive: true,
+      truncated:
+        treeResult.status === "fulfilled" ? Boolean(treeResult.value.truncated) : null,
+      totalObservedEntries: tree.length,
+      includedEntries: Math.min(tree.length, MAX_TREE_ENTRIES),
+      entries: compactTree(tree),
+      error: treeResult.status === "rejected" ? String(treeResult.reason) : undefined,
+    },
   };
 
   let snapshot = JSON.stringify(evidence, null, 2);
   if (snapshot.length > MAX_SNAPSHOT_CHARS) {
-    snapshot = snapshot.slice(0, MAX_SNAPSHOT_CHARS) + "\n... [snapshot truncated by NOVA size guard]";
+    snapshot = snapshot.slice(0, MAX_SNAPSHOT_CHARS) + "\n... [low-priority tree inventory truncated by NOVA size guard]";
   }
   cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, snapshot });
   return snapshot;
