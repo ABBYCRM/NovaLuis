@@ -4,6 +4,14 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — Render deployment revision proof
+
+- **Objective:** remove inference from deployment verification by exposing the exact active Render Git revision through the application itself.
+- **Endpoint:** `GET /api/version` returns Render-provided commit, branch, repository slug, service ID/name, Render-runtime flag, and OpenClaw runtime version.
+- **Source of truth:** Render officially provides `RENDER_GIT_COMMIT`, `RENDER_GIT_BRANCH`, `RENDER_GIT_REPO_SLUG`, `RENDER_SERVICE_ID`, and `RENDER_SERVICE_NAME` at runtime.
+- **CI proof:** the production-container compatibility workflow injects deterministic Render metadata and verifies `/api/version` returns the exact values before testing operator PIN behavior.
+- **Truth gate:** after merge/deploy, compare live `/api/version.commit` to GitHub `main`; only an exact SHA match counts as proof that Render has the latest revision.
+
 ## 2026-07-14 — Canonical operator PIN and one-by-one repository audit
 
 - **Observed live failure:** Settings/Composio unlock displayed `Wrong PIN` while source defaulted to `22`, proving the deployed environment could override `NOVA_WORK_TREE_PIN` with a stale value.
