@@ -90,6 +90,9 @@ jobs:
           console.log('All JSON files parsed successfully.');
           NODE
 
+      - name: Verify AURA vector memory algorithm
+        run: pnpm run test:vector-memory
+
       - name: Typecheck
         run: pnpm run typecheck
 

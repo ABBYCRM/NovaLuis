@@ -5,6 +5,7 @@ import fs from "node:fs";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import "./lib/vector-memory-fetch-hook";
 
 const app: Express = express();
 

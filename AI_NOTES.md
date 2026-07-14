@@ -4,6 +4,19 @@ Working notes for AI agents/contributors. Newest first.
 
 ---
 
+## 2026-07-14 — AURA-VECTOR mission-aware runtime memory
+
+- **Objective:** replace generic dense-only chunk retrieval as the agentic memory mechanism with a runtime-aware hybrid memory layer while preserving the legacy document knowledge API.
+- **Storage:** `vector_memories` contains memory type, scope, mission/agent IDs, verification level, confidence/importance/salience, nullable pgvector embedding, generated PostgreSQL full-text vector, validity/supersession metadata, relationships, entities and retrieval utility counters.
+- **Retrieval:** dense pgvector HNSW + PostgreSQL FTS/GIN candidates are merged and rescored by intent, execution phase, mission compatibility, verification strength, temporal decay, importance, salience and historical outcome utility. Contradicted/expired memories are filtered and near-duplicates are removed.
+- **Provider degradation:** embedding failures do not break ingestion or OpenClaw. Memories without embeddings remain searchable lexically and can receive an embedding on a later idempotent upsert.
+- **Critical-path wiring:** `vector-memory-fetch-hook.ts` wraps only the loopback OpenClaw chat-completions boundary, so both normal agent chat and Work Tree receive the same automatic memory retrieval without duplicating route logic.
+- **Write truth:** mission/user input is `observed`; gateway HTTP failures are `observed` failure memory; returned model final payloads are only `claimed` episodic memory. A model response is never auto-promoted to `verified`.
+- **Agent tools:** `nova-services` exposes `vector-status`, `vector-search`, `vector-ingest` and `vector-feedback`; its skill protocol requires memory search before non-trivial planning and failure-memory search before repeating an unchanged failed action.
+- **Protected surface:** `/api/vector-memory/*` uses the existing Work Tree PIN or trusted peer bearer-key gate.
+- **Deterministic checks:** `vector-memory.self-test.ts` covers intent/phase inference, atomic splitting, normalized hashing, evidence ranking, mission ranking and contradiction penalties.
+- **Truth gate:** source integration is not enough. Completion requires GitHub diff inspection plus typecheck/build/self-test/Node syntax evidence from CI or another executable environment. Live production remains unverified until Render runs the merged revision and a database-backed memory smoke test passes.
+
 ## 2026-07-14 — Stable fallback session signing across replicas
 
 - **Observed live failure:** PIN `22` returned `ok:true`, but the immediately following protected request returned `locked`.

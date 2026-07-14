@@ -6,6 +6,7 @@ NOVA is a personal AI assistant, connected-service hub, and persistent Work-Tree
 - **Repository:** `https://github.com/ABBYCRM/NovaLuis`
 - **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - **OpenClaw runbook:** [`docs/OPENCLAW_BACKEND.md`](docs/OPENCLAW_BACKEND.md)
+- **AURA-VECTOR runtime memory:** [`docs/AURA_VECTOR_MEMORY.md`](docs/AURA_VECTOR_MEMORY.md)
 - **Composio runbook:** [`docs/COMPOSIO.md`](docs/COMPOSIO.md)
 
 ## Composio credential compatibility
@@ -15,6 +16,25 @@ NOVA accepts both Composio **project API keys** and **organization access tokens
 ## Cross-replica session stability
 
 When `SESSION_SECRET` is absent, NOVA now derives a domain-separated session-signing key from an existing stable server-side secret source such as `NOVA_SESSION_SEED`, an internal peer key, or `DATABASE_URL`. The source credential is never used directly as the cookie key. Only when no stable source exists does NOVA fall back to process-random signing material. This keeps PIN/Composio cookies valid across rolling deploys and multiple Render instances.
+
+## Mission-aware AURA-VECTOR memory
+
+NOVA now has a dedicated agentic runtime memory layer in addition to the legacy document knowledge base. AURA-VECTOR stores typed memory such as operational state, failures, evidence, procedures, decisions, tools and skills with explicit scope, mission IDs, verification levels, temporal validity and retrieval-utility feedback.
+
+Every NOVA-to-OpenClaw chat-completions dispatch passes through one server-side memory boundary. Relevant memories are retrieved with **pgvector dense similarity + PostgreSQL full-text lexical search**, rescored by mission, execution phase, evidence quality, recency and historical utility, then injected before OpenClaw executes. If embeddings are unavailable, ingestion and lexical retrieval continue instead of taking the agent runtime down.
+
+The runtime does **not** treat model output as verified evidence. Work Tree inputs are stored as observed operational memory, gateway failures as observed failure memory, and returned model payloads as claimed episodic memory unless a real verification step explicitly records stronger evidence.
+
+Protected APIs:
+
+```text
+GET  /api/vector-memory/status
+POST /api/vector-memory/ingest
+POST /api/vector-memory/search
+POST /api/vector-memory/feedback
+```
+
+OpenClaw can also use `nova-services vector-status`, `vector-search`, `vector-ingest`, and `vector-feedback`. See [`docs/AURA_VECTOR_MEMORY.md`](docs/AURA_VECTOR_MEMORY.md).
 
 ## Runtime topology
 
@@ -26,6 +46,11 @@ Browser / NOVA UI
         ├─ legacy /api/v1/chat/completions             │
         │      └─ server reroutes all non-internal     │
         │         chat into the same agent path ───────┤
+        │                                              ▼
+        │                         AURA-VECTOR fetch boundary
+        │                         dense + lexical retrieval
+        │                         mission/evidence scoring
+        │                                              │
         │                                              ▼
         │                                  OpenClaw Gateway
         │                                  127.0.0.1:18789
@@ -40,7 +65,7 @@ Browser / NOVA UI
         │                     └──── evidence ┤
         │                                    │
         │                                    ├─ model calls → internal /api/v1
-        │                                    └─ nova-services → Composio/native apps
+        │                                    └─ nova-services → Composio/native apps/vector memory
         │
         └─ settings/integrations → Express API :8080
 ```
@@ -58,8 +83,14 @@ artifacts/nova/public/assets/composio-settings.js
 artifacts/api-server                  Express API and Work-Tree persistence
 artifacts/api-server/src/lib/github-repo.ts
                                       deterministic GitHub URL parser, API client, cache and evidence builder
+artifacts/api-server/src/lib/vector-memory.ts
+                                      mission-aware hybrid runtime memory engine
+artifacts/api-server/src/lib/vector-memory-fetch-hook.ts
+                                      automatic memory injection/capture at the OpenClaw boundary
 artifacts/api-server/src/routes/github.ts
                                       PIN-protected GitHub preflight diagnostic
+artifacts/api-server/src/routes/vector-memory.ts
+                                      protected runtime memory status/search/ingest/feedback APIs
 artifacts/api-server/src/lib/composio.ts
                                       Composio session and REST client
 artifacts/api-server/src/routes/composio.ts
@@ -70,7 +101,7 @@ artifacts/api-server/src/routes/openai-proxy.ts
                                       internal model proxy + legacy browser-chat server reroute
 openclaw/openclaw.json                strict Gateway/model/tool configuration
 openclaw/workspace/skills/nova-services
-                                      authenticated native + Composio service adapter
+                                      authenticated native + Composio + vector-memory service adapter
 scripts/start-openclaw.mjs            process supervisor, secret self-heal and readiness gate
 scripts/repo-audit.mjs                one-by-one tracked-file audit and JSON evidence manifest
 skills/*                              existing repository skill catalog
@@ -80,6 +111,7 @@ skills/*                              existing repository skill catalog
 
 | Capability | NOVA path | OpenClaw access |
 |---|---|---|
+| Mission-aware runtime memory | `/api/vector-memory/*` | automatic injection + `nova-services vector-*` |
 | Public GitHub repository inspection | automatic server-side preflight; diagnostic `/api/github/preflight` | evidence is injected before the answer |
 | Private GitHub/API-authenticated reads | direct GitHub preflight when a server token is present | `GITHUB_TOKEN`, `GH_TOKEN`, or `NOVA_GITHUB_TOKEN` |
 | GitHub account/write actions | Composio when connected | `composio-search` then `composio-execute` |
@@ -150,6 +182,7 @@ The deployment is current only when `/api/version.commit` exactly equals the cur
 ```bash
 pnpm install --frozen-lockfile
 node scripts/repo-audit.mjs
+pnpm run test:vector-memory
 pnpm run typecheck
 pnpm --filter @workspace/api-server run build
 node --check artifacts/nova/public/assets/composio-settings.js
@@ -181,8 +214,8 @@ The production Docker image pins Node `24.18.0` and OpenClaw `2026.6.11`. At sta
 | `OPENCLAW_GATEWAY_TOKEN` | Optional persistent Gateway bearer token; generated at boot when absent |
 | `OPENCLAW_STATE_DIR` | OpenClaw sessions/state directory; point this at a persistent Render disk path to retain state across deploys |
 | `NOVA_OPENCLAW_MODEL_ID` | Model ID sent through NOVA's server-side proxy; defaults to `WORK_TREE_MODEL` or `gpt-4o-mini` |
-| `OPENAI_API_KEY` | Used by NOVA proxy for `gpt-*` models |
+| `OPENAI_API_KEY` | Used by NOVA proxy for `gpt-*` models and AURA-VECTOR embeddings |
 | `GEMINI_API_KEY` | Used by NOVA proxy for `gemini-*` models |
 | `BITDEER_API_KEY` | Used by NOVA proxy for other configured model IDs |
 | `SUPERNOVA_API_KEY` / `OPENCLAW_API_KEY` | Internal peer authentication for gated NOVA service endpoints and stable fallback session signing |
-| `DATABASE_URL` | Work-Tree, knowledge and integration persistence; also an eligible stable fallback session seed when no dedicated seed exists |
+| `DATABASE_URL` | Work-Tree, knowledge, integrations and AURA-VECTOR persistence; also an eligible stable fallback session seed when no dedicated seed exists |

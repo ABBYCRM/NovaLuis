@@ -14,6 +14,7 @@
     "typecheck:libs": "tsc --build",
     "typecheck:workspaces": "pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "typecheck": "pnpm run typecheck:libs && pnpm run typecheck:workspaces",
+    "test:vector-memory": "pnpm --filter @workspace/scripts exec tsx ../artifacts/api-server/src/lib/vector-memory.self-test.ts",
     "build:api": "pnpm --filter @workspace/api-server run build",
     "build": "pnpm run typecheck && pnpm run build:api",
     "start": "node --enable-source-maps ./artifacts/api-server/dist/index.mjs",

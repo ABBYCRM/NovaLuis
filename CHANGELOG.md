@@ -4,6 +4,16 @@ All notable changes to **NOVA** (primary twin of SUPERNOVA/ABBY).
 
 ---
 
+## 2026-07-14 — Add mission-aware AURA-VECTOR runtime memory
+
+- Added a typed `vector_memories` runtime store with pgvector HNSW, PostgreSQL full-text GIN retrieval, mission/scope metadata, verification state, temporal validity, supersession metadata, and retrieval utility counters.
+- Added hybrid dense + lexical retrieval with intent classification, execution-phase weighting, mission compatibility, evidence weighting, temporal decay, stale/contradiction penalties, and near-duplicate diversity filtering.
+- Embedding failures now degrade to lexical-only memory instead of disabling ingestion or OpenClaw execution.
+- Added a single OpenClaw fetch-boundary hook that automatically injects relevant runtime memory into both normal agent chat and Work Tree dispatches.
+- Work Tree dispatch input is captured as observed operational memory; gateway HTTP failures are captured as observed failure memory; returned model payloads are stored as claimed episodic memory rather than being falsely promoted to verified evidence.
+- Added protected `/api/vector-memory/status`, `/ingest`, `/search`, and `/feedback` endpoints plus `vector-*` commands in the `nova-services` OpenClaw skill.
+- Added deterministic algorithm self-tests and `docs/AURA_VECTOR_MEMORY.md`.
+
 ## 2026-07-14 — Keep operator sessions valid across replicas
 
 - Live PIN `22` succeeded, but the next protected request could return `locked` because process-random fallback signing keys differed across Render instances.
