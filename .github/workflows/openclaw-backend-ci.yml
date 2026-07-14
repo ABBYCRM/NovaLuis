@@ -87,6 +87,9 @@ jobs:
           grep -q '/assets/composio-settings.js' artifacts/nova/index.html
           grep -q 'composio-search' openclaw/workspace/skills/nova-services/SKILL.md
           grep -q '/agent/v1/chat/completions' artifacts/nova/public/assets/composio-settings.js
+          grep -q 'getGitHubEvidenceForText' artifacts/api-server/src/routes/agent-chat.ts
+          grep -q 'proxyBrowserChatToAgent' artifacts/api-server/src/routes/openai-proxy.ts
+          grep -q 'GitHub REST API' artifacts/api-server/src/lib/github-repo.ts
 
       - name: Install and validate pinned OpenClaw
         env:
@@ -115,7 +118,7 @@ jobs:
       - name: Build production image
         run: docker build --tag nova-openclaw:ci .
 
-      - name: Smoke-test production container and Settings UI
+      - name: Smoke-test production container, GitHub preflight, and Settings UI
         run: |
           set -euo pipefail
           docker run --detach --name nova-openclaw-ci \
@@ -161,9 +164,21 @@ jobs:
           curl --fail --silent --cookie-jar /tmp/nova-cookie.txt \
             -H 'Content-Type: application/json' -d '{"pin":"22"}' \
             http://127.0.0.1:18080/api/work-tree/unlock >/tmp/unlock.json
+          grep -q '"ok":true' /tmp/unlock.json
+
           curl --fail --silent --cookie /tmp/nova-cookie.txt \
             http://127.0.0.1:18080/api/integrations/composio/status >/tmp/composio-status.json
           grep -q '"configured":false' /tmp/composio-status.json
+
+          curl --fail --silent --cookie /tmp/nova-cookie.txt \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"https://github.com/ABBYCRM/NovaLuis.git tell me what is in this repository"}' \
+            http://127.0.0.1:18080/api/github/preflight >/tmp/github-preflight.json
+          grep -q '"ok":true' /tmp/github-preflight.json
+          grep -q 'ABBYCRM/NovaLuis' /tmp/github-preflight.json
+          grep -q 'GitHub REST API' /tmp/github-preflight.json
+          grep -q 'package.json' /tmp/github-preflight.json
+          grep -q 'recentCommits' /tmp/github-preflight.json
 
           cat > /tmp/nova-ui-proof/proof.mjs <<'NODE'
           import { chromium } from 'playwright';
@@ -267,5 +282,6 @@ jobs:
             /tmp/composio-ui-proof.json
             /tmp/composio-ui-desktop.png
             /tmp/composio-ui-mobile.png
+            /tmp/github-preflight.json
           if-no-files-found: warn
           retention-days: 7
