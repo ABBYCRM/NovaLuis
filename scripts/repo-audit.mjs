@@ -38,12 +38,8 @@ function gitFiles() {
 function checkTs(file, text) {
   const ext = path.extname(file).toLowerCase();
   const kind = ext === ".tsx" ? ts.ScriptKind.TSX : ext === ".jsx" ? ts.ScriptKind.JSX : ts.ScriptKind.TS;
-  const result = ts.transpileModule(text, {
-    fileName: file,
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.Preserve },
-    reportDiagnostics: true,
-  });
-  const diagnostics = (result.diagnostics || []).filter((d) => d.category === ts.DiagnosticCategory.Error);
+  const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.ES2022, true, kind);
+  const diagnostics = Array.isArray(sourceFile.parseDiagnostics) ? sourceFile.parseDiagnostics : [];
   return diagnostics.map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));
 }
 
