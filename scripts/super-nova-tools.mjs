@@ -394,6 +394,193 @@ async function browserFetch(args) {
   };
 }
 
+// ── OpenAI Retrieval API ──────────────────────────────────────────────────────
+// Semantic search over an OpenAI vector store.
+// Requires OPENAI_VECTOR_STORE_ID (and OPENAI_API_KEY).
+// The store must be pre-populated via the Files + VectorStores API.
+async function openaiRetrieval(args) {
+  const query = String(args.query || "").trim().slice(0, 800);
+  if (!query) return { error: "query required" };
+  const vsId = String(args.vector_store_id || process.env.OPENAI_VECTOR_STORE_ID || "").trim();
+  if (!vsId) {
+    return {
+      error:
+        "openai_retrieval: OPENAI_VECTOR_STORE_ID is not set. " +
+        "Create a vector store via the OpenAI Files/VectorStores API and set OPENAI_VECTOR_STORE_ID to its ID.",
+    };
+  }
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return { error: "OPENAI_API_KEY not set" };
+
+  const body = {
+    query,
+    max_num_results: Math.min(Math.max(1, Number(args.max_results) || 5), 20),
+    rewrite_query: args.rewrite_query !== false,
+  };
+  if (args.attribute_filter) body.attribute_filter = args.attribute_filter;
+  if (args.score_threshold != null) {
+    body.ranking_options = { score_threshold: Number(args.score_threshold) };
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `https://api.openai.com/v1/vector_stores/${vsId}/search`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { error: `Retrieval API HTTP ${res.status}: ${text.slice(0, 300)}` };
+    }
+    const j = await res.json();
+    const results = (j.data || []).map((r) => ({
+      file: r.filename || r.file_id,
+      score: r.score,
+      content: (r.content || []).map((c) => c.text).join("\n").slice(0, 1200),
+    }));
+    return { query: j.search_query || query, results, count: results.length };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── OpenAI Code Interpreter ───────────────────────────────────────────────────
+// Run Python code in OpenAI's sandboxed container via the Responses API.
+// Safe replacement for the DANGEROUS run_python tool when SUPER_NOVA_EXEC is off.
+// Timeout is generous (2 min) to allow compilation + computation.
+const CI_TIMEOUT_MS = Number(process.env.OPENAI_CI_TIMEOUT_MS || 120_000);
+
+async function openaiCodeInterpreter(args) {
+  const code = String(args.code || "").trim();
+  if (!code) return { error: "code required" };
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return { error: "OPENAI_API_KEY not set" };
+
+  const model = process.env.OPENAI_CI_MODEL || "gpt-4o-mini";
+  const body = {
+    model,
+    tools: [{ type: "code_interpreter", container: { type: "auto" } }],
+    tool_choice: "required",
+    input: [
+      {
+        role: "system",
+        content:
+          "You are a code execution assistant. Execute the Python code the user provides exactly as given. " +
+          "Return the complete stdout/stderr output and any generated files.",
+      },
+      {
+        role: "user",
+        content:
+          `Run this Python code and return the full output:\n\`\`\`python\n${code.slice(0, 20_000)}\n\`\`\``,
+      },
+    ],
+    max_output_tokens: Number(args.max_tokens) || 4096,
+  };
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CI_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { error: `Code Interpreter API HTTP ${res.status}: ${text.slice(0, 300)}` };
+    }
+    const j = await res.json();
+    const msgItem = (j.output || []).find((o) => o.type === "message");
+    const outputText = (msgItem?.content || [])
+      .filter((c) => c.type === "output_text")
+      .map((c) => c.text)
+      .join("")
+      .trim();
+    const files = (msgItem?.content || [])
+      .flatMap((c) => c.annotations || [])
+      .filter((a) => a.type === "container_file_citation")
+      .map((a) => ({ file_id: a.file_id, filename: a.filename, container_id: a.container_id }));
+    const ciCall = (j.output || []).find((o) => o.type === "code_interpreter_call");
+    return {
+      output: outputText,
+      stdout: (ciCall?.outputs || []).map((o) => o.logs || "").join("") || outputText,
+      code_ran: ciCall?.code,
+      files: files.length ? files : undefined,
+      usage: j.usage,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── OpenAI Hosted Shell ───────────────────────────────────────────────────────
+// Run shell commands in OpenAI's managed Debian container via the Responses API.
+// Sandboxed and ephemeral — safe alternative to exec/bash that doesn't need
+// SUPER_NOVA_EXEC=1. No outbound network by default (OpenAI default policy).
+const HOSTED_SHELL_TIMEOUT_MS = Number(process.env.OPENAI_SHELL_TIMEOUT_MS || 120_000);
+
+async function openaiHostedShell(args) {
+  const command = String(args.command || "").trim();
+  if (!command) return { error: "command required" };
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return { error: "OPENAI_API_KEY not set" };
+
+  const model = process.env.OPENAI_SHELL_MODEL || "gpt-4o-mini";
+  const body = {
+    model,
+    tools: [{ type: "shell", environment: { type: "container_auto" } }],
+    tool_choice: "required",
+    input: `Execute this shell command exactly and return the complete stdout/stderr:\n\`\`\`bash\n${command.slice(0, 5_000)}\n\`\`\``,
+    max_output_tokens: Number(args.max_tokens) || 4096,
+  };
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), HOSTED_SHELL_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { error: `Hosted Shell API HTTP ${res.status}: ${text.slice(0, 300)}` };
+    }
+    const j = await res.json();
+    const msgItem = (j.output || []).find((o) => o.type === "message");
+    const outputText = (msgItem?.content || [])
+      .filter((c) => c.type === "output_text")
+      .map((c) => c.text)
+      .join("")
+      .trim();
+    const shellCalls = (j.output || []).filter((o) => o.type === "shell_call");
+    return {
+      output: outputText,
+      commands_run: shellCalls.flatMap((sc) => sc.action?.commands || []).filter(Boolean),
+      usage: j.usage,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function imageGenerate(args, ctx) {
   const prompt = String(args.prompt || "").slice(0, 1000);
   if (!prompt) return { error: "prompt required" };
@@ -911,6 +1098,26 @@ const SAFE_TOOLS = {
   memory_get:      { run: memGet,         desc: "get a memory item by key. args: {key}." },
   memory_put:      { run: memPut,         desc: "save a memory item. args: {key, value}." },
   memory_search:   { run: memSearch,      desc: "search memory by query. args: {query, limit?}." },
+
+  // ── OpenAI cloud tools (SAFE — sandboxed on OpenAI's servers) ────────────
+  openai_retrieval: {
+    run: openaiRetrieval,
+    desc:
+      "semantic search over an OpenAI vector store. args: {query, max_results?, vector_store_id?, score_threshold?, rewrite_query?, attribute_filter?}. " +
+      "Requires OPENAI_VECTOR_STORE_ID env var (or pass vector_store_id). Returns {query, results:[{file,score,content}], count}.",
+  },
+  openai_code_interpreter: {
+    run: openaiCodeInterpreter,
+    desc:
+      "run Python code in OpenAI's sandboxed container (no SUPER_NOVA_EXEC needed). args: {code, max_tokens?}. " +
+      "Returns {output, stdout, code_ran, files?, usage}. Safe alternative to run_python.",
+  },
+  openai_hosted_shell: {
+    run: openaiHostedShell,
+    desc:
+      "run a shell command in OpenAI's managed Debian container (no SUPER_NOVA_EXEC needed). args: {command, max_tokens?}. " +
+      "Returns {output, commands_run, usage}. Ephemeral — no persistent state between calls.",
+  },
 
   // ── Tool catalog ──────────────────────────────────────────────────────────
   tool_search:     { run: toolSearch,     desc: "search the tool catalog. args: {query, category?}. Returns matching tool metadata." },

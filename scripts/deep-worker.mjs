@@ -183,6 +183,94 @@ async function callModelWithWebSearch(prompt, systemPrompt, maxTokens) {
   }
 }
 
+// ── Responses API — Code Interpreter ─────────────────────────────────────────
+// Used when a job sets  codeInterpreter: true  in its JSON file.
+// Runs the prompt through a model that has Python sandbox access.
+async function callModelWithCodeInterpreter(prompt, systemPrompt, maxTokens) {
+  if (!OPENAI_KEY) {
+    console.warn("deep-worker: OPENAI_API_KEY not set — falling back to regular model for code-interpreter job");
+    return callModel(prompt, systemPrompt, DEFAULT_MODEL, maxTokens);
+  }
+  const model = process.env.OPENAI_CI_MODEL || WEB_SEARCH_MODEL;
+  const DEFAULT_SYSTEM =
+    "You are a data-analysis and computation subagent for NOVA. " +
+    "Use the code_interpreter tool to execute Python and return accurate results. " +
+    "Show your working and explain any outputs clearly.";
+  const body = {
+    model,
+    tools: [{ type: "code_interpreter", container: { type: "auto" } }],
+    tool_choice: "auto",
+    input: [
+      { role: "system", content: systemPrompt || DEFAULT_SYSTEM },
+      { role: "user",   content: prompt },
+    ],
+    max_output_tokens: maxTokens || 8192,
+  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${OPENAI_BASE}/responses`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Responses API (CI) HTTP ${res.status}: ${text.slice(0, 500)}`);
+    }
+    const j = await res.json();
+    const msgItem = (j.output || []).find(o => o.type === "message");
+    const text = (msgItem?.content || []).find(c => c.type === "output_text")?.text || "";
+    return { result: text, usage: j.usage, model: j.model || model, codeInterpreter: true };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Responses API — Hosted Shell ──────────────────────────────────────────────
+// Used when a job sets  hostedShell: true  in its JSON file.
+async function callModelWithHostedShell(prompt, systemPrompt, maxTokens) {
+  if (!OPENAI_KEY) {
+    console.warn("deep-worker: OPENAI_API_KEY not set — falling back to regular model for hosted-shell job");
+    return callModel(prompt, systemPrompt, DEFAULT_MODEL, maxTokens);
+  }
+  const model = process.env.OPENAI_SHELL_MODEL || WEB_SEARCH_MODEL;
+  const DEFAULT_SYSTEM =
+    "You are a shell-execution subagent for NOVA. " +
+    "Use the shell tool to run commands in a Debian container and return the output accurately.";
+  const body = {
+    model,
+    tools: [{ type: "shell", environment: { type: "container_auto" } }],
+    tool_choice: "auto",
+    input: [
+      { role: "system", content: systemPrompt || DEFAULT_SYSTEM },
+      { role: "user",   content: prompt },
+    ],
+    max_output_tokens: maxTokens || 8192,
+  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${OPENAI_BASE}/responses`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Responses API (shell) HTTP ${res.status}: ${text.slice(0, 500)}`);
+    }
+    const j = await res.json();
+    const msgItem = (j.output || []).find(o => o.type === "message");
+    const text = (msgItem?.content || []).find(c => c.type === "output_text")?.text || "";
+    return { result: text, usage: j.usage, model: j.model || model, hostedShell: true };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function processJob(name) {
   const runningPath = await claimJob(name);
   if (!runningPath) return;
@@ -199,10 +287,14 @@ async function processJob(name) {
 
   let outcome;
   try {
-    // Route to OpenAI Responses API + web_search when job requests live search.
-    const r = job.webSearch
-      ? await callModelWithWebSearch(job.prompt, job.systemPrompt, job.maxTokens)
-      : await callModel(job.prompt, job.systemPrompt, job.model || DEFAULT_MODEL, job.maxTokens);
+    // Route to specialised Responses API paths based on job flags.
+    const r = job.codeInterpreter
+      ? await callModelWithCodeInterpreter(job.prompt, job.systemPrompt, job.maxTokens)
+      : job.hostedShell
+        ? await callModelWithHostedShell(job.prompt, job.systemPrompt, job.maxTokens)
+        : job.webSearch
+          ? await callModelWithWebSearch(job.prompt, job.systemPrompt, job.maxTokens)
+          : await callModel(job.prompt, job.systemPrompt, job.model || DEFAULT_MODEL, job.maxTokens);
     outcome = {
       id, ok: true,
       result: r.result, model: r.model, usage: r.usage,

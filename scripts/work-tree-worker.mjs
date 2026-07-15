@@ -124,6 +124,11 @@ const TOOL_RISK = {
   git_status:            "low",
   git_diff:              "low",
 
+  // ── OpenAI cloud tools (sandboxed on OpenAI's servers) ───────────────────
+  openai_retrieval:          "medium",
+  openai_code_interpreter:   "medium",
+  openai_hosted_shell:       "medium",
+
   // ── Memory ────────────────────────────────────────────────────────────────
   memory_get:            "low",
   memory_put:            "medium",

@@ -170,6 +170,20 @@ export const TOOL_DEFS = [
     "Read a webpage and extract an answer to a question.",
     obj({ url: s("URL to read."), question: s("Focus question.") }, ["url"])),
 
+  // ── OpenAI cloud tools ───────────────────────────────────────────────────
+  t("openai_retrieval",    "search",       "medium",      "openclaw",
+    "Semantic search over an OpenAI vector store. Requires OPENAI_VECTOR_STORE_ID env var.",
+    obj({ query: s("Search query."), max_results: n("Max results (1-20).", 5), vector_store_id: s("Override OPENAI_VECTOR_STORE_ID."), score_threshold: n("Min relevance score (0-1)."), rewrite_query: { type: "boolean", description: "Let OpenAI rewrite the query for retrieval (default true)." }, attribute_filter: { type: "object", description: "Optional attribute filter object." } }, ["query"]),
+    { enabledByDefault: true }),
+  t("openai_code_interpreter", "code",    "medium",      "openclaw",
+    "Run Python code in OpenAI's sandboxed container via the Responses API. No SUPER_NOVA_EXEC needed.",
+    obj({ code: s("Python code to execute."), max_tokens: n("Max output tokens.", 4096) }, ["code"]),
+    { enabledByDefault: true }),
+  t("openai_hosted_shell", "code",        "medium",      "openclaw",
+    "Run a shell command in OpenAI's managed Debian container. Sandboxed, ephemeral, no SUPER_NOVA_EXEC needed.",
+    obj({ command: s("Shell command to execute."), max_tokens: n("Max output tokens.", 4096) }, ["command"]),
+    { enabledByDefault: true }),
+
   // ── Browser ───────────────────────────────────────────────────────────────
   t("browser",             "browser",      "high",        "openclaw",
     "Operate a browser session: open, click, type, screenshot, evaluate, close.",
