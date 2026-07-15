@@ -650,6 +650,42 @@ export async function recordVectorMemoryOutcome(ids: number[], successful: boole
   }
 }
 
+// ── Background fill: embed all rows that have embedding IS NULL ───────────────
+let fillJob: { running: boolean; filled: number; errors: number; total: number; startedAt: string } | null = null;
+
+export function getFillJobStatus() { return fillJob; }
+
+export async function fillMissingEmbeddings(): Promise<void> {
+  const database = db;
+  if (!hasDatabase || !database) return;
+  await ensureVectorMemorySchema();
+
+  // Fetch all IDs + content for rows with no embedding
+  const rows = await database.execute(sql`
+    SELECT id, content FROM vector_memories WHERE embedding IS NULL ORDER BY id LIMIT 5000
+  `);
+  const items = rowsOf(rows) as { id: number; content: string }[];
+
+  fillJob = { running: true, filled: 0, errors: 0, total: items.length, startedAt: new Date().toISOString() };
+
+  // Run sequentially at ~2/sec to stay within Gemini rate limits
+  for (const item of items) {
+    if (!fillJob.running) break; // allow external cancellation
+    try {
+      const vec = await embed(item.content);
+      const literal = `[${vec.join(",")}]`;
+      await database.execute(sql`
+        UPDATE vector_memories SET embedding = ${literal}::vector WHERE id = ${item.id} AND embedding IS NULL
+      `);
+      fillJob.filled++;
+    } catch {
+      fillJob.errors++;
+    }
+    await new Promise((res) => setTimeout(res, 150)); // 150ms between calls ≈ 6/sec
+  }
+  fillJob.running = false;
+}
+
 export async function vectorMemoryStatus(): Promise<Record<string, unknown>> {
   const database = db;
   if (!hasDatabase || !database) return { available: false, reason: "database unavailable" };

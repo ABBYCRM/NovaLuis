@@ -4,37 +4,70 @@ import { sql } from "drizzle-orm";
 const OPENAI_BASE = "https://api.openai.com/v1";
 const OPENAI_EMBED_MODEL = "text-embedding-3-small";
 
-function embedConfig(): {
-  url: string;
-  key: string;
-  body: Record<string, unknown>;
-} {
-  const oa = process.env.OPENAI_API_KEY ?? "";
-  if (oa) {
-    return {
-      url: `${OPENAI_BASE}/embeddings`,
-      key: oa,
-      body: { model: OPENAI_EMBED_MODEL },
-    };
-  }
-  throw new Error("no embeddings provider configured (OPENAI_API_KEY)");
-}
+// Gemini native embedContent — produces 1536-dim vectors via outputDimensionality.
+// Model: gemini-embedding-2 (verified working 2026-07-15).
+const GEMINI_EMBED_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_EMBED_MODEL = "models/gemini-embedding-2";
+const GEMINI_EMBED_DIMS  = 1536; // must match vector(1536) column
 
-// Embed a single string (1536-dim). Uses a server-side key so the browser never
-// sees it.
-export async function embed(input: string): Promise<number[]> {
-  const { url, key, body } = embedConfig();
-  const r = await fetch(url, {
+async function embedWithOpenAI(input: string): Promise<number[]> {
+  const key = process.env.OPENAI_API_KEY ?? "";
+  if (!key) throw new Error("OPENAI_API_KEY not set");
+  const r = await fetch(`${OPENAI_BASE}/embeddings`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({ ...body, input }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model: OPENAI_EMBED_MODEL, input }),
   });
-  if (!r.ok) throw new Error(`embeddings failed: ${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(`openai embed ${r.status}: ${await r.text()}`);
   const j = (await r.json()) as { data: { embedding: number[] }[] };
   return j.data[0]!.embedding;
+}
+
+async function embedWithGemini(input: string): Promise<number[]> {
+  const key = process.env.GEMINI_API_KEY ?? "";
+  if (!key) throw new Error("GEMINI_API_KEY not set");
+  const url = `${GEMINI_EMBED_BASE}/${GEMINI_EMBED_MODEL}:embedContent?key=${key}`;
+  const body = JSON.stringify({
+    content: { parts: [{ text: input }] },
+    outputDimensionality: GEMINI_EMBED_DIMS,
+  });
+
+  // Retry with exponential backoff on 429 / 503 / network errors.
+  const MAX_ATTEMPTS = 5;
+  let delay = 500; // ms
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (r.ok) {
+      const j = (await r.json()) as { embedding: { values: number[] } };
+      return j.embedding.values;
+    }
+    const retryable = r.status === 429 || r.status === 503 || r.status === 500;
+    if (!retryable || attempt === MAX_ATTEMPTS) {
+      throw new Error(`gemini embed ${r.status}: ${await r.text()}`);
+    }
+    // Respect Retry-After header if present, else use exponential backoff.
+    const retryAfter = r.headers.get("Retry-After");
+    const waitMs = retryAfter ? Number(retryAfter) * 1000 : delay;
+    await new Promise((res) => setTimeout(res, waitMs));
+    delay *= 2; // exponential
+  }
+  throw new Error("gemini embed: exceeded max attempts");
+}
+
+// Embed a single string (1536-dim).
+// Priority: Gemini (working key) → OpenAI fallback (if no Gemini key).
+// Uses server-side keys so the browser never sees them.
+export async function embed(input: string): Promise<number[]> {
+  const gemini = process.env.GEMINI_API_KEY ?? "";
+  if (gemini) {
+    return embedWithGemini(input);
+  }
+  // Fallback: OpenAI when no Gemini key is configured.
+  return embedWithOpenAI(input);
 }
 
 // Split long text into overlapping chunks suitable for embedding.

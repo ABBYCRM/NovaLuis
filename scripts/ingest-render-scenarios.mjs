@@ -31,8 +31,8 @@ const FORCE   = args.includes("--force");
 const CSV_PATH    = resolve(__dirname, "render_scenarios/render_scenarios.csv");
 const API_PORT    = Number(process.env.PORT || 8080);
 const BASE_URL    = `http://127.0.0.1:${API_PORT}/api`;
-const BATCH_SIZE  = 5;   // parallel ingest per batch (each calls OpenAI embed)
-const DELAY_MS    = 300; // ms between batches to avoid rate-limiting
+const BATCH_SIZE  = 1;   // sequential — avoids Gemini rate-limit pressure
+const DELAY_MS    = 50;  // ms between calls (sequential, minimal needed)
 
 // ── Auth cookie (mirrors work-tree-auth.ts sign()) ───────────────────────────
 function makeSessionCookie() {

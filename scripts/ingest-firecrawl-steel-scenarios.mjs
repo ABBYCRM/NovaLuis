@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 /**
- * Ingests all 500 GitHub agentic-runtime scenarios into the vector memory store.
+ * Ingests all 500 Firecrawl + Steel agentic-runtime scenarios into the vector
+ * memory store.
+ *
+ * CSV schema: id, service, category, trigger, condition, if_action,
+ *             else_action, severity, source_doc
  *
  * Usage:
- *   node scripts/ingest-github-scenarios.mjs
- *   node scripts/ingest-github-scenarios.mjs --dry-run
- *   node scripts/ingest-github-scenarios.mjs --force
+ *   node scripts/ingest-firecrawl-steel-scenarios.mjs
+ *   node scripts/ingest-firecrawl-steel-scenarios.mjs --dry-run
+ *   node scripts/ingest-firecrawl-steel-scenarios.mjs --force
  */
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -18,7 +22,7 @@ const args    = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run");
 const FORCE   = args.includes("--force");
 
-const CSV_PATH   = resolve(__dirname, "github_scenarios/github_scenarios.csv");
+const CSV_PATH   = resolve(__dirname, "firecrawl_steel_scenarios/firecrawl_steel_scenarios.csv");
 const API_PORT   = Number(process.env.PORT || 8080);
 const BASE_URL   = `http://127.0.0.1:${API_PORT}/api`;
 const BATCH_SIZE = 1;
@@ -71,6 +75,7 @@ function loadScenarios() {
   const idx = Object.fromEntries(header.map((h, i) => [h, i]));
   return data.map(row => ({
     id:          row[idx.id],
+    service:     row[idx.service],
     category:    row[idx.category],
     trigger:     row[idx.trigger],
     condition:   row[idx.condition],
@@ -83,7 +88,7 @@ function loadScenarios() {
 
 function scenarioToText(s) {
   return [
-    `[${s.id} | ${s.category} | severity:${s.severity}]`,
+    `[${s.id} | ${s.service}/${s.category} | severity:${s.severity}]`,
     `TRIGGER: ${s.trigger}`,
     `CONDITION: ${s.condition}`,
     `IF: ${s.if_action}`,
@@ -97,12 +102,13 @@ async function ingestOne(scenario, cookie) {
     content:      scenarioToText(scenario),
     memoryType:   "procedural",
     scope:        "global",
-    scopeKey:     "github-scenarios",
+    scopeKey:     "firecrawl-steel-scenarios",
     verification: "verified",
     importance:   0.85,
     confidence:   0.92,
     metadata: {
       scenario_id: scenario.id,
+      service:     scenario.service,
       category:    scenario.category,
       severity:    scenario.severity,
       trigger:     scenario.trigger,
@@ -137,7 +143,7 @@ async function runBatch(batch, cookie) {
 }
 
 async function main() {
-  console.log("\n🔵 GitHub scenarios RAG ingest");
+  console.log("\n🔵 Firecrawl + Steel scenarios RAG ingest");
   console.log(`   CSV: ${CSV_PATH}`);
   console.log(`   API: ${BASE_URL}`);
   console.log(`   Batch: ${BATCH_SIZE} | Delay: ${DELAY_MS}ms | Dry: ${DRY_RUN} | Force: ${FORCE}\n`);
@@ -157,7 +163,7 @@ async function main() {
   }).catch(() => null);
   if (statusRes?.ok) {
     const status = await statusRes.json();
-    console.log(`   Vector store: ${status.total ?? "?"} existing memories\n`);
+    console.log(`   Vector store: ${status.total ?? "?"} existing | ${status.embedded ?? "?"} embedded\n`);
   }
 
   let ok = 0, fail = 0;

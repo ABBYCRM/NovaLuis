@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
+  fillMissingEmbeddings,
   formatVectorMemoryContext,
+  getFillJobStatus,
   ingestVectorMemory,
   recordVectorMemoryOutcome,
   retrieveVectorMemory,
@@ -129,6 +131,28 @@ router.post("/vector-memory/search", async (req, res) => {
 const feedbackSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(100),
   successful: z.boolean(),
+});
+
+// POST /vector-memory/embed-missing  — start background embedding fill job
+// GET  /vector-memory/embed-missing  — check job status
+router.post("/vector-memory/embed-missing", async (req, res) => {
+  const job = getFillJobStatus();
+  if (job?.running) {
+    res.json({ started: false, reason: "job already running", job });
+    return;
+  }
+  // fire-and-forget
+  fillMissingEmbeddings().catch((err) => req.log.error({ err }, "fill-embeddings job failed"));
+  res.json({ started: true, message: "background fill job started — poll GET /vector-memory/embed-missing for progress" });
+});
+
+router.get("/vector-memory/embed-missing", async (req, res) => {
+  const job = getFillJobStatus();
+  if (!job) {
+    res.json({ running: false, message: "no fill job has been started yet" });
+    return;
+  }
+  res.json(job);
 });
 
 router.post("/vector-memory/feedback", async (req, res) => {

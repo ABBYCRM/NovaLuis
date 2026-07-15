@@ -21,8 +21,8 @@ const FORCE   = args.includes("--force");
 const CSV_PATH   = resolve(__dirname, "composio_scenarios/composio_scenarios.csv");
 const API_PORT   = Number(process.env.PORT || 8080);
 const BASE_URL   = `http://127.0.0.1:${API_PORT}/api`;
-const BATCH_SIZE = 5;
-const DELAY_MS   = 300;
+const BATCH_SIZE = 1;
+const DELAY_MS   = 50;
 
 function makeSessionCookie() {
   const secret = process.env.SESSION_SECRET;
