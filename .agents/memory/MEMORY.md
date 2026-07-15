@@ -83,3 +83,4 @@ OBSERVED
 NO REGRESSION
 ```
 - [Render supernova-db connectivity](render-supernova-db.md) — IP allowlist, deleted DB, pg SSL conflict, missing schema, GOVERNANCE.json fixes.
+- [RAG embedding pipeline](rag-embedding-pipeline.md) — Gemini-first embed, batch=1 ingest, embed-missing server job, concurrent fill breaks search queries.
