@@ -155,8 +155,8 @@ export function resolveRole(role, callerModel) {
     return { providerName: explicit, provider: PROVIDERS[explicit], model: modelFor(explicit), temperature: def.temperature, persona: def.persona };
   }
 
-  // 2. Priority cascade: local → kimi → openai (backup reasoning) → bitdeer.
-  for (const name of ["local", "kimi", "openai", "bitdeer"]) {
+  // 2. Priority cascade: local → openai → kimi (when endpoint confirmed) → bitdeer.
+  for (const name of ["local", "openai", "kimi", "bitdeer"]) {
     const p = PROVIDERS[name];
     if (usable(p, name)) {
       return { providerName: name, provider: p, model: modelFor(name), temperature: def.temperature, persona: def.persona };
