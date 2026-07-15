@@ -85,3 +85,4 @@ NO REGRESSION
 - [Render supernova-db connectivity](render-supernova-db.md) — IP allowlist, deleted DB, pg SSL conflict, missing schema, GOVERNANCE.json fixes.
 - [RAG embedding pipeline](rag-embedding-pipeline.md) — Gemini-first embed, batch=1 ingest, embed-missing server job, concurrent fill breaks search queries.
 - [Audit schema, routes, and dists](audit-schema-routes.md) — work_tree schema was wrong; lib/db+api-zod dists go stale; skills router wildcard collision; capabilities double-prefix; PIN security.
+- [DigitalOcean App Platform deployment](do-deployment.md) — nova-luis live on DO App Platform; same account as Render (intake@abbycrm.com).
