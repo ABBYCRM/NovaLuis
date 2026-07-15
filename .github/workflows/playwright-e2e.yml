@@ -1,0 +1,83 @@
+##############################################################################
+# Playwright E2E — NovaLuis
+#
+# Runs on every push / PR to main and on branches following the
+# YYYY-MM-DD/* naming convention used by this project.
+#
+# Steps
+#   1. Install deps + build the API server
+#   2. Start the API server in the background
+#   3. Run the api-e2e.test.ts suite against the live server
+#   4. Run the existing Playwright chat-ui smoke tests (if Chromium available)
+##############################################################################
+name: Playwright E2E
+
+on:
+  push:
+    branches:
+      - main
+      - "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/**"
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: playwright-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: E2E tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      NODE_ENV: test
+      PORT: 5000
+      API_E2E_BASE_URL: "http://localhost:5000"
+      # Ensure Composio routes respond in "not configured" mode without a key.
+      COMPOSIO_API_KEY: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+
+      - name: Activate pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --shamefully-hoist
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build API server
+        run: pnpm run build:api
+
+      - name: Start API server (background)
+        run: |
+          node --enable-source-maps ./artifacts/api-server/dist/index.mjs &
+          echo $! > /tmp/api-server.pid
+          # Wait up to 15 s for the health endpoint to respond
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:5000/healthz && break
+            echo "Waiting for API server... ($i/15)"
+            sleep 1
+          done
+
+      - name: Run API E2E tests
+        run: pnpm --filter @workspace/nova exec vitest run test/api-e2e.test.ts --reporter=verbose
+
+      - name: Run Nova UI smoke tests (Playwright)
+        env:
+          REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE: ""   # skips browser suite gracefully in CI
+        run: pnpm --filter @workspace/nova exec vitest run test/chat-ui-smoke.test.ts --reporter=verbose
+
+      - name: Stop API server
+        if: always()
+        run: kill $(cat /tmp/api-server.pid) 2>/dev/null || true

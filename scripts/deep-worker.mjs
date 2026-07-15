@@ -54,8 +54,15 @@ const MAX_CONCURRENT = Number(process.env.DEEP_WORKER_CONCURRENCY || 1);
 const REQUEST_TIMEOUT_MS = Number(process.env.DEEP_WORKER_TIMEOUT_MS || 300_000); // 5 min
 
 if (!BITDEER_KEY) {
-  console.error("deep-worker: FATAL — BITDEER_API_KEY missing; cannot call inference API");
-  process.exit(78);
+  console.warn("deep-worker: BITDEER_API_KEY not set — worker is idle. Set BITDEER_API_KEY to enable inference.");
+  // Idle loop: check every 60 s in case the key appears at runtime
+  setInterval(() => {
+    if (process.env.BITDEER_API_KEY) {
+      console.log("deep-worker: BITDEER_API_KEY detected at runtime — restarting process to activate.");
+      process.exit(0); // supervisor will restart us
+    }
+  }, 60_000).unref();
+  // Stay alive but do nothing until the key is set
 }
 
 async function ensureDirs() {

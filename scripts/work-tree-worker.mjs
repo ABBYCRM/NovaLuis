@@ -291,7 +291,21 @@ if (!process.env.OPENAI_API_KEY) {
   process.exit(78);
 }
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+// Force SSL for any non-localhost Postgres URL (Render, Railway, etc.).
+// pg does not parse sslmode=no-verify from the connection string so we
+// must set it explicitly, otherwise Render drops the connection.
+const poolSsl = (() => {
+  if (!DATABASE_URL) return undefined;
+  try {
+    const host = new URL(DATABASE_URL).hostname;
+    if (host === "localhost" || host === "127.0.0.1") return undefined;
+  } catch { /* unparseable — default to SSL */ }
+  return { rejectUnauthorized: false };
+})();
+const pool = new Pool({ connectionString: DATABASE_URL, ssl: poolSsl });
+pool.on("error", (err) => {
+  console.warn("work-tree-worker: pool background error (will retry):", err.message);
+});
 
 function clip(s, n) {
   s = String(s || "");
@@ -1259,12 +1273,27 @@ async function finalizeRun(run, nodes, stageLogs, ts) {
   return nodes.length;
 }
 
+// Exponential back-off for DB connection failures so we don't flood logs.
+let _dbBackoffMs = POLL_MS;
+const _dbBackoffMax = 60_000;
+
 let running = false;
 let recovered = false;
 async function tick() {
   if (running) return;
   running = true;
-  const client = await pool.connect();
+  let client;
+  try {
+    client = await pool.connect();
+    _dbBackoffMs = POLL_MS; // reset on success
+  } catch (connErr) {
+    console.warn(`work-tree-worker: DB connect failed (retry in ${Math.round(_dbBackoffMs / 1000)}s):`, connErr.message);
+    const wait = _dbBackoffMs;
+    _dbBackoffMs = Math.min(_dbBackoffMs * 2, _dbBackoffMax);
+    running = false;
+    setTimeout(() => tick(), wait);
+    return;
+  }
   let locked = false;
   try {
     const gov = readGovernance();
@@ -1305,12 +1334,14 @@ async function tick() {
   } catch (e) {
     console.error("work-tree-worker: tick error", e.message || e);
   } finally {
-    if (locked) {
-      await client
-        .query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_ID])
-        .catch(() => {});
+    if (client) {
+      if (locked) {
+        await client
+          .query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_ID])
+          .catch(() => {});
+      }
+      client.release();
     }
-    client.release();
     running = false;
   }
 }

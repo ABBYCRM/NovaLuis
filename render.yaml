@@ -1,0 +1,43 @@
+##############################################################################
+# Render Blueprint — NovaLuis
+# https://render.com/docs/blueprint-spec
+#
+# autoDeploy is intentionally set to false — trigger deploys manually from the
+# Render dashboard or via the API after a verified branch push.
+##############################################################################
+
+services:
+  - type: web
+    name: nova
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: virginia
+    plan: free
+    branch: main
+    autoDeploy: false
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "8080"
+      # ── Composio ────────────────────────────────────────────────────────────
+      # Set COMPOSIO_API_KEY (project-level) or COMPOSIO_ORG_API_KEY (org-level)
+      # in the Render dashboard under Environment → Secret Files / Env Vars.
+      # Never commit real key values here; sync: false marks them as required
+      # without supplying a value.
+      - key: COMPOSIO_API_KEY
+        sync: false
+      - key: COMPOSIO_ORG_API_KEY
+        sync: false
+      # ── OpenClaw runtime ───────────────────────────────────────────────────
+      - key: OPENCLAW_GATEWAY_TOKEN
+        sync: false
+      - key: OPENCLAW_AGENT_MODEL
+        value: openclaw/default
+      - key: NOVA_AGENT_CHAT_GATEWAY_URL
+        sync: false
+      # ── Public URL (set to your Render service URL after first deploy) ──────
+      - key: PUBLIC_BASE_URL
+        sync: false
