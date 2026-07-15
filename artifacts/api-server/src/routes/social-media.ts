@@ -319,20 +319,30 @@ Return ONLY valid JSON (no markdown):
 {"platform":"instagram","contentType":"reel","tone":"funny","intervalHours":24,"reasoning":"one sentence max","postingTip":"one specific tactical tip"}`;
 
   try {
-    const { OpenAI } = await import("openai");
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: "https://openai.helicone.ai/v1",
-      defaultHeaders: {
-        "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY}`,
-        "Helicone-Property-Feature": "social-smart-suggest",
-      },
-    });
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini", temperature: 0.3, max_tokens: 300,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const raw = (completion.choices[0]?.message?.content ?? "{}").trim()
+    const ac = new AbortController();
+    const timeoutId = setTimeout(() => ac.abort(), 30_000);
+    let r: Response;
+    try {
+      r = await fetch("https://openai.helicone.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY ?? ""}`,
+          "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY ?? ""}`,
+          "Helicone-Property-Feature": "social-smart-suggest",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini", temperature: 0.3, max_tokens: 300,
+          messages: [{ role: "user", content: prompt }],
+        }),
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    if (!r.ok) throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
+    const j = (await r.json()) as { choices: { message: { content: string } }[] };
+    const raw = (j.choices[0]?.message?.content ?? "{}").trim()
       .replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
     const rec = JSON.parse(raw);
     res.json({
@@ -440,13 +450,15 @@ router.post("/social/schedule", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "invalid body", details: parsed.error.issues }); return; }
   try {
     const { scheduledAt, intervalHours, ...rest } = parsed.data;
+    // interval_hours was added via a raw SQL migration and is not yet in the
+    // Drizzle schema type — pass values as `any` to allow the extra column.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await db!.insert(socialScheduledPostsTable).values({
       ...rest,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
       status: scheduledAt || intervalHours ? "pending" : "draft",
-      // @ts-ignore — interval_hours added via migration, not yet in Drizzle type
       interval_hours: intervalHours ?? null,
-    }).returning();
+    } as any).returning();
     res.status(201).json({ ok: true, post: rows[0] });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
