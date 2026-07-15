@@ -306,6 +306,7 @@ body {
   background:rgba(0,0,0,0.72); backdrop-filter:blur(4px);
   display:flex; align-items:stretch; justify-content:center;
 }
+.fav-overlay[hidden] { display: none; }
 .fav-panel {
   display:flex; flex-direction:column; width:100%; max-width:820px;
   background:var(--surface); border-left:1px solid var(--border); border-right:1px solid var(--border);
@@ -441,6 +442,7 @@ body {
   background:rgba(0,0,0,0.72); backdrop-filter:blur(4px);
   display:flex; align-items:stretch; justify-content:center;
 }
+.sm-overlay[hidden] { display: none; }
 .sm-panel {
   display:flex; flex-direction:column; width:100%; max-width:1100px;
   background:var(--surface); border-left:1px solid var(--border); border-right:1px solid var(--border);
@@ -3738,6 +3740,7 @@ document.getElementById('fav-btn').addEventListener('click', function () {
   favOverlay.hidden = false;
   loadFavorites();
 });
+
 document.getElementById('fav-close-btn').addEventListener('click', function () {
   favOverlay.hidden = true;
 });
