@@ -280,7 +280,7 @@ body {
 .sidebar-footer {
   padding: 12px; border-top: 1px solid var(--border);
 }
-#settings-btn, #worktree-btn, #supernova-link-btn {
+#settings-btn {
   width: 100%; padding: 9px 12px;
   background: transparent; border: 1px solid var(--border);
   border-radius: 9px; color: var(--muted); font-size: 0.82rem;
@@ -288,9 +288,8 @@ body {
   transition: background 0.12s, color 0.12s, border-color 0.12s;
   text-decoration: none;
 }
-#worktree-btn, #supernova-link-btn { margin-bottom: 8px; }
-#settings-btn:hover, #worktree-btn:hover, #supernova-link-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--border-strong); }
-#settings-btn svg, #worktree-btn svg, #supernova-link-btn svg { width: 15px; height: 15px; }
+#settings-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--border-strong); }
+#settings-btn svg { width: 15px; height: 15px; }
 
 /* ── Favorites Panel ────────────────────────────────────────────────────── */
 #fav-btn {
@@ -1324,19 +1323,6 @@ body {
   </div>
 
   <div class="sidebar-footer">
-    <a id="supernova-link-btn" href="https://supernova-ai1.onrender.com" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 3h7v7"/><path d="M21 3l-9 9"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>
-      </svg>
-      Super Nova
-    </a>
-    <button id="worktree-btn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="4" r="2"/><circle cx="6" cy="20" r="2"/><circle cx="18" cy="20" r="2"/>
-        <path d="M12 6v4M12 10c0 2-6 2-6 8M12 10c0 2 6 2 6 8"/>
-      </svg>
-      Work Tree
-    </button>
     <button id="fav-btn" title="Favorites">
       <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
@@ -3755,16 +3741,6 @@ document.getElementById('fav-btn').addEventListener('click', function () {
   loadFavorites();
 });
 
-// ── Work Tree button — opens workspace panel ──────────────────────────────
-(function () {
-  var wsOverlay = document.getElementById('ws-overlay');
-  var wtBtn = document.getElementById('worktree-btn');
-  if (wtBtn && wsOverlay) {
-    wtBtn.addEventListener('click', function () {
-      wsOverlay.hidden = false;
-    });
-  }
-})();
 document.getElementById('fav-close-btn').addEventListener('click', function () {
   favOverlay.hidden = true;
 });
