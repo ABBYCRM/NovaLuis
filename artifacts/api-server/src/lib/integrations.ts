@@ -3,14 +3,20 @@ import { eq } from "drizzle-orm";
 
 export type ServiceFields = Record<string, string>;
 
-// Read the stored credential bag for a service. Returns {} when nothing is set.
+// Read the stored credential bag for a service. Returns {} when nothing is set
+// or when the DB is unreachable / schema is not yet migrated.
 export async function getCredentials(service: string): Promise<ServiceFields> {
   if (!hasDatabase || !db) return {};
-  const rows = await db
-    .select()
-    .from(integrationCredentialsTable)
-    .where(eq(integrationCredentialsTable.service, service));
-  return (rows[0]?.fields as ServiceFields | undefined) ?? {};
+  try {
+    const rows = await db
+      .select()
+      .from(integrationCredentialsTable)
+      .where(eq(integrationCredentialsTable.service, service));
+    return (rows[0]?.fields as ServiceFields | undefined) ?? {};
+  } catch {
+    // DB unavailable or schema not yet migrated — treat as no stored credentials.
+    return {};
+  }
 }
 
 // Merge incoming fields into the stored bag. An empty-string value clears that

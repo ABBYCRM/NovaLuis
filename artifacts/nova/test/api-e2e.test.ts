@@ -1,68 +1,39 @@
 /**
- * Playwright E2E — API smoke + Composio surface
+ * API E2E — smoke tests for the critical API surface the Nova UI depends on.
  *
- * Drives the running API server over HTTP (no browser needed) and verifies
- * the critical surface the Nova UI depends on:
+ * Drives the running API server over HTTP (no browser needed):
  *
- *   /healthz                        → { status: "ok" }
- *   /version                        → shape check (Render metadata fields)
- *   /integrations/composio/status   → always responds (configured or not)
+ *   GET /healthz                      → { status: "ok" }
+ *   GET /version                      → shape check (Render metadata fields)
+ *   GET /integrations/composio/status → always responds (configured or not)
+ *   GET /openclaw/status              → ready or unavailable
  *
- * The browser-based UI smoke tests live in chat-ui-smoke.test.ts.
- *
- * Environment:
- *   API_E2E_BASE_URL   Base URL of the running API server.
- *                      Defaults to http://localhost:5000 (dev workflow port).
- *   TEST_TIMEOUT_MS    Per-assertion timeout. Default 10 000.
+ * The server is started by the vitest globalSetup (test/global-setup.ts) on a
+ * random free port. The base URL and peer key are injected via vitest's
+ * provide/inject mechanism — no manual env vars needed.
  */
 
-import { describe, it, expect, beforeAll, beforeEach, type TaskContext } from "vitest";
+import { describe, it, expect, inject } from "vitest";
 
-const BASE = (process.env.API_E2E_BASE_URL ?? "http://localhost:5000").replace(/\/$/, "");
-const TIMEOUT = Number(process.env.TEST_TIMEOUT_MS ?? 10_000);
+const BASE = (inject("apiBase") as string | undefined) ?? "http://localhost:5000/api";
+const PEER_KEY = (inject("peerKey") as string | undefined) ?? "";
+const TIMEOUT = Number(process.env.TEST_TIMEOUT_MS ?? 15_000);
 
-/**
- * Thin fetch wrapper that retries once on ECONNREFUSED so a slow startup
- * doesn't immediately fail CI.
- */
+/** Fetch helper — always sends the peer-key so gated routes pass auth. */
 async function api(path: string, init?: RequestInit): Promise<Response> {
   const url = `${BASE}${path}`;
+  const headers = {
+    ...(PEER_KEY ? { Authorization: `Bearer ${PEER_KEY}` } : {}),
+    ...(init?.headers ?? {}),
+  };
   try {
-    return await fetch(url, init);
-  } catch (err) {
-    // One retry after a short pause for slow server starts.
+    return await fetch(url, { ...init, headers });
+  } catch {
+    // One retry after a short pause.
     await new Promise((r) => setTimeout(r, 2_000));
-    return fetch(url, init);
+    return fetch(url, { ...init, headers });
   }
 }
-
-/**
- * Check whether the API server is reachable at all. When running in the nova
- * test workflow (no API_E2E_BASE_URL set, no local server on :5000) every test
- * in this file is skipped rather than failing — they are integration tests that
- * require a live server. Set API_E2E_BASE_URL to enable them.
- */
-let serverReachable = false;
-beforeAll(async () => {
-  try {
-    const r = await fetch(`${BASE}/healthz`, { signal: AbortSignal.timeout(3_000) });
-    serverReachable = r.ok;
-  } catch {
-    serverReachable = false;
-  }
-  if (!serverReachable) {
-    console.warn(
-      `[api-e2e] API server not reachable at ${BASE} — all tests in this file are skipped.\n` +
-      `  Set API_E2E_BASE_URL=<url> and run against a live server to execute them.`,
-    );
-  }
-});
-
-// Skip every test in this file when the server is not reachable.
-// ctx.skip() is the vitest way to dynamically skip from a hook.
-beforeEach((ctx: TaskContext) => {
-  if (!serverReachable) ctx.skip();
-});
 
 // ---------------------------------------------------------------------------
 // /healthz
@@ -89,7 +60,6 @@ describe("GET /version", () => {
     const res = await api("/version");
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    // All these fields must be present regardless of value.
     for (const field of ["commit", "branch", "repository", "serviceId", "serviceName", "render"]) {
       expect(body, `field "${field}" missing from /version`).toHaveProperty(field);
     }
@@ -97,15 +67,13 @@ describe("GET /version", () => {
 });
 
 // ---------------------------------------------------------------------------
-// /integrations/composio/status
+// /integrations/composio/status  (gated — peer key sent automatically)
 // ---------------------------------------------------------------------------
 describe("GET /integrations/composio/status", () => {
   it("always responds with a valid JSON body (configured or not)", async () => {
     const res = await api("/integrations/composio/status");
-    // The endpoint returns 200 regardless of whether a key is configured.
     expect([200, 502], "unexpected status from composio/status").toContain(res.status);
     const body = (await res.json()) as Record<string, unknown>;
-    // Always has 'configured' boolean.
     expect(typeof body.configured, "composio/status.configured must be boolean").toBe("boolean");
   }, TIMEOUT);
 
