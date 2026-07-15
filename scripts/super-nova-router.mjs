@@ -21,8 +21,20 @@
 // If a role's chosen provider isn't configured, the router falls back to bitdeer
 // (the always-present default) so a half-set override can never break a run.
 
-// Default model for all roles. Override with WORK_TREE_MODEL env var.
-const DEFAULT_MODEL = process.env.WORK_TREE_MODEL || "gpt-4o-mini";
+// Global model override (WORK_TREE_MODEL). When unset, each provider picks its own default.
+const DEFAULT_MODEL = process.env.WORK_TREE_MODEL || "";
+
+// Per-provider default models — used when DEFAULT_MODEL is not set and no role override.
+// kimi  → Moonshot official API (kimi-k2)
+// openai → backup reasoning (gpt-4.5-preview, not mini)
+// bitdeer → Bitdeer-hosted Kimi (moonshotai/Kimi-K2.6)
+const PROVIDER_MODEL_DEFAULTS = {
+  kimi:      process.env.SUPER_NOVA_KIMI_DEFAULT_MODEL    || "kimi-k2",
+  openai:    process.env.SUPER_NOVA_OPENAI_DEFAULT_MODEL  || "gpt-4.5-preview",
+  bitdeer:   process.env.SUPER_NOVA_BITDEER_DEFAULT_MODEL || "moonshotai/Kimi-K2.6",
+  local:     process.env.SUPER_NOVA_LOCAL_DEFAULT_MODEL   || "kimi-k2",
+  openrouter:process.env.SUPER_NOVA_OPENROUTER_DEFAULT_MODEL || "kimi-k2",
+};
 
 // ── DECOMP-Ω Master Identity ───────────────────────────────────────────────
 // All roles run under this master persona. Each role appends its specialization
@@ -47,10 +59,16 @@ Hard Rules:
 // All providers speak the OpenAI /chat/completions shape. baseURL has no trailing
 // slash; key is optional only for `local` (self-hosted servers often need none).
 const PROVIDERS = {
+  // Moonshot official Kimi API — primary agentic provider.
+  kimi: {
+    baseURL: process.env.KIMI_BASE_URL || "https://api.moonshot.cn/v1",
+    key: process.env.KIMI_API_KEY || "",
+  },
   bitdeer: {
     baseURL: process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1",
     key: process.env.BITDEER_API_KEY || "",
   },
+  // OpenAI — backup reasoning only (gpt-4.5-preview).
   openai: {
     baseURL: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
     key: process.env.OPENAI_API_KEY || "",
@@ -60,7 +78,6 @@ const PROVIDERS = {
     key: process.env.OPENROUTER_API_KEY || "",
   },
   // Generic self-hosted OpenAI-compatible endpoint: Ollama, vLLM, LocalAI, etc.
-  // e.g. SUPER_NOVA_LOCAL_BASE_URL=http://127.0.0.1:11434/v1
   local: {
     baseURL: process.env.SUPER_NOVA_LOCAL_BASE_URL || "",
     key: process.env.SUPER_NOVA_LOCAL_API_KEY || "",
@@ -122,31 +139,33 @@ function usable(p, name) {
 }
 
 // Resolve a role to a concrete { providerName, provider, model, temperature, persona }.
-// Priority: per-role env override → local (Nova proxy) → openai → bitdeer.
-// This lets the Work Tree route through the Nova model proxy (which itself fans
-// out to Gemini / OpenAI / Bitdeer) without needing a direct provider key here.
+// Priority: per-role env override → local → kimi → openai (backup) → bitdeer.
+// Model defaults are provider-specific so kimi gets kimi-k2, openai gets gpt-4.5-preview, etc.
 export function resolveRole(role, callerModel) {
   const def = ROLE_DEFS[role] || ROLE_DEFS.executor;
   const roleModelEnv = process.env[`SUPER_NOVA_${role.toUpperCase()}_MODEL`];
-  const model = roleModelEnv || DEFAULT_MODEL;
+
+  function modelFor(providerName) {
+    return roleModelEnv || DEFAULT_MODEL || PROVIDER_MODEL_DEFAULTS[providerName] || "kimi-k2";
+  }
 
   // 1. Per-role env override (SUPER_NOVA_<ROLE>_PROVIDER).
   const explicit = envProvider(role);
   if (explicit && PROVIDERS[explicit] && usable(PROVIDERS[explicit], explicit)) {
-    return { providerName: explicit, provider: PROVIDERS[explicit], model, temperature: def.temperature, persona: def.persona };
+    return { providerName: explicit, provider: PROVIDERS[explicit], model: modelFor(explicit), temperature: def.temperature, persona: def.persona };
   }
 
-  // 2. Priority cascade: local → openai → bitdeer.
-  for (const name of ["local", "openai", "bitdeer"]) {
+  // 2. Priority cascade: local → kimi → openai (backup reasoning) → bitdeer.
+  for (const name of ["local", "kimi", "openai", "bitdeer"]) {
     const p = PROVIDERS[name];
     if (usable(p, name)) {
-      return { providerName: name, provider: p, model, temperature: def.temperature, persona: def.persona };
+      return { providerName: name, provider: p, model: modelFor(name), temperature: def.temperature, persona: def.persona };
     }
   }
 
   throw new Error(
     `DECOMP-Ω router: no usable provider configured. Set one of: ` +
-    `SUPER_NOVA_LOCAL_BASE_URL (Nova proxy), OPENAI_API_KEY, or BITDEER_API_KEY.`,
+    `KIMI_API_KEY (primary), OPENAI_API_KEY (backup), BITDEER_API_KEY, or SUPER_NOVA_LOCAL_BASE_URL.`,
   );
 }
 

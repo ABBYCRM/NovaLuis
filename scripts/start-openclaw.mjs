@@ -10,7 +10,7 @@ function positiveInt(value, fallback) {
 }
 
 function normalizeModelId(value) {
-  const raw = String(value || "").trim() || "gpt-4o-mini";
+  const raw = String(value || "").trim() || "kimi-k2";
   return raw.replace(/^(?:openai|google|gemini|bitdeer|nova)\//i, "");
 }
 

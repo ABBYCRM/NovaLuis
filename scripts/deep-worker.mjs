@@ -47,22 +47,29 @@ const DONE_DIR = path.join(JOBS_ROOT, "done");
 const FAILED_DIR = path.join(JOBS_ROOT, "failed");
 
 const BITDEER_KEY = process.env.BITDEER_API_KEY;
-const BASE_URL = process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1";
-const DEFAULT_MODEL = process.env.DEEP_WORKER_DEFAULT_MODEL || "moonshotai/Kimi-K2.6";
-// OpenAI Responses API — used for web_search jobs (webSearch:true in job file).
+const BITDEER_BASE_URL = process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1";
+// Moonshot / Kimi API — activated when KIMI_API_KEY is set and BITDEER_API_KEY is not.
+const KIMI_KEY = process.env.KIMI_API_KEY;
+const KIMI_BASE_URL = process.env.KIMI_BASE_URL || "https://api.moonshot.cn/v1";
+// Primary inference: Bitdeer (moonshotai/Kimi-K2.6) → Kimi API (kimi-k2) → idle.
+const ACTIVE_KEY = BITDEER_KEY || KIMI_KEY || "";
+const BASE_URL = BITDEER_KEY ? BITDEER_BASE_URL : KIMI_BASE_URL;
+const DEFAULT_MODEL = process.env.DEEP_WORKER_DEFAULT_MODEL ||
+  (BITDEER_KEY ? "moonshotai/Kimi-K2.6" : "kimi-k2");
+// OpenAI — backup reasoning for web_search and code-interpreter jobs only.
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-const WEB_SEARCH_MODEL = process.env.DEEP_WORKER_WEB_SEARCH_MODEL || "gpt-4o-mini";
+const WEB_SEARCH_MODEL = process.env.DEEP_WORKER_WEB_SEARCH_MODEL || "gpt-4.5-preview";
 const POLL_MS = Number(process.env.DEEP_WORKER_POLL_MS || 2000);
 const MAX_CONCURRENT = Number(process.env.DEEP_WORKER_CONCURRENCY || 1);
 const REQUEST_TIMEOUT_MS = Number(process.env.DEEP_WORKER_TIMEOUT_MS || 300_000); // 5 min
 
-if (!BITDEER_KEY) {
-  console.warn("deep-worker: BITDEER_API_KEY not set — worker is idle. Set BITDEER_API_KEY to enable inference.");
-  // Idle loop: check every 60 s in case the key appears at runtime
+if (!ACTIVE_KEY) {
+  console.warn("deep-worker: neither BITDEER_API_KEY nor KIMI_API_KEY set — worker is idle. Set either to enable inference.");
+  // Idle loop: check every 60 s in case a key appears at runtime
   setInterval(() => {
-    if (process.env.BITDEER_API_KEY) {
-      console.log("deep-worker: BITDEER_API_KEY detected at runtime — restarting process to activate.");
+    if (process.env.BITDEER_API_KEY || process.env.KIMI_API_KEY) {
+      console.log("deep-worker: inference key detected at runtime — restarting to activate.");
       process.exit(0); // supervisor will restart us
     }
   }, 60_000).unref();
@@ -112,7 +119,7 @@ async function callModel(prompt, systemPrompt, model, maxTokens) {
   try {
     const res = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${BITDEER_KEY}`, "Content-Type": "application/json" },
+      headers: { "Authorization": `Bearer ${ACTIVE_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: ctrl.signal
     });

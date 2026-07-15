@@ -17,6 +17,10 @@ const OPENAI_KEY = process.env.OPENAI_API_KEY ?? "";
 const BITDEER_BASE = "https://api-inference.bitdeer.ai";
 const BITDEER_KEY = process.env.BITDEER_API_KEY ?? "";
 
+// Moonshot / Kimi — official Kimi API (kimi-k2, kimi-k2.6, etc.)
+const KIMI_BASE = "https://api.moonshot.cn";
+const KIMI_KEY = process.env.KIMI_API_KEY ?? "";
+
 // Google Gemini via their OpenAI-compatible shim.
 // Path stripping: their base already includes /v1beta/openai, so drop the
 // leading /v1 that the client sends (e.g. /v1/chat/completions → /chat/completions).
@@ -28,22 +32,25 @@ function pickProvider(model: string): {
   key: string;
 } {
   // gemini-* → Google's OpenAI-compatible shim (strip leading /v1).
-  // Only if GEMINI_KEY is present and non-empty.
   if (model.startsWith("gemini-") && GEMINI_KEY) {
     return {
       url: (path) => `${GEMINI_BASE}${path.replace(/^\/v1/, "")}`,
       key: GEMINI_KEY,
     };
   }
-  // gpt-* → OpenAI directly (confirmed valid service-account key).
-  if (model.startsWith("gpt-") && OPENAI_KEY) {
+  // gpt-* / o1* / o3* / o4* → OpenAI directly.
+  if ((model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) && OPENAI_KEY) {
     return { url: (path) => `${OPENAI_BASE}${path}`, key: OPENAI_KEY };
   }
-  // Everything else (deepseek-*, qwen-*, kimi-*, mistral-*, etc.) → Bitdeer.
+  // kimi-* or moonshotai/* → Moonshot official API.
+  if ((model.startsWith("kimi-") || model.startsWith("moonshotai/")) && KIMI_KEY) {
+    return { url: (path) => `${KIMI_BASE}${path}`, key: KIMI_KEY };
+  }
+  // Everything else (deepseek-*, qwen-*, mistral-*, etc.) → Bitdeer.
   if (BITDEER_KEY) {
     return { url: (path) => `${BITDEER_BASE}${path}`, key: BITDEER_KEY };
   }
-  // Last resort fallback.
+  // Last resort: OpenAI fallback.
   return { url: (path) => `${OPENAI_BASE}${path}`, key: OPENAI_KEY };
 }
 

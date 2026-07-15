@@ -306,10 +306,10 @@ if (!DATABASE_URL) {
   console.error("work-tree-worker: FATAL — DATABASE_URL missing");
   process.exit(78);
 }
-// All roles route to OpenAI only (DECOMP-Ω mandate). Verify key is present.
-if (!process.env.OPENAI_API_KEY) {
+// Super Nova needs at least one inference provider: Kimi (primary) or OpenAI (backup).
+if (!process.env.KIMI_API_KEY && !process.env.OPENAI_API_KEY && !process.env.BITDEER_API_KEY) {
   console.error(
-    "work-tree-worker: FATAL — OPENAI_API_KEY missing (Super Nova runs OpenAI only)",
+    "work-tree-worker: FATAL — no inference provider configured. Set KIMI_API_KEY (primary), OPENAI_API_KEY (backup), or BITDEER_API_KEY.",
   );
   process.exit(78);
 }
