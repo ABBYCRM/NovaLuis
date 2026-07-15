@@ -936,6 +936,148 @@ async function e2bRunCode(args) {
   }
 }
 
+// ── Brave Search ─────────────────────────────────────────────────────────────
+async function braveSearch(args) {
+  const key = process.env.BRAVE_SEARCH_API_KEY;
+  if (!key) return { error: "brave_search unavailable: BRAVE_SEARCH_API_KEY not set" };
+  const query = String(args.query || "").trim();
+  if (!query) return { error: "query required" };
+  const count = Math.min(Number(args.count) || 10, 20);
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
+  const res = await safeFetch(url, {
+    headers: { Accept: "application/json", "X-Subscription-Token": key },
+  });
+  if (!res.ok) return { error: `Brave Search HTTP ${res.status}: ${await res.text().catch(() => "")}` };
+  const data = await res.json();
+  return {
+    results: (data.web?.results ?? []).map((r) => ({
+      title: r.title,
+      url: r.url,
+      description: r.description,
+      age: r.age,
+    })),
+    query,
+    count: data.web?.results?.length ?? 0,
+  };
+}
+
+// ── Pinecone ──────────────────────────────────────────────────────────────────
+async function pineconeQuery(args) {
+  const key = process.env.PINECONE_API_KEY;
+  if (!key) return { error: "pinecone_query unavailable: PINECONE_API_KEY not set" };
+  const host = process.env.PINECONE_INDEX_HOST;
+  if (!host) return { error: "pinecone_query unavailable: PINECONE_INDEX_HOST not set" };
+  const vector = args.vector;
+  if (!Array.isArray(vector) || vector.length === 0) return { error: "vector (float array) required" };
+  const res = await safeFetch(`https://${host}/query`, {
+    method: "POST",
+    headers: { "Api-Key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vector,
+      topK: Number(args.topK) || 10,
+      includeMetadata: true,
+      includeValues: false,
+      namespace: args.namespace || "",
+    }),
+  });
+  if (!res.ok) return { error: `Pinecone query HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}` };
+  return await res.json();
+}
+
+async function pineconeUpsert(args) {
+  const key = process.env.PINECONE_API_KEY;
+  if (!key) return { error: "pinecone_upsert unavailable: PINECONE_API_KEY not set" };
+  const host = process.env.PINECONE_INDEX_HOST;
+  if (!host) return { error: "pinecone_upsert unavailable: PINECONE_INDEX_HOST not set" };
+  const vectors = args.vectors;
+  if (!Array.isArray(vectors) || vectors.length === 0) return { error: "vectors array required" };
+  const res = await safeFetch(`https://${host}/vectors/upsert`, {
+    method: "POST",
+    headers: { "Api-Key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({ vectors, namespace: args.namespace || "" }),
+  });
+  if (!res.ok) return { error: `Pinecone upsert HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}` };
+  return await res.json();
+}
+
+// ── GitHub read ───────────────────────────────────────────────────────────────
+async function githubRead(args) {
+  const token = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  const headers = {
+    "User-Agent": "NOVA-OpenClaw/1.0",
+    Accept: "application/vnd.github.v3+json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  // Accept either a full API URL or owner/repo/path shorthand
+  const apiUrl =
+    args.url ||
+    `https://api.github.com/repos/${args.owner}/${args.repo}/contents/${args.path || ""}`;
+
+  const res = await safeFetch(apiUrl, { headers });
+  if (!res.ok) return { error: `GitHub HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}` };
+  const data = await res.json();
+
+  if (Array.isArray(data)) {
+    return {
+      type: "directory",
+      path: args.path || "",
+      items: data.map((i) => ({ name: i.name, type: i.type, path: i.path, size: i.size })),
+    };
+  }
+  if (data.encoding === "base64") {
+    return {
+      type: "file",
+      path: data.path,
+      size: data.size,
+      content: Buffer.from(data.content, "base64").toString("utf8").slice(0, 60000),
+      truncated: data.size > 60000,
+    };
+  }
+  return data;
+}
+
+// ── Composio execute + connect ────────────────────────────────────────────────
+const COMPOSIO_TOOL_BASE = (
+  process.env.COMPOSIO_BASE_URL || "https://backend.composio.dev/api/v3.1"
+).replace(/\/$/, "");
+
+async function composioExecute(args) {
+  const key = process.env.COMPOSIO_API_KEY;
+  if (!key) return { error: "composio_execute unavailable: COMPOSIO_API_KEY not set" };
+  const tool = String(args.tool || args.action || "").trim();
+  if (!tool) return { error: "tool (action slug) required" };
+  const res = await safeFetch(`${COMPOSIO_TOOL_BASE}/tools/execute`, {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      tool,
+      input: args.input ?? args.params ?? {},
+      userId: args.userId || "nova-luis",
+    }),
+  });
+  if (!res.ok) return { error: `Composio execute HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 500)}` };
+  return await res.json();
+}
+
+async function composioConnect(args) {
+  const key = process.env.COMPOSIO_API_KEY;
+  if (!key) return { error: "composio_connect unavailable: COMPOSIO_API_KEY not set" };
+  const toolkit = String(args.toolkit || args.toolkitSlug || args.app || "").trim();
+  if (!toolkit) return { error: "toolkit (slug) required. e.g. 'slack', 'notion', 'github'" };
+  const res = await safeFetch(`${COMPOSIO_TOOL_BASE}/tools/connect`, {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      toolkitSlug: toolkit,
+      userId: args.userId || "nova-luis",
+      redirectUrl: args.redirectUrl,
+    }),
+  });
+  if (!res.ok) return { error: `Composio connect HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 500)}` };
+  return await res.json();
+}
+
 // ── DANGEROUS tools (gated) ──────────────────────────────────────────────────
 
 async function runPython(args, ctx) {
@@ -1477,6 +1619,38 @@ const SAFE_TOOLS = {
     desc:
       "run a shell command in OpenAI's managed Debian container (no SUPER_NOVA_EXEC needed). args: {command, max_tokens?}. " +
       "Returns {output, commands_run, usage}. Ephemeral — no persistent state between calls.",
+  },
+
+  // ── Brave Search ──────────────────────────────────────────────────────────
+  brave_search: {
+    run: braveSearch,
+    desc: "web search via Brave Search API. args: {query, count?}. Requires BRAVE_SEARCH_API_KEY. Returns {results:[{title,url,description,age}], count}.",
+  },
+
+  // ── Pinecone vector ops ────────────────────────────────────────────────────
+  pinecone_query: {
+    run: pineconeQuery,
+    desc: "semantic vector search in Pinecone. args: {vector:float[], topK?, namespace?}. Requires PINECONE_API_KEY + PINECONE_INDEX_HOST. Returns {matches:[{id,score,metadata}]}.",
+  },
+  pinecone_upsert: {
+    run: pineconeUpsert,
+    desc: "upsert vectors into Pinecone. args: {vectors:[{id,values:float[],metadata?}], namespace?}. Requires PINECONE_API_KEY + PINECONE_INDEX_HOST. Returns {upsertedCount}.",
+  },
+
+  // ── GitHub read ────────────────────────────────────────────────────────────
+  github_read: {
+    run: githubRead,
+    desc: "read GitHub repo contents. args: {owner,repo,path?} OR {url} (full GitHub API URL). Returns directory listing or file content. Uses GITHUB_PERSONAL_ACCESS_TOKEN if set.",
+  },
+
+  // ── Composio ──────────────────────────────────────────────────────────────
+  composio_execute: {
+    run: composioExecute,
+    desc: "execute a Composio tool action (Slack, Gmail, Notion, etc.). args: {tool, input?, userId?}. Requires COMPOSIO_API_KEY. Returns tool execution result.",
+  },
+  composio_connect: {
+    run: composioConnect,
+    desc: "get a Composio OAuth Connect Link for an app. args: {toolkit, userId?, redirectUrl?}. Requires COMPOSIO_API_KEY. Returns {connectLink}.",
   },
 
   // ── Tool catalog ──────────────────────────────────────────────────────────

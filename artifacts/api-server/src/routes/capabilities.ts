@@ -153,6 +153,15 @@ const INTEGRATIONS: Omit<Integration, "status">[] = [
     tools: ["event bus"],
     envKey: "INNGEST_EVENT_KEY",
   },
+  // ── Video generation ───────────────────────────────────────────────────────
+  {
+    id: "a2e",
+    name: "A2E AI",
+    category: "Media",
+    description: "Text-to-video and image-to-video generation via the A2E AI platform.",
+    tools: ["video_generate", "image_to_video"],
+    envKey: "A2E_AI_API_KEY",
+  },
   // ── Observability ──────────────────────────────────────────────────────────
   {
     id: "helicone",
