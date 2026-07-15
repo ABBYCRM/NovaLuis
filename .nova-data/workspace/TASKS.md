@@ -99,3 +99,22 @@ created: 2026-07-15
 claimed: -
 result: -
 
+### T-0006  [PENDING]  P1
+desc: [poller:runtime-log] 1 new error line(s) in openclaw-2026-07-15.log
+  The runtime poller found new error/crash lines in the gateway log. Investigate the root cause per SOUL.md §6 and patch it.
+  
+    {"0":"[agent] run chatcmpl_6c296d98-6d0c-443a-b03d-4f43126bfa62 ended with stopReason=stop","_meta":{"runtime":"node","runtimeVersion":"24.13.0","hostname":"repl","name":"openclaw","date":"2026-07-15T16:20:48.981Z","logLevelId":5,"logLevelName":"ERROR","path":{"fullFilePath":"file:///home/runner/workspace/node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155:68","fileName":"console-qk0mTZIb.js","fileNameWithLine":"console-qk0mTZIb.js:155","fileColumn":"68","fileLine":"155","filePath":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js","filePathWithLine":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155","method":"console.error"}},"time":"2026-07-15T16:20:48.981+00:00","hostname":"repl","message":"[agent] run chatcmpl_6c296d98-6d0c-443a-b03d-4f43126bfa62 ended with stopReason=stop","traceId":"d07cdc8590629d42aeafc05c28054a54","spanId":"14b34760507a91cb","traceFlags":"01"}
+created: 2026-07-15
+claimed: -
+result: -
+
+### T-0007  [PENDING]  P1
+desc: [poller:runtime-log] 2 new error line(s) in openclaw-2026-07-15.log
+  The runtime poller found new error/crash lines in the gateway log. Investigate the root cause per SOUL.md §6 and patch it.
+  
+    {"0":"[agent] run chatcmpl_a0d185b7-3cf7-4516-a177-3c52fc7fef9a ended with stopReason=stop","_meta":{"runtime":"node","runtimeVersion":"24.13.0","hostname":"repl","name":"openclaw","date":"2026-07-15T16:24:35.113Z","logLevelId":5,"logLevelName":"ERROR","path":{"fullFilePath":"file:///home/runner/workspace/node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155:68","fileName":"console-qk0mTZIb.js","fileNameWithLine":"console-qk0mTZIb.js:155","fileColumn":"68","fileLine":"155","filePath":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js","filePathWithLine":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155","method":"console.error"}},"time":"2026-07-15T16:24:35.113+00:00","hostname":"repl","message":"[agent] run chatcmpl_a0d185b7-3cf7-4516-a177-3c52fc7fef9a ended with stopReason=stop","traceId":"66e436985cba3dc325e85db7d0958804","spanId":"803034ef3b5f8979","traceFlags":"01"}
+    {"0":"[agent] run chatcmpl_58b58078-eab9-49b5-ae9d-59c361182fa2 ended with stopReason=stop","_meta":{"runtime":"node","runtimeVersion":"24.13.0","hostname":"repl","name":"openclaw","date":"2026-07-15T16:27:38.563Z","logLevelId":5,"logLevelName":"ERROR","path":{"fullFilePath":"file:///home/runner/workspace/node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155:68","fileName":"console-qk0mTZIb.js","fileNameWithLine":"console-qk0mTZIb.js:155","fileColumn":"68","fileLine":"155","filePath":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js","filePathWithLine":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155","method":"console.error"}},"time":"2026-07-15T16:27:38.563+00:00","hostname":"repl","message":"[agent] run chatcmpl_58b58078-eab9-49b5-ae9d-59c361182fa2 ended with stopReason=stop","traceId":"c9be5d1b3cdcc9ecc0641f7a20dfb4bb","spanId":"278157d371b23d4b","traceFlags":"01"}
+created: 2026-07-15
+claimed: -
+result: -
+

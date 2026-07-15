@@ -75,6 +75,9 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
+  # Force a single pg version across the workspace so drizzle-orm resolves
+  # to exactly one instance (two instances cause SQL type incompatibility).
+  pg: "8.22.0"
   # replit uses linux-x64 only, we can exclude all other platforms
   "esbuild>@esbuild/darwin-arm64": "-"
   "esbuild>@esbuild/darwin-x64": "-"

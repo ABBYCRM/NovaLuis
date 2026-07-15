@@ -8,7 +8,8 @@ import type { Request, Response, NextFunction } from "express";
 
 const COOKIE = "wt_session";
 const TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
-const CANONICAL_OPERATOR_PIN = "22";
+// Dev-only fallback PIN — never accepted in production.
+const DEV_FALLBACK_PIN = "22";
 
 // Brute-force throttle: the PIN is short by design, so cap failed unlock
 // attempts per client IP and lock out for a cooldown once exceeded.
@@ -18,7 +19,10 @@ const attempts = new Map<string, { fails: number; until: number }>();
 
 function acceptedPins(): string[] {
   const configured = String(process.env.NOVA_WORK_TREE_PIN || "").trim();
-  return [...new Set([CANONICAL_OPERATOR_PIN, configured].filter(Boolean))];
+  // The dev fallback PIN is never a valid credential in production; callers
+  // must set NOVA_WORK_TREE_PIN. This mirrors the SESSION_SECRET policy.
+  const devPin = process.env.NODE_ENV !== "production" ? DEV_FALLBACK_PIN : null;
+  return [...new Set([devPin, configured].filter((p): p is string => Boolean(p)))];
 }
 
 function sameSecret(a: string, b: string): boolean {

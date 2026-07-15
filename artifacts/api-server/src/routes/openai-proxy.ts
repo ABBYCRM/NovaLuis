@@ -209,6 +209,12 @@ router.all("/v1/*splat", async (req, res) => {
     req.body != null &&
     Object.keys(req.body).length > 0;
 
+  const proxyAbort = new AbortController();
+  const proxyTimeout = setTimeout(
+    () => proxyAbort.abort(),
+    Number(process.env.OPENAI_PROXY_TIMEOUT_MS) || 15 * 60 * 1000, // default 15 min
+  );
+
   try {
     const upstream = await fetch(upstreamUrl, {
       method: req.method,
@@ -219,6 +225,7 @@ router.all("/v1/*splat", async (req, res) => {
       },
       body: hasBody ? JSON.stringify(req.body) : undefined,
       duplex: "half",
+      signal: proxyAbort.signal,
     });
 
     res.status(upstream.status);
@@ -262,6 +269,7 @@ router.all("/v1/*splat", async (req, res) => {
         const ok = res.write(value);
         if (!ok) await new Promise<void>((r) => res.once("drain", r));
       }
+      clearTimeout(proxyTimeout);
       res.end();
 
       if (captureOk) {
@@ -274,10 +282,12 @@ router.all("/v1/*splat", async (req, res) => {
       }
     };
     pump().catch((e) => {
+      clearTimeout(proxyTimeout);
       req.log.error({ err: e }, "openai-proxy stream error");
       res.end();
     });
   } catch (e) {
+    clearTimeout(proxyTimeout);
     req.log.error({ err: e }, "openai-proxy fetch error");
     if (!res.headersSent) res.status(502).json({ error: "upstream unreachable" });
   }

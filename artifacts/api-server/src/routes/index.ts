@@ -50,7 +50,7 @@ router.use(firecrawlSteelScenariosRouter);
 // calls /v1/* below, keeping the agent endpoint and raw inference endpoint separate.
 router.use(agentChatRouter);
 router.use(openaiProxyRouter);
-router.use(skillsRouter);
+router.use("/skills", skillsRouter);
 router.use(capabilitiesRouter);
 
 export default router;

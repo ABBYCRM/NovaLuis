@@ -173,7 +173,7 @@ const INTEGRATIONS: Omit<Integration, "status">[] = [
   },
 ];
 
-router.get("/api/capabilities", (_req, res) => {
+router.get("/capabilities", (_req, res) => {
   const result: Integration[] = INTEGRATIONS.map((i) => ({
     ...i,
     status: process.env[i.envKey] ? "active" : "missing",
