@@ -137,11 +137,6 @@ externalPort = 80
 localPort = 18131
 externalPort = 3000
 
-[[ports]]
-localPort = 18789
-externalPort = 3001
-exposeLocalhost = true
-
 [nix]
 channel = "stable-25_05"
 
