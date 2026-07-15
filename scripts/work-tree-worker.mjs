@@ -124,6 +124,23 @@ const TOOL_RISK = {
   git_status:            "low",
   git_diff:              "low",
 
+  // ── Email ─────────────────────────────────────────────────────────────────
+  send_email:                "medium",
+
+  // ── Screenshots ───────────────────────────────────────────────────────────
+  screenshot_url:            "medium",
+
+  // ── Search providers ──────────────────────────────────────────────────────
+  exa_search:                "low",
+  tavily_search:             "low",
+
+  // ── Web scraping ──────────────────────────────────────────────────────────
+  scrapingbee_fetch:         "medium",
+  scrapfly_fetch:            "medium",
+
+  // ── E2B cloud sandbox ─────────────────────────────────────────────────────
+  e2b_run_code:              "medium",
+
   // ── OpenAI cloud tools (sandboxed on OpenAI's servers) ───────────────────
   openai_retrieval:          "medium",
   openai_code_interpreter:   "medium",

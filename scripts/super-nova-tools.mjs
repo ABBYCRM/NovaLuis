@@ -614,6 +614,328 @@ async function imageGenerate(args, ctx) {
   return { error: "no image returned" };
 }
 
+// ── Resend (email) ────────────────────────────────────────────────────────────
+async function sendEmail(args) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return { error: "send_email unavailable: RESEND_API_KEY not set" };
+  const to = String(args.to || "").trim();
+  const subject = String(args.subject || "").trim();
+  const body = String(args.body || args.html || args.text || "").trim();
+  if (!to) return { error: "to required" };
+  if (!subject) return { error: "subject required" };
+  if (!body) return { error: "body required" };
+  const from = String(
+    args.from || process.env.RESEND_FROM || "AURA <noreply@notifications.abbycrm.com>",
+  );
+  const payload = {
+    from,
+    to: to.includes(",") ? to.split(",").map((s) => s.trim()) : to,
+    subject,
+  };
+  if (args.html || /<[a-z][\s\S]*>/i.test(body)) {
+    payload.html = body;
+  } else {
+    payload.text = body;
+  }
+  if (args.cc) payload.cc = args.cc;
+  if (args.bcc) payload.bcc = args.bcc;
+  if (args.reply_to) payload.reply_to = args.reply_to;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Resend API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    return { sent: true, id: j.id };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── ScreenshotOne ─────────────────────────────────────────────────────────────
+async function screenshotUrl(args, ctx) {
+  const accessKey = process.env.SCREENSHOTONE_ACCESS_KEY;
+  if (!accessKey) return { error: "screenshot_url unavailable: SCREENSHOTONE_ACCESS_KEY not set" };
+  const url = String(args.url || "").trim();
+  if (!url) return { error: "url required" };
+  try { await assertSafeUrl(url); } catch (e) { return { error: e.message }; }
+  const params = new URLSearchParams({
+    access_key: accessKey,
+    url,
+    format: args.format || "jpg",
+    viewport_width: String(args.width || 1280),
+    viewport_height: String(args.height || 800),
+    full_page: String(!!args.full_page),
+    block_ads: "true",
+    block_cookie_banners: "true",
+  });
+  const apiUrl = `https://api.screenshotone.com/take?${params}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const res = await fetch(apiUrl, { signal: ctrl.signal });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `ScreenshotOne API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("image")) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const dir = await sandboxDir(ctx && ctx.runId);
+      const ext = String(args.format || "jpg").replace(/[^a-z]/g, "");
+      const file = path.join(dir, `screenshot-${Date.now()}.${ext}`);
+      await fs.writeFile(file, buf);
+      return { saved: file, bytes: buf.length, contentType, source_url: url };
+    }
+    const j = await res.json().catch(() => ({}));
+    return { url: j.url || apiUrl, source_url: url, ...j };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Exa neural search ─────────────────────────────────────────────────────────
+async function exaSearch(args) {
+  const key = process.env.EXA_API_KEY;
+  if (!key) return { error: "exa_search unavailable: EXA_API_KEY not set" };
+  const query = String(args.query || "").trim();
+  if (!query) return { error: "query required" };
+  const body = {
+    query,
+    numResults: Math.min(Math.max(1, Number(args.num_results || args.max_results) || 5), 10),
+    type: args.type || "neural",
+    useAutoprompt: args.autoprompt !== false,
+    contents: { text: { maxCharacters: 800 } },
+  };
+  if (args.include_domains) body.includeDomains = args.include_domains;
+  if (args.exclude_domains) body.excludeDomains = args.exclude_domains;
+  if (args.start_crawl_date) body.startCrawlDate = args.start_crawl_date;
+  if (args.end_crawl_date) body.endCrawlDate = args.end_crawl_date;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.exa.ai/search", {
+      method: "POST",
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Exa API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    const results = (j.results || []).map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: (r.text || r.summary || (r.highlights || [])[0] || "").slice(0, 600),
+      published: r.publishedDate,
+      score: r.score,
+    }));
+    return { query: j.autopromptString || query, results, count: results.length };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Tavily search ─────────────────────────────────────────────────────────────
+async function tavilySearch(args) {
+  const key = process.env.TAVILY_API_KEY;
+  if (!key) return { error: "tavily_search unavailable: TAVILY_API_KEY not set" };
+  const query = String(args.query || "").trim();
+  if (!query) return { error: "query required" };
+  const body = {
+    query,
+    api_key: key,
+    search_depth: args.depth || "basic",
+    max_results: Math.min(Math.max(1, Number(args.max_results) || 5), 10),
+    include_answer: args.include_answer !== false,
+    include_raw_content: !!args.include_raw_content,
+    include_domains: args.include_domains || [],
+    exclude_domains: args.exclude_domains || [],
+  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Tavily API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    return {
+      answer: j.answer,
+      results: (j.results || []).map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: (r.content || "").slice(0, 500),
+        score: r.score,
+        published_date: r.published_date,
+      })),
+      count: (j.results || []).length,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── ScrapingBee ───────────────────────────────────────────────────────────────
+async function scrapingbeeFetch(args) {
+  const key = process.env.SCRAPINGBEE_API_KEY;
+  if (!key) return { error: "scrapingbee_fetch unavailable: SCRAPINGBEE_API_KEY not set" };
+  const url = String(args.url || "").trim();
+  if (!url) return { error: "url required" };
+  try { await assertSafeUrl(url); } catch (e) { return { error: e.message }; }
+  const params = new URLSearchParams({
+    api_key: key,
+    url,
+    render_js: String(!!args.render_js),
+    premium_proxy: String(!!args.premium_proxy),
+  });
+  if (args.country_code) params.set("country_code", String(args.country_code));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const res = await fetch(`https://app.scrapingbee.com/api/v1/?${params}`, {
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `ScrapingBee API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const text = await res.text();
+    return { url, body: text.slice(0, MAX_BODY), truncated: text.length > MAX_BODY };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Scrapfly ──────────────────────────────────────────────────────────────────
+async function scrapflyFetch(args) {
+  const key = process.env.SCRAPFLY_API_KEY;
+  if (!key) return { error: "scrapfly_fetch unavailable: SCRAPFLY_API_KEY not set" };
+  const url = String(args.url || "").trim();
+  if (!url) return { error: "url required" };
+  try { await assertSafeUrl(url); } catch (e) { return { error: e.message }; }
+  const params = new URLSearchParams({
+    key,
+    url,
+    render_js: String(!!args.render_js),
+    asp: String(!!args.anti_scraping_protection),
+    format: args.format || "text",
+  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const res = await fetch(`https://api.scrapfly.io/scrape?${params}`, {
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Scrapfly API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    const content = (j.result && (j.result.content || j.result.html)) || "";
+    return {
+      url,
+      body: content.slice(0, MAX_BODY),
+      truncated: content.length > MAX_BODY,
+      status: j.result && j.result.status_code,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── E2B cloud code sandbox ────────────────────────────────────────────────────
+// Isolated VMs on E2B's infrastructure. Creates a sandbox, runs the code,
+// polls for the result, then deletes the sandbox. ~60s max runtime.
+const E2B_BASE = "https://api.e2b.dev";
+
+async function e2bRunCode(args) {
+  const key = process.env.E2B_API_KEY;
+  if (!key) return { error: "e2b_run_code unavailable: E2B_API_KEY not set" };
+  const code = String(args.code || "").trim();
+  if (!code) return { error: "code required" };
+  const language = String(args.language || "python").toLowerCase();
+
+  const headers = { "X-API-Key": key, "Content-Type": "application/json" };
+  const cmd =
+    language === "python" || language === "python3"
+      ? ["python3", "-c", code]
+      : language === "javascript" || language === "node"
+        ? ["node", "-e", code]
+        : ["bash", "-c", code];
+
+  let sandboxId = null;
+  try {
+    // 1. Create sandbox
+    const createRes = await fetch(`${E2B_BASE}/v2/sandboxes`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ templateID: "code-interpreter-v1", timeout: 120 }),
+    });
+    if (!createRes.ok) {
+      const t = await createRes.text().catch(() => "");
+      return { error: `E2B create ${createRes.status}: ${t.slice(0, 300)}` };
+    }
+    const sandbox = await createRes.json();
+    sandboxId = sandbox.sandboxID || sandbox.sandboxId || sandbox.id;
+    if (!sandboxId) return { error: "E2B: no sandboxID in response", raw: sandbox };
+
+    // 2. Start process
+    const procRes = await fetch(`${E2B_BASE}/v2/sandboxes/${sandboxId}/processes`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ process: { cmd, timeout: 60 } }),
+    });
+    if (!procRes.ok) {
+      const t = await procRes.text().catch(() => "");
+      return { error: `E2B process ${procRes.status}: ${t.slice(0, 300)}` };
+    }
+    const proc = await procRes.json();
+    const processID = proc.processID || proc.processId || proc.id;
+    if (!processID) return { error: "E2B: no processID in response", raw: proc };
+
+    // 3. Poll for completion (up to 60s in 2s increments)
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const resultRes = await fetch(
+        `${E2B_BASE}/v2/sandboxes/${sandboxId}/processes/${processID}`,
+        { headers },
+      );
+      if (!resultRes.ok) continue;
+      const result = await resultRes.json();
+      if (result.status === "finished" || result.finished) {
+        return {
+          stdout: String(result.stdout || result.output || "").slice(0, MAX_BODY),
+          stderr: String(result.stderr || result.error || "").slice(0, 2000),
+          exitCode: result.exitCode ?? result.exit_code ?? 0,
+          language,
+        };
+      }
+    }
+    return { error: "E2B: process timed out after 60s" };
+  } finally {
+    if (sandboxId) {
+      fetch(`${E2B_BASE}/v2/sandboxes/${sandboxId}`, { method: "DELETE", headers }).catch(() => {});
+    }
+  }
+}
+
 // ── DANGEROUS tools (gated) ──────────────────────────────────────────────────
 
 async function runPython(args, ctx) {
@@ -1098,6 +1420,44 @@ const SAFE_TOOLS = {
   memory_get:      { run: memGet,         desc: "get a memory item by key. args: {key}." },
   memory_put:      { run: memPut,         desc: "save a memory item. args: {key, value}." },
   memory_search:   { run: memSearch,      desc: "search memory by query. args: {query, limit?}." },
+
+  // ── Email ─────────────────────────────────────────────────────────────────
+  send_email: {
+    run: sendEmail,
+    desc: "send an email via Resend. args: {to, subject, body, from?, cc?, bcc?, reply_to?, html?}. Returns {sent:true, id}.",
+  },
+
+  // ── Screenshots ───────────────────────────────────────────────────────────
+  screenshot_url: {
+    run: screenshotUrl,
+    desc: "take a screenshot of a webpage (ScreenshotOne). args: {url, format?, width?, height?, full_page?}. Returns {saved, bytes, source_url}.",
+  },
+
+  // ── Search providers ──────────────────────────────────────────────────────
+  exa_search: {
+    run: exaSearch,
+    desc: "neural web search via Exa AI. args: {query, num_results?, type?, include_domains?, exclude_domains?, start_crawl_date?, end_crawl_date?}. Returns {query, results:[{title,url,snippet,score}], count}.",
+  },
+  tavily_search: {
+    run: tavilySearch,
+    desc: "web search + direct answer via Tavily. args: {query, depth?, max_results?, include_answer?, include_domains?, exclude_domains?}. Returns {answer, results, count}.",
+  },
+
+  // ── Web scraping ──────────────────────────────────────────────────────────
+  scrapingbee_fetch: {
+    run: scrapingbeeFetch,
+    desc: "fetch a URL via ScrapingBee (bypasses bot-protection). args: {url, render_js?, premium_proxy?, country_code?}. Returns {url, body, truncated}.",
+  },
+  scrapfly_fetch: {
+    run: scrapflyFetch,
+    desc: "fetch a URL via Scrapfly (anti-scraping protection). args: {url, render_js?, anti_scraping_protection?, format?}. Returns {url, body, truncated, status}.",
+  },
+
+  // ── E2B cloud sandbox ─────────────────────────────────────────────────────
+  e2b_run_code: {
+    run: e2bRunCode,
+    desc: "run code in an E2B isolated cloud VM (no SUPER_NOVA_EXEC needed). args: {code, language?}. Supports python, javascript, bash. Returns {stdout, stderr, exitCode, language}.",
+  },
 
   // ── OpenAI cloud tools (SAFE — sandboxed on OpenAI's servers) ────────────
   openai_retrieval: {

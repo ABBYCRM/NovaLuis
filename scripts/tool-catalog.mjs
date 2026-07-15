@@ -170,6 +170,44 @@ export const TOOL_DEFS = [
     "Read a webpage and extract an answer to a question.",
     obj({ url: s("URL to read."), question: s("Focus question.") }, ["url"])),
 
+  // ── Email ─────────────────────────────────────────────────────────────────
+  t("send_email",          "comm",         "medium",      "openclaw",
+    "Send an email via Resend. Requires RESEND_API_KEY.",
+    obj({ to: s("Recipient email(s), comma-separated."), subject: s("Subject line."), body: s("Plain text or HTML body."), from: s("Sender address (default: RESEND_FROM env var)."), cc: s("CC addresses."), bcc: s("BCC addresses."), reply_to: s("Reply-to address."), html: s("HTML body override.") }, ["to","subject","body"]),
+    { enabledByDefault: true }),
+
+  // ── Screenshots ───────────────────────────────────────────────────────────
+  t("screenshot_url",      "web",          "medium",      "openclaw",
+    "Take a screenshot of a URL via ScreenshotOne. Requires SCREENSHOTONE_ACCESS_KEY.",
+    obj({ url: s("URL to screenshot."), format: s("Image format: jpg or png."), width: n("Viewport width.", 1280), height: n("Viewport height.", 800), full_page: { type: "boolean", description: "Capture full page." } }, ["url"]),
+    { enabledByDefault: true }),
+
+  // ── Search providers ──────────────────────────────────────────────────────
+  t("exa_search",          "web",          "medium",      "openclaw",
+    "Neural web search via Exa AI. Higher quality than keyword search. Requires EXA_API_KEY.",
+    obj({ query: s("Search query."), num_results: n("Results (1-10).", 5), type: s("Search type: neural, keyword, or auto."), include_domains: { type: "array", items: { type: "string" }, description: "Restrict to these domains." }, exclude_domains: { type: "array", items: { type: "string" }, description: "Exclude these domains." } }, ["query"]),
+    { enabledByDefault: true }),
+  t("tavily_search",       "web",          "medium",      "openclaw",
+    "Web search + direct answer via Tavily. Requires TAVILY_API_KEY.",
+    obj({ query: s("Search query."), depth: s("Search depth: basic or advanced."), max_results: n("Max results.", 5), include_answer: { type: "boolean", description: "Include direct answer." } }, ["query"]),
+    { enabledByDefault: true }),
+
+  // ── Web scraping ──────────────────────────────────────────────────────────
+  t("scrapingbee_fetch",   "web",          "medium",      "openclaw",
+    "Fetch a page via ScrapingBee (bypasses bot-protection). Requires SCRAPINGBEE_API_KEY.",
+    obj({ url: s("URL to scrape."), render_js: { type: "boolean", description: "Render JavaScript." }, premium_proxy: { type: "boolean", description: "Use premium proxy." }, country_code: s("Proxy country code (e.g. us, gb).") }, ["url"]),
+    { enabledByDefault: true }),
+  t("scrapfly_fetch",      "web",          "medium",      "openclaw",
+    "Fetch a page via Scrapfly (anti-scraping protection). Requires SCRAPFLY_API_KEY.",
+    obj({ url: s("URL to scrape."), render_js: { type: "boolean", description: "Render JavaScript." }, anti_scraping_protection: { type: "boolean", description: "Enable ASP bypass." } }, ["url"]),
+    { enabledByDefault: true }),
+
+  // ── E2B cloud sandbox ─────────────────────────────────────────────────────
+  t("e2b_run_code",        "code",         "medium",      "openclaw",
+    "Run code in an E2B isolated cloud VM. No SUPER_NOVA_EXEC needed. Requires E2B_API_KEY.",
+    obj({ code: s("Code to execute."), language: s("Language: python, javascript, or bash.") }, ["code"]),
+    { enabledByDefault: true }),
+
   // ── OpenAI cloud tools ───────────────────────────────────────────────────
   t("openai_retrieval",    "search",       "medium",      "openclaw",
     "Semantic search over an OpenAI vector store. Requires OPENAI_VECTOR_STORE_ID env var.",

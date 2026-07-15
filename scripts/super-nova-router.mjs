@@ -201,6 +201,13 @@ export async function chatComplete({
       process.env.OPENROUTER_REFERER || "https://nova-sszi.onrender.com";
     headers["X-Title"] = "Nova Super Nova";
   }
+  // Helicone observability proxy — route OpenAI traffic through Helicone when
+  // HELICONE_API_KEY is set. This logs every request/response for monitoring.
+  if (r.providerName === "openai" && process.env.HELICONE_API_KEY) {
+    headers["Helicone-Auth"] = `Bearer ${process.env.HELICONE_API_KEY}`;
+    headers["Helicone-Property-Role"] = role;
+    headers["Helicone-Property-App"] = "nova-super-nova";
+  }
 
   const body = {
     model: r.model,
