@@ -139,7 +139,7 @@ function usable(p, name) {
 }
 
 // Resolve a role to a concrete { providerName, provider, model, temperature, persona }.
-// Priority: per-role env override → local → kimi → openai (backup) → bitdeer.
+// Priority: per-role env override → local → bitdeer (Kimi K2.6) → openai (backup) → kimi.
 // Model defaults are provider-specific so kimi gets kimi-k2, openai gets gpt-4.5-preview, etc.
 export function resolveRole(role, callerModel) {
   const def = ROLE_DEFS[role] || ROLE_DEFS.executor;
@@ -155,8 +155,8 @@ export function resolveRole(role, callerModel) {
     return { providerName: explicit, provider: PROVIDERS[explicit], model: modelFor(explicit), temperature: def.temperature, persona: def.persona };
   }
 
-  // 2. Priority cascade: local → openai → kimi (when endpoint confirmed) → bitdeer.
-  for (const name of ["local", "openai", "kimi", "bitdeer"]) {
+  // 2. Priority cascade: local → bitdeer (Kimi K2.6 primary) → openai (backup) → kimi.
+  for (const name of ["local", "bitdeer", "openai", "kimi"]) {
     const p = PROVIDERS[name];
     if (usable(p, name)) {
       return { providerName: name, provider: p, model: modelFor(name), temperature: def.temperature, persona: def.persona };

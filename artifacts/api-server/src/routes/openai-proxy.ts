@@ -42,11 +42,12 @@ function pickProvider(model: string): {
   if ((model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) && OPENAI_KEY) {
     return { url: (path) => `${OPENAI_BASE}${path}`, key: OPENAI_KEY };
   }
-  // kimi-* or moonshotai/* → Moonshot official API.
-  if ((model.startsWith("kimi-") || model.startsWith("moonshotai/")) && KIMI_KEY) {
+  // kimi-* → Moonshot official API (native Moonshot model names e.g. kimi-k2).
+  if (model.startsWith("kimi-") && KIMI_KEY) {
     return { url: (path) => `${KIMI_BASE}${path}`, key: KIMI_KEY };
   }
-  // Everything else (deepseek-*, qwen-*, mistral-*, etc.) → Bitdeer.
+  // moonshotai/* and everything else (HuggingFace-style org/model names, deepseek-*,
+  // qwen-*, mistral-*, zai-org/*, etc.) → Bitdeer inference cluster.
   if (BITDEER_KEY) {
     return { url: (path) => `${BITDEER_BASE}${path}`, key: BITDEER_KEY };
   }
