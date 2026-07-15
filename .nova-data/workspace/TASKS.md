@@ -99,3 +99,12 @@ created: 2026-07-15
 claimed: -
 result: -
 
+### T-0006  [PENDING]  P1
+desc: [poller:runtime-log] 1 new error line(s) in openclaw-2026-07-15.log
+  The runtime poller found new error/crash lines in the gateway log. Investigate the root cause per SOUL.md §6 and patch it.
+  
+    {"0":"[agent] run chatcmpl_6c296d98-6d0c-443a-b03d-4f43126bfa62 ended with stopReason=stop","_meta":{"runtime":"node","runtimeVersion":"24.13.0","hostname":"repl","name":"openclaw","date":"2026-07-15T16:20:48.981Z","logLevelId":5,"logLevelName":"ERROR","path":{"fullFilePath":"file:///home/runner/workspace/node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155:68","fileName":"console-qk0mTZIb.js","fileNameWithLine":"console-qk0mTZIb.js:155","fileColumn":"68","fileLine":"155","filePath":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js","filePathWithLine":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155","method":"console.error"}},"time":"2026-07-15T16:20:48.981+00:00","hostname":"repl","message":"[agent] run chatcmpl_6c296d98-6d0c-443a-b03d-4f43126bfa62 ended with stopReason=stop","traceId":"d07cdc8590629d42aeafc05c28054a54","spanId":"14b34760507a91cb","traceFlags":"01"}
+created: 2026-07-15
+claimed: -
+result: -
+
