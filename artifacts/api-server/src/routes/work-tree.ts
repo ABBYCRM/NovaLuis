@@ -5,7 +5,6 @@ import {
   CancelWorkTreeRunParams,
   RetryWorkTreeNodeParams,
 } from "@workspace/api-zod";
-import { requireWtAuth, handleUnlock } from "../lib/work-tree-auth";
 
 // DB access is lazy + guarded so a missing/unreachable DATABASE_URL degrades to
 // a clear 503 instead of crashing the server at boot (mirrors scratchpad.ts).
@@ -267,10 +266,7 @@ export async function resumeOpenClawRuns(): Promise<void> {
 
 const router: IRouter = Router();
 
-// PIN unlock is the one open endpoint; everything else requires the cookie.
-router.post("/work-tree/unlock", handleUnlock);
-
-router.get("/work-tree/runs", requireWtAuth, async (req, res) => {
+router.get("/work-tree/runs", async (req, res) => {
   const mod = await getDb();
   if (!mod) {
     res.status(503).json({ error: "database unavailable" });
@@ -289,7 +285,7 @@ router.get("/work-tree/runs", requireWtAuth, async (req, res) => {
   }
 });
 
-router.post("/work-tree/runs", requireWtAuth, async (req, res) => {
+router.post("/work-tree/runs", async (req, res) => {
   const parsed = CreateWorkTreeRunBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "invalid request body" });
@@ -318,7 +314,7 @@ router.post("/work-tree/runs", requireWtAuth, async (req, res) => {
   }
 });
 
-router.get("/work-tree/runs/:id", requireWtAuth, async (req, res) => {
+router.get("/work-tree/runs/:id", async (req, res) => {
   const parsed = GetWorkTreeRunParams.safeParse(req.params);
   if (!parsed.success) {
     res.status(400).json({ error: "invalid id" });
@@ -359,7 +355,7 @@ router.get("/work-tree/runs/:id", requireWtAuth, async (req, res) => {
   }
 });
 
-router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
+router.post("/work-tree/runs/:id/cancel", async (req, res) => {
   const parsed = CancelWorkTreeRunParams.safeParse(req.params);
   if (!parsed.success) {
     res.status(400).json({ error: "invalid id" });
@@ -406,7 +402,7 @@ router.post("/work-tree/runs/:id/cancel", requireWtAuth, async (req, res) => {
 
 // Legacy node retry remains for pre-OpenClaw runs. It reopens the historical
 // node for UI continuity, then retries the complete mission through OpenClaw.
-router.post("/work-tree/nodes/:id/retry", requireWtAuth, async (req, res) => {
+router.post("/work-tree/nodes/:id/retry", async (req, res) => {
   const parsed = RetryWorkTreeNodeParams.safeParse(req.params);
   if (!parsed.success) {
     res.status(400).json({ error: "invalid id" });

@@ -21,8 +21,6 @@ import githubScenariosRouter from "./github-scenarios";
 import composioScenariosRouter from "./composio-scenarios";
 import firecrawlSteelScenariosRouter from "./firecrawl-steel-scenarios";
 import capabilitiesRouter from "./capabilities";
-import { requireWtAuth } from "../lib/work-tree-auth";
-
 const router: IRouter = Router();
 
 router.use(healthRouter);
@@ -30,9 +28,6 @@ router.use(novaConfigRouter);
 router.use(voiceRouter);
 router.use(scratchpadRouter);
 router.use(workTreeRouter);
-// The credential store, knowledge base, vector memory, workspace files, and
-// direct GitHub diagnostic surface are sensitive — PIN/peer-key gated.
-router.use(["/integrations", "/knowledge", "/vector-memory", "/github", "/workspaces", "/media", "/social", "/favorites", "/render-scenarios", "/github-scenarios", "/composio-scenarios", "/firecrawl-steel-scenarios"], requireWtAuth);
 router.use(integrationsRouter);
 router.use(composioRouter);
 router.use(githubRouter);

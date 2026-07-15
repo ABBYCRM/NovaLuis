@@ -57,31 +57,8 @@
     };
   }
 
-  async function unlock() {
-    var pin = window.prompt('Enter PIN to unlock Composio connections (stays unlocked 12h):');
-    if (pin == null) return false;
-    try {
-      var response = await fetch('/api/work-tree/unlock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: String(pin).trim() })
-      });
-      if (!response.ok) {
-        window.alert('Wrong PIN.');
-        return false;
-      }
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
   async function api(path, options) {
     var response = await fetch(path, options);
-    if (response.status === 401) {
-      var ok = await unlock();
-      if (ok) response = await fetch(path, options);
-    }
     var text = await response.text();
     var data = null;
     try { data = text ? JSON.parse(text) : null; }
