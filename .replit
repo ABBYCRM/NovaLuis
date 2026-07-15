@@ -28,10 +28,6 @@ args = "Nova: Scratchpad Daemon"
 task = "workflow.run"
 args = "test"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Nova: Social Media Worker"
-
 [[workflows.workflow]]
 name = "Nova: Poll Events"
 author = "agent"
@@ -64,17 +60,6 @@ args = "pnpm --filter @workspace/nova run test"
 
 [workflows.workflow.metadata]
 isValidation = true
-
-[[workflows.workflow]]
-name = "Nova: Social Media Worker"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "node scripts/social-media-worker.mjs"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"

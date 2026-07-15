@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { resumeOpenClawRuns } from "./routes/work-tree";
+import { startSocialCron } from "./social-cron";
 
 const rawPort = process.env["PORT"];
 
@@ -23,6 +24,10 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Scheduled social media posts — runs inside this process, no separate worker needed.
+  startSocialCron(port);
+
   void resumeOpenClawRuns().catch((resumeErr) => {
     logger.warn({ err: resumeErr }, "OpenClaw run reconciliation skipped");
   });
