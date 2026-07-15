@@ -1,0 +1,57 @@
+"OpenClaw tools themselves — the actual tool definitions live in the OpenClaw runtime process, not in this repo"
+
+Wrong. scripts/super-nova-tools.mjs is the full tool registry in this repo. The Work Tree agent loop in scripts/work-tree-worker.mjs calls these directly. The tools confirmed in the file:
+
+Tool	What it does
+http_fetch	SSRF-guarded direct HTTP GET. Blocks all private/loopback/link-local/metadata IPs. DNS rebinding closed at connect time via a custom lookup.
+browser_fetch	Steel.dev browser session — bypasses bot-protection, renders JS. Requires STEEL_API_KEY.
+web_search	Firecrawl → Brave fallback. Returns ranked {title, url, snippet} results.
+image_generate / generate_image	Bitdeer AI image generation. Requires BITDEER_API_KEY.
+code_execution	Runs Python, JavaScript, TypeScript, or Bash in a per-run sandbox under the OS temp dir. Gated behind SUPER_NOVA_EXEC env var. Off by default.
+file_read, file_write, edit	Sandboxed file operations within the per-run temp dir.
+memory_read, memory_write	Reads/writes a persistent agent-memory.json under .nova-data/.
+Catalog tools	catalogSearch, catalogDescribe, catalogText — skill/tool catalog discovery.
+openclaw/workspace/skills/nova-services/nova-services.mjs is a CLI client that wraps the Nova API (/api/workspaces, /api/knowledge, etc.) — it is what OpenClaw calls to read/write workspace files, not the agent runtime itself.
+
+"Direct Google Drive / Gmail / Docs / Sheets — not implemented as direct routes"
+
+Wrong. artifacts/api-server/src/routes/integrations.ts has live direct routes backed by artifacts/api-server/src/lib/google.ts. Auth is a single Google OAuth credential (client_id + client_secret + refresh_token → auto-refreshed access token, or a pasted short-lived access_token). All four Google products share the same credential.
+
+Route	What it does
+GET /integrations/gmail/messages	Lists up to 50 messages. Supports Gmail query filter via ?q=. Returns id, snippet, subject, from, date per message.
+GET /integrations/sheets/:id	Reads a range from a Google Sheet by spreadsheet ID. Default range A1:Z100, overridable via ?range=.
+GET /integrations/docs/:id	Fetches a Google Doc by ID, extracts plain text. Returns {title, text}.
+GET /integrations/drive/files	Lists up to 25 Drive files (id, name, mimeType, modifiedTime, webViewLink). Supports Drive query via ?q=.
+GET /integrations/youtube/search	YouTube Data API search (up to 10 video results). Requires a separate youtube.api_key credential.
+GET /integrations/instagram/media	Lists Instagram media (Meta Graph API). Requires instagram.access_token.
+These are read-only routes. There are no write routes for Sheets, Docs, or Drive in this file. Publish to Instagram goes through Composio (/social/publish/:id), not this route.
+
+"Scheduled post auto-publishing cron — no running cron worker"
+
+Wrong. There are two independent implementations, both present in this repo:
+
+artifacts/api-server/src/social-cron.ts — embedded directly inside the API server process. startSocialCron(port) is called once at server boot. Queries the database directly (no HTTP hop for the due-post lookup), fires POST /api/social/publish/:id internally every 60 seconds. Also handles recurring posts: after a successful publish, if interval_hours is set on the post, it reschedules scheduledAt = now + intervalHours.
+
+scripts/social-media-worker.mjs — a standalone Node.js worker script meant to run separately. Self-signs a wt_session cookie from SESSION_SECRET so it can call the authenticated API. Polls GET /api/social/due every 60 seconds and publishes + reschedules via the same /api/social/publish/:id and /api/social/schedule/:id endpoints.
+
+Whether the standalone worker is configured as a workflow in this repo: not verified — I did not check artifact.toml or .replit for a social-media-worker workflow entry.
+
+"SOUL.md / USER.md — unknown content"
+
+Both files exist at the repo root and were read.
+
+USER.md (15 lines): Operator is LORD LUIS. Described as a high-energy executive running a portfolio of ventures. Expects direct answers, fast execution, zero theater. AI is treated as an extension of his decision-making. Ask only when genuinely blocked: missing secret, permission only he can grant, payment approval needed, destructive action requiring confirmation, or a genuine two-path business decision.
+
+SOUL.md (619 lines, first 194 read): The system's hard operating contract. Key sections:
+
+Section 1–2 (Evidence + Truth states): Every factual claim requires evidence (file path read, command stdout, URL fetched, citation with author/year/URL, or direct user quote). Fourteen named truth states: VERIFIED, FAILED, PARTIAL, BLOCKED, UNKNOWN, NOT_RUN, NOT_READ, UNVERIFIED_API, DEPRECATED, MOCK_ONLY, NOT_DEPLOYED, UNKNOWN_SCHEMA. A mission is only done when every claim is VERIFIED.
+Section 3 (Read before you write): Before editing a file: read it. Before claiming a function exists: locate it. Before naming an env var: print it. Before referencing a commit: confirm it via the repo API.
+Section 4 (Tool reality): Every tool call recorded with name/command/status/stdout/exit-code. Silent failure is failure.
+Section 5 (POLSIA loop): WHILE NOT VERIFIED: load context → read reality → classify → find root cause → plan smallest safe change → gate destructive operations → apply change → run tests → review → verify → if not VERIFIED, result becomes next input.
+Section 7 (Smallest safe change): Patch order by blast radius — localized function patch first, config correction second, up through refactor and rewrite only when lower options are proven insufficient.
+Section 9 (Final report format): Structured STATUS / MISSION / ROOT_CAUSE / FILES_READ / FILES_CHANGED / COMMANDS_RUN / TEST_RESULTS / VERIFICATION / REMAINING / NEXT_INPUT template. Status updates skip this and use one short sentence.
+Sections 10–11 (Banned phrases + format): Explicit list of banned theater phrases ("should work", "probably fixed", "THE MACHINE IS LIVE", "Standing by", "✅", "🚀", headers/banners/decorative dashes in chat output).
+The remaining 425 lines of SOUL.md were not read in this session.
+
+
+Worked for 1 minute

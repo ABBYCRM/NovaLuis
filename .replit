@@ -18,6 +18,10 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
+args = "Nova: OpenClaw Gateway"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
 args = "Nova: Poll Events"
 
 [[workflows.workflow.tasks]]
@@ -26,7 +30,26 @@ args = "Nova: Scratchpad Daemon"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "test"
+args = "Nova: Deep Worker"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Nova: Social Media Worker"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Nova: Work Tree Worker"
+
+[[workflows.workflow]]
+name = "Nova: OpenClaw Gateway"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "mkdir -p /home/runner/workspace/.nova-data/workspace && node_modules/.bin/openclaw gateway --port 18789"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [[workflows.workflow]]
 name = "Nova: Poll Events"
@@ -46,6 +69,39 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "node scripts/scratchpad-daemon.mjs"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Nova: Deep Worker"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "OPENCLAW_STATE_DIR=/home/runner/workspace/.nova-data node scripts/deep-worker.mjs"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Nova: Social Media Worker"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/social-media-worker.mjs"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Nova: Work Tree Worker"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "OPENCLAW_STATE_DIR=/home/runner/workspace/.nova-data node scripts/work-tree-worker.mjs"
 
 [workflows.workflow.metadata]
 outputType = "console"
@@ -81,6 +137,11 @@ externalPort = 80
 localPort = 18131
 externalPort = 3000
 
+[[ports]]
+localPort = 18789
+externalPort = 3001
+exposeLocalhost = true
+
 [nix]
 channel = "stable-25_05"
 
@@ -89,3 +150,13 @@ channel = "stable-25_05"
 [userenv.shared]
 SCRATCHPAD_DATABASE_URL = "postgresql://supernova:YNHzNCuSi0AqVHHq7T3YLkN10F1YAbzJ@dpg-d94pgbnaqgkc73e7u8hg-a.oregon-postgres.render.com:5432/supernova_db_q5bt"
 SUPER_NOVA_EXEC = "1"
+OPENCLAW_GATEWAY_TOKEN = "58b0b1ae2d941264d7bad3b7ae046eaa8e8e4600913c49d13b0ec5c835c78803"
+SUPERNOVA_API_KEY = "b6d9750b10f56deaed41b7fe232cc2ef4a22585a31039550cd3bbbb50471c510"
+NOVA_OPENCLAW_PROXY_KEY = "b6d9750b10f56deaed41b7fe232cc2ef4a22585a31039550cd3bbbb50471c510"
+NOVA_OPENCLAW_MODEL_ID = "gpt-4o-mini"
+OPENCLAW_AGENT_MODEL = "openclaw"
+OPENCLAW_STATE_DIR = "/home/runner/workspace/.nova-data"
+OPENCLAW_WORKSPACE_DIR = "/home/runner/workspace/.nova-data/workspace"
+OPENCLAW_CONFIG_PATH = "/home/runner/workspace/openclaw/openclaw.json"
+NOVA_INTERNAL_MODEL_BASE_URL = "http://127.0.0.1:8080/api/v1"
+WORK_TREE_MODEL = "gpt-4o-mini"

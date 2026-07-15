@@ -122,24 +122,32 @@ function usable(p, name) {
 }
 
 // Resolve a role to a concrete { providerName, provider, model, temperature, persona }.
-// OpenAI ONLY — all roles always route to OpenAI. No bitdeer fallback for role calls.
+// Priority: per-role env override → local (Nova proxy) → openai → bitdeer.
+// This lets the Work Tree route through the Nova model proxy (which itself fans
+// out to Gemini / OpenAI / Bitdeer) without needing a direct provider key here.
 export function resolveRole(role, callerModel) {
   const def = ROLE_DEFS[role] || ROLE_DEFS.executor;
   const roleModelEnv = process.env[`SUPER_NOVA_${role.toUpperCase()}_MODEL`];
   const model = roleModelEnv || DEFAULT_MODEL;
 
-  // OpenAI ONLY — always.
-  const providerName = "openai";
-  const provider = PROVIDERS.openai;
-
-  if (!usable(provider, providerName)) {
-    throw new Error(
-      `DECOMP-Ω router: OPENAI_API_KEY is required — Super Nova runs OpenAI only. ` +
-      `Set OPENAI_API_KEY to use Super Nova.`,
-    );
+  // 1. Per-role env override (SUPER_NOVA_<ROLE>_PROVIDER).
+  const explicit = envProvider(role);
+  if (explicit && PROVIDERS[explicit] && usable(PROVIDERS[explicit], explicit)) {
+    return { providerName: explicit, provider: PROVIDERS[explicit], model, temperature: def.temperature, persona: def.persona };
   }
 
-  return { providerName, provider, model, temperature: def.temperature, persona: def.persona };
+  // 2. Priority cascade: local → openai → bitdeer.
+  for (const name of ["local", "openai", "bitdeer"]) {
+    const p = PROVIDERS[name];
+    if (usable(p, name)) {
+      return { providerName: name, provider: p, model, temperature: def.temperature, persona: def.persona };
+    }
+  }
+
+  throw new Error(
+    `DECOMP-Ω router: no usable provider configured. Set one of: ` +
+    `SUPER_NOVA_LOCAL_BASE_URL (Nova proxy), OPENAI_API_KEY, or BITDEER_API_KEY.`,
+  );
 }
 
 // Non-mutating persona injection: returns a new messages array with the persona
