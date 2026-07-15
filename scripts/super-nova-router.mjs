@@ -165,7 +165,17 @@ function withPersona(persona, messages) {
   return [{ role: "system", content: persona }, ...messages];
 }
 
-// Perform a chat completion for a role. Returns the assistant message content.
+// Perform a chat completion for a role.
+//
+// Returns:
+//   • A plain string (the assistant content) when no `tools` array is passed —
+//     backward-compatible with all existing callers.
+//   • An object { content: string, toolCalls: array|null } when `tools` is
+//     passed — lets callers handle native OpenAI function / tool calls.
+//
+// tools      — optional array of OpenAI function tool schemas
+//              (see tool-catalog.mjs OPENAI_FUNCTION_TOOLS)
+// toolChoice — "auto" (default) | "none" | "required" | { type:"function", name }
 export async function chatComplete({
   role = "executor",
   messages,
@@ -173,6 +183,8 @@ export async function chatComplete({
   maxTokens = 1500,
   temperature,
   timeoutMs = 120_000,
+  tools,
+  toolChoice,
 }) {
   const r = resolveRole(role, model);
   if (!r.provider || !r.provider.baseURL) {
@@ -189,6 +201,13 @@ export async function chatComplete({
       process.env.OPENROUTER_REFERER || "https://nova-sszi.onrender.com";
     headers["X-Title"] = "Nova Super Nova";
   }
+  // Helicone observability proxy — route OpenAI traffic through Helicone when
+  // HELICONE_API_KEY is set. This logs every request/response for monitoring.
+  if (r.providerName === "openai" && process.env.HELICONE_API_KEY) {
+    headers["Helicone-Auth"] = `Bearer ${process.env.HELICONE_API_KEY}`;
+    headers["Helicone-Property-Role"] = role;
+    headers["Helicone-Property-App"] = "nova-super-nova";
+  }
 
   const body = {
     model: r.model,
@@ -197,6 +216,10 @@ export async function chatComplete({
     temperature: temperature ?? r.temperature,
     stream: false,
   };
+  if (tools && tools.length) {
+    body.tools = tools;
+    body.tool_choice = toolChoice ?? "auto";
+  }
 
   // Retry on 503/429 (overload / rate-limit) — OpenAI only, up to 3 attempts with back-off.
   // Non-503/429 errors throw immediately.
@@ -232,6 +255,16 @@ export async function chatComplete({
       const j = await res.json();
       const msg = j.choices?.[0]?.message;
       const content = msg?.content || "";
+      // Native function / tool calls (only present when caller passed a tools array).
+      const nativeToolCalls =
+        (msg?.tool_calls && msg.tool_calls.length) ? msg.tool_calls : null;
+
+      // When the caller opted into native tools, return structured {content, toolCalls}
+      // so it can handle both a plain reply and a function-call response.
+      if (tools && tools.length) {
+        return { content, toolCalls: nativeToolCalls };
+      }
+
       if (content) return content;
       // Some reasoning models (Kimi-K2.6, DeepSeek-R1) put the user-facing answer
       // in reasoning_content when content is empty.  Only fall back to it when it

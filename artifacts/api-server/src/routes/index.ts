@@ -20,6 +20,7 @@ import renderScenariosRouter from "./render-scenarios";
 import githubScenariosRouter from "./github-scenarios";
 import composioScenariosRouter from "./composio-scenarios";
 import firecrawlSteelScenariosRouter from "./firecrawl-steel-scenarios";
+import capabilitiesRouter from "./capabilities";
 import { requireWtAuth } from "../lib/work-tree-auth";
 
 const router: IRouter = Router();
@@ -50,5 +51,6 @@ router.use(firecrawlSteelScenariosRouter);
 router.use(agentChatRouter);
 router.use(openaiProxyRouter);
 router.use(skillsRouter);
+router.use(capabilitiesRouter);
 
 export default router;

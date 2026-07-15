@@ -60,17 +60,21 @@ export async function recordTurn(params: {
   assistantText: string;
   model: string;
 }): Promise<void> {
-  const mod = await getDb();
-  if (!mod) return;
-  const userText = params.userText.slice(0, 8000);
-  const assistantText = params.assistantText.slice(0, 8000);
-  if (!userText && !assistantText) return;
-  await mod.db.insert(mod.conversationTurnsTable).values({
-    conversationKey: params.conversationKey,
-    userText,
-    assistantText,
-    model: params.model.slice(0, 200),
-  });
+  try {
+    const mod = await getDb();
+    if (!mod) return;
+    const userText = params.userText.slice(0, 8000);
+    const assistantText = params.assistantText.slice(0, 8000);
+    if (!userText && !assistantText) return;
+    await mod.db.insert(mod.conversationTurnsTable).values({
+      conversationKey: params.conversationKey,
+      userText,
+      assistantText,
+      model: params.model.slice(0, 200),
+    });
+  } catch {
+    // Degraded mode — scratchpad persistence is optional, never crash the server.
+  }
 }
 
 // Compact cross-conversation memory injected into each chat for continuity.

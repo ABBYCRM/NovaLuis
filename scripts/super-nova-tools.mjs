@@ -394,6 +394,193 @@ async function browserFetch(args) {
   };
 }
 
+// ── OpenAI Retrieval API ──────────────────────────────────────────────────────
+// Semantic search over an OpenAI vector store.
+// Requires OPENAI_VECTOR_STORE_ID (and OPENAI_API_KEY).
+// The store must be pre-populated via the Files + VectorStores API.
+async function openaiRetrieval(args) {
+  const query = String(args.query || "").trim().slice(0, 800);
+  if (!query) return { error: "query required" };
+  const vsId = String(args.vector_store_id || process.env.OPENAI_VECTOR_STORE_ID || "").trim();
+  if (!vsId) {
+    return {
+      error:
+        "openai_retrieval: OPENAI_VECTOR_STORE_ID is not set. " +
+        "Create a vector store via the OpenAI Files/VectorStores API and set OPENAI_VECTOR_STORE_ID to its ID.",
+    };
+  }
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return { error: "OPENAI_API_KEY not set" };
+
+  const body = {
+    query,
+    max_num_results: Math.min(Math.max(1, Number(args.max_results) || 5), 20),
+    rewrite_query: args.rewrite_query !== false,
+  };
+  if (args.attribute_filter) body.attribute_filter = args.attribute_filter;
+  if (args.score_threshold != null) {
+    body.ranking_options = { score_threshold: Number(args.score_threshold) };
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `https://api.openai.com/v1/vector_stores/${vsId}/search`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { error: `Retrieval API HTTP ${res.status}: ${text.slice(0, 300)}` };
+    }
+    const j = await res.json();
+    const results = (j.data || []).map((r) => ({
+      file: r.filename || r.file_id,
+      score: r.score,
+      content: (r.content || []).map((c) => c.text).join("\n").slice(0, 1200),
+    }));
+    return { query: j.search_query || query, results, count: results.length };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── OpenAI Code Interpreter ───────────────────────────────────────────────────
+// Run Python code in OpenAI's sandboxed container via the Responses API.
+// Safe replacement for the DANGEROUS run_python tool when SUPER_NOVA_EXEC is off.
+// Timeout is generous (2 min) to allow compilation + computation.
+const CI_TIMEOUT_MS = Number(process.env.OPENAI_CI_TIMEOUT_MS || 120_000);
+
+async function openaiCodeInterpreter(args) {
+  const code = String(args.code || "").trim();
+  if (!code) return { error: "code required" };
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return { error: "OPENAI_API_KEY not set" };
+
+  const model = process.env.OPENAI_CI_MODEL || "gpt-4o-mini";
+  const body = {
+    model,
+    tools: [{ type: "code_interpreter", container: { type: "auto" } }],
+    tool_choice: "required",
+    input: [
+      {
+        role: "system",
+        content:
+          "You are a code execution assistant. Execute the Python code the user provides exactly as given. " +
+          "Return the complete stdout/stderr output and any generated files.",
+      },
+      {
+        role: "user",
+        content:
+          `Run this Python code and return the full output:\n\`\`\`python\n${code.slice(0, 20_000)}\n\`\`\``,
+      },
+    ],
+    max_output_tokens: Number(args.max_tokens) || 4096,
+  };
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CI_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { error: `Code Interpreter API HTTP ${res.status}: ${text.slice(0, 300)}` };
+    }
+    const j = await res.json();
+    const msgItem = (j.output || []).find((o) => o.type === "message");
+    const outputText = (msgItem?.content || [])
+      .filter((c) => c.type === "output_text")
+      .map((c) => c.text)
+      .join("")
+      .trim();
+    const files = (msgItem?.content || [])
+      .flatMap((c) => c.annotations || [])
+      .filter((a) => a.type === "container_file_citation")
+      .map((a) => ({ file_id: a.file_id, filename: a.filename, container_id: a.container_id }));
+    const ciCall = (j.output || []).find((o) => o.type === "code_interpreter_call");
+    return {
+      output: outputText,
+      stdout: (ciCall?.outputs || []).map((o) => o.logs || "").join("") || outputText,
+      code_ran: ciCall?.code,
+      files: files.length ? files : undefined,
+      usage: j.usage,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── OpenAI Hosted Shell ───────────────────────────────────────────────────────
+// Run shell commands in OpenAI's managed Debian container via the Responses API.
+// Sandboxed and ephemeral — safe alternative to exec/bash that doesn't need
+// SUPER_NOVA_EXEC=1. No outbound network by default (OpenAI default policy).
+const HOSTED_SHELL_TIMEOUT_MS = Number(process.env.OPENAI_SHELL_TIMEOUT_MS || 120_000);
+
+async function openaiHostedShell(args) {
+  const command = String(args.command || "").trim();
+  if (!command) return { error: "command required" };
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return { error: "OPENAI_API_KEY not set" };
+
+  const model = process.env.OPENAI_SHELL_MODEL || "gpt-4o-mini";
+  const body = {
+    model,
+    tools: [{ type: "shell", environment: { type: "container_auto" } }],
+    tool_choice: "required",
+    input: `Execute this shell command exactly and return the complete stdout/stderr:\n\`\`\`bash\n${command.slice(0, 5_000)}\n\`\`\``,
+    max_output_tokens: Number(args.max_tokens) || 4096,
+  };
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), HOSTED_SHELL_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { error: `Hosted Shell API HTTP ${res.status}: ${text.slice(0, 300)}` };
+    }
+    const j = await res.json();
+    const msgItem = (j.output || []).find((o) => o.type === "message");
+    const outputText = (msgItem?.content || [])
+      .filter((c) => c.type === "output_text")
+      .map((c) => c.text)
+      .join("")
+      .trim();
+    const shellCalls = (j.output || []).filter((o) => o.type === "shell_call");
+    return {
+      output: outputText,
+      commands_run: shellCalls.flatMap((sc) => sc.action?.commands || []).filter(Boolean),
+      usage: j.usage,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function imageGenerate(args, ctx) {
   const prompt = String(args.prompt || "").slice(0, 1000);
   if (!prompt) return { error: "prompt required" };
@@ -425,6 +612,470 @@ async function imageGenerate(args, ctx) {
   }
   if (remoteUrl) return { url: remoteUrl };
   return { error: "no image returned" };
+}
+
+// ── Resend (email) ────────────────────────────────────────────────────────────
+async function sendEmail(args) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return { error: "send_email unavailable: RESEND_API_KEY not set" };
+  const to = String(args.to || "").trim();
+  const subject = String(args.subject || "").trim();
+  const body = String(args.body || args.html || args.text || "").trim();
+  if (!to) return { error: "to required" };
+  if (!subject) return { error: "subject required" };
+  if (!body) return { error: "body required" };
+  const from = String(
+    args.from || process.env.RESEND_FROM || "AURA <noreply@notifications.abbycrm.com>",
+  );
+  const payload = {
+    from,
+    to: to.includes(",") ? to.split(",").map((s) => s.trim()) : to,
+    subject,
+  };
+  if (args.html || /<[a-z][\s\S]*>/i.test(body)) {
+    payload.html = body;
+  } else {
+    payload.text = body;
+  }
+  if (args.cc) payload.cc = args.cc;
+  if (args.bcc) payload.bcc = args.bcc;
+  if (args.reply_to) payload.reply_to = args.reply_to;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Resend API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    return { sent: true, id: j.id };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── ScreenshotOne ─────────────────────────────────────────────────────────────
+async function screenshotUrl(args, ctx) {
+  const accessKey = process.env.SCREENSHOTONE_ACCESS_KEY;
+  if (!accessKey) return { error: "screenshot_url unavailable: SCREENSHOTONE_ACCESS_KEY not set" };
+  const url = String(args.url || "").trim();
+  if (!url) return { error: "url required" };
+  try { await assertSafeUrl(url); } catch (e) { return { error: e.message }; }
+  const params = new URLSearchParams({
+    access_key: accessKey,
+    url,
+    format: args.format || "jpg",
+    viewport_width: String(args.width || 1280),
+    viewport_height: String(args.height || 800),
+    full_page: String(!!args.full_page),
+    block_ads: "true",
+    block_cookie_banners: "true",
+  });
+  const apiUrl = `https://api.screenshotone.com/take?${params}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const res = await fetch(apiUrl, { signal: ctrl.signal });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `ScreenshotOne API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("image")) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const dir = await sandboxDir(ctx && ctx.runId);
+      const ext = String(args.format || "jpg").replace(/[^a-z]/g, "");
+      const file = path.join(dir, `screenshot-${Date.now()}.${ext}`);
+      await fs.writeFile(file, buf);
+      return { saved: file, bytes: buf.length, contentType, source_url: url };
+    }
+    const j = await res.json().catch(() => ({}));
+    return { url: j.url || apiUrl, source_url: url, ...j };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Exa neural search ─────────────────────────────────────────────────────────
+async function exaSearch(args) {
+  const key = process.env.EXA_API_KEY;
+  if (!key) return { error: "exa_search unavailable: EXA_API_KEY not set" };
+  const query = String(args.query || "").trim();
+  if (!query) return { error: "query required" };
+  const body = {
+    query,
+    numResults: Math.min(Math.max(1, Number(args.num_results || args.max_results) || 5), 10),
+    type: args.type || "neural",
+    useAutoprompt: args.autoprompt !== false,
+    contents: { text: { maxCharacters: 800 } },
+  };
+  if (args.include_domains) body.includeDomains = args.include_domains;
+  if (args.exclude_domains) body.excludeDomains = args.exclude_domains;
+  if (args.start_crawl_date) body.startCrawlDate = args.start_crawl_date;
+  if (args.end_crawl_date) body.endCrawlDate = args.end_crawl_date;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.exa.ai/search", {
+      method: "POST",
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Exa API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    const results = (j.results || []).map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: (r.text || r.summary || (r.highlights || [])[0] || "").slice(0, 600),
+      published: r.publishedDate,
+      score: r.score,
+    }));
+    return { query: j.autopromptString || query, results, count: results.length };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Tavily search ─────────────────────────────────────────────────────────────
+async function tavilySearch(args) {
+  const key = process.env.TAVILY_API_KEY;
+  if (!key) return { error: "tavily_search unavailable: TAVILY_API_KEY not set" };
+  const query = String(args.query || "").trim();
+  if (!query) return { error: "query required" };
+  const body = {
+    query,
+    api_key: key,
+    search_depth: args.depth || "basic",
+    max_results: Math.min(Math.max(1, Number(args.max_results) || 5), 10),
+    include_answer: args.include_answer !== false,
+    include_raw_content: !!args.include_raw_content,
+    include_domains: args.include_domains || [],
+    exclude_domains: args.exclude_domains || [],
+  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Tavily API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    return {
+      answer: j.answer,
+      results: (j.results || []).map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: (r.content || "").slice(0, 500),
+        score: r.score,
+        published_date: r.published_date,
+      })),
+      count: (j.results || []).length,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── ScrapingBee ───────────────────────────────────────────────────────────────
+async function scrapingbeeFetch(args) {
+  const key = process.env.SCRAPINGBEE_API_KEY;
+  if (!key) return { error: "scrapingbee_fetch unavailable: SCRAPINGBEE_API_KEY not set" };
+  const url = String(args.url || "").trim();
+  if (!url) return { error: "url required" };
+  try { await assertSafeUrl(url); } catch (e) { return { error: e.message }; }
+  const params = new URLSearchParams({
+    api_key: key,
+    url,
+    render_js: String(!!args.render_js),
+    premium_proxy: String(!!args.premium_proxy),
+  });
+  if (args.country_code) params.set("country_code", String(args.country_code));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const res = await fetch(`https://app.scrapingbee.com/api/v1/?${params}`, {
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `ScrapingBee API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const text = await res.text();
+    return { url, body: text.slice(0, MAX_BODY), truncated: text.length > MAX_BODY };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Scrapfly ──────────────────────────────────────────────────────────────────
+async function scrapflyFetch(args) {
+  const key = process.env.SCRAPFLY_API_KEY;
+  if (!key) return { error: "scrapfly_fetch unavailable: SCRAPFLY_API_KEY not set" };
+  const url = String(args.url || "").trim();
+  if (!url) return { error: "url required" };
+  try { await assertSafeUrl(url); } catch (e) { return { error: e.message }; }
+  const params = new URLSearchParams({
+    key,
+    url,
+    render_js: String(!!args.render_js),
+    asp: String(!!args.anti_scraping_protection),
+    format: args.format || "text",
+  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const res = await fetch(`https://api.scrapfly.io/scrape?${params}`, {
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return { error: `Scrapfly API ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    const content = (j.result && (j.result.content || j.result.html)) || "";
+    return {
+      url,
+      body: content.slice(0, MAX_BODY),
+      truncated: content.length > MAX_BODY,
+      status: j.result && j.result.status_code,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── E2B cloud code sandbox ────────────────────────────────────────────────────
+// Isolated VMs on E2B's infrastructure. Creates a sandbox, runs the code,
+// polls for the result, then deletes the sandbox. ~60s max runtime.
+const E2B_BASE = "https://api.e2b.dev";
+
+async function e2bRunCode(args) {
+  const key = process.env.E2B_API_KEY;
+  if (!key) return { error: "e2b_run_code unavailable: E2B_API_KEY not set" };
+  const code = String(args.code || "").trim();
+  if (!code) return { error: "code required" };
+  const language = String(args.language || "python").toLowerCase();
+
+  const headers = { "X-API-Key": key, "Content-Type": "application/json" };
+  const cmd =
+    language === "python" || language === "python3"
+      ? ["python3", "-c", code]
+      : language === "javascript" || language === "node"
+        ? ["node", "-e", code]
+        : ["bash", "-c", code];
+
+  let sandboxId = null;
+  try {
+    // 1. Create sandbox
+    const createRes = await fetch(`${E2B_BASE}/v2/sandboxes`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ templateID: "code-interpreter-v1", timeout: 120 }),
+    });
+    if (!createRes.ok) {
+      const t = await createRes.text().catch(() => "");
+      return { error: `E2B create ${createRes.status}: ${t.slice(0, 300)}` };
+    }
+    const sandbox = await createRes.json();
+    sandboxId = sandbox.sandboxID || sandbox.sandboxId || sandbox.id;
+    if (!sandboxId) return { error: "E2B: no sandboxID in response", raw: sandbox };
+
+    // 2. Start process
+    const procRes = await fetch(`${E2B_BASE}/v2/sandboxes/${sandboxId}/processes`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ process: { cmd, timeout: 60 } }),
+    });
+    if (!procRes.ok) {
+      const t = await procRes.text().catch(() => "");
+      return { error: `E2B process ${procRes.status}: ${t.slice(0, 300)}` };
+    }
+    const proc = await procRes.json();
+    const processID = proc.processID || proc.processId || proc.id;
+    if (!processID) return { error: "E2B: no processID in response", raw: proc };
+
+    // 3. Poll for completion (up to 60s in 2s increments)
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const resultRes = await fetch(
+        `${E2B_BASE}/v2/sandboxes/${sandboxId}/processes/${processID}`,
+        { headers },
+      );
+      if (!resultRes.ok) continue;
+      const result = await resultRes.json();
+      if (result.status === "finished" || result.finished) {
+        return {
+          stdout: String(result.stdout || result.output || "").slice(0, MAX_BODY),
+          stderr: String(result.stderr || result.error || "").slice(0, 2000),
+          exitCode: result.exitCode ?? result.exit_code ?? 0,
+          language,
+        };
+      }
+    }
+    return { error: "E2B: process timed out after 60s" };
+  } finally {
+    if (sandboxId) {
+      fetch(`${E2B_BASE}/v2/sandboxes/${sandboxId}`, { method: "DELETE", headers }).catch(() => {});
+    }
+  }
+}
+
+// ── Brave Search ─────────────────────────────────────────────────────────────
+async function braveSearch(args) {
+  const key = process.env.BRAVE_SEARCH_API_KEY;
+  if (!key) return { error: "brave_search unavailable: BRAVE_SEARCH_API_KEY not set" };
+  const query = String(args.query || "").trim();
+  if (!query) return { error: "query required" };
+  const count = Math.min(Number(args.count) || 10, 20);
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
+  const res = await safeFetch(url, {
+    headers: { Accept: "application/json", "X-Subscription-Token": key },
+  });
+  if (!res.ok) return { error: `Brave Search HTTP ${res.status}: ${await res.text().catch(() => "")}` };
+  const data = await res.json();
+  return {
+    results: (data.web?.results ?? []).map((r) => ({
+      title: r.title,
+      url: r.url,
+      description: r.description,
+      age: r.age,
+    })),
+    query,
+    count: data.web?.results?.length ?? 0,
+  };
+}
+
+// ── Pinecone ──────────────────────────────────────────────────────────────────
+async function pineconeQuery(args) {
+  const key = process.env.PINECONE_API_KEY;
+  if (!key) return { error: "pinecone_query unavailable: PINECONE_API_KEY not set" };
+  const host = process.env.PINECONE_INDEX_HOST;
+  if (!host) return { error: "pinecone_query unavailable: PINECONE_INDEX_HOST not set" };
+  const vector = args.vector;
+  if (!Array.isArray(vector) || vector.length === 0) return { error: "vector (float array) required" };
+  const res = await safeFetch(`https://${host}/query`, {
+    method: "POST",
+    headers: { "Api-Key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vector,
+      topK: Number(args.topK) || 10,
+      includeMetadata: true,
+      includeValues: false,
+      namespace: args.namespace || "",
+    }),
+  });
+  if (!res.ok) return { error: `Pinecone query HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}` };
+  return await res.json();
+}
+
+async function pineconeUpsert(args) {
+  const key = process.env.PINECONE_API_KEY;
+  if (!key) return { error: "pinecone_upsert unavailable: PINECONE_API_KEY not set" };
+  const host = process.env.PINECONE_INDEX_HOST;
+  if (!host) return { error: "pinecone_upsert unavailable: PINECONE_INDEX_HOST not set" };
+  const vectors = args.vectors;
+  if (!Array.isArray(vectors) || vectors.length === 0) return { error: "vectors array required" };
+  const res = await safeFetch(`https://${host}/vectors/upsert`, {
+    method: "POST",
+    headers: { "Api-Key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({ vectors, namespace: args.namespace || "" }),
+  });
+  if (!res.ok) return { error: `Pinecone upsert HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}` };
+  return await res.json();
+}
+
+// ── GitHub read ───────────────────────────────────────────────────────────────
+async function githubRead(args) {
+  const token = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  const headers = {
+    "User-Agent": "NOVA-OpenClaw/1.0",
+    Accept: "application/vnd.github.v3+json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  // Accept either a full API URL or owner/repo/path shorthand
+  const apiUrl =
+    args.url ||
+    `https://api.github.com/repos/${args.owner}/${args.repo}/contents/${args.path || ""}`;
+
+  const res = await safeFetch(apiUrl, { headers });
+  if (!res.ok) return { error: `GitHub HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}` };
+  const data = await res.json();
+
+  if (Array.isArray(data)) {
+    return {
+      type: "directory",
+      path: args.path || "",
+      items: data.map((i) => ({ name: i.name, type: i.type, path: i.path, size: i.size })),
+    };
+  }
+  if (data.encoding === "base64") {
+    return {
+      type: "file",
+      path: data.path,
+      size: data.size,
+      content: Buffer.from(data.content, "base64").toString("utf8").slice(0, 60000),
+      truncated: data.size > 60000,
+    };
+  }
+  return data;
+}
+
+// ── Composio execute + connect ────────────────────────────────────────────────
+const COMPOSIO_TOOL_BASE = (
+  process.env.COMPOSIO_BASE_URL || "https://backend.composio.dev/api/v3.1"
+).replace(/\/$/, "");
+
+async function composioExecute(args) {
+  const key = process.env.COMPOSIO_API_KEY;
+  if (!key) return { error: "composio_execute unavailable: COMPOSIO_API_KEY not set" };
+  const tool = String(args.tool || args.action || "").trim();
+  if (!tool) return { error: "tool (action slug) required" };
+  const res = await safeFetch(`${COMPOSIO_TOOL_BASE}/tools/execute`, {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      tool,
+      input: args.input ?? args.params ?? {},
+      userId: args.userId || "nova-luis",
+    }),
+  });
+  if (!res.ok) return { error: `Composio execute HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 500)}` };
+  return await res.json();
+}
+
+async function composioConnect(args) {
+  const key = process.env.COMPOSIO_API_KEY;
+  if (!key) return { error: "composio_connect unavailable: COMPOSIO_API_KEY not set" };
+  const toolkit = String(args.toolkit || args.toolkitSlug || args.app || "").trim();
+  if (!toolkit) return { error: "toolkit (slug) required. e.g. 'slack', 'notion', 'github'" };
+  const res = await safeFetch(`${COMPOSIO_TOOL_BASE}/tools/connect`, {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      toolkitSlug: toolkit,
+      userId: args.userId || "nova-luis",
+      redirectUrl: args.redirectUrl,
+    }),
+  });
+  if (!res.ok) return { error: `Composio connect HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 500)}` };
+  return await res.json();
 }
 
 // ── DANGEROUS tools (gated) ──────────────────────────────────────────────────
@@ -911,6 +1562,96 @@ const SAFE_TOOLS = {
   memory_get:      { run: memGet,         desc: "get a memory item by key. args: {key}." },
   memory_put:      { run: memPut,         desc: "save a memory item. args: {key, value}." },
   memory_search:   { run: memSearch,      desc: "search memory by query. args: {query, limit?}." },
+
+  // ── Email ─────────────────────────────────────────────────────────────────
+  send_email: {
+    run: sendEmail,
+    desc: "send an email via Resend. args: {to, subject, body, from?, cc?, bcc?, reply_to?, html?}. Returns {sent:true, id}.",
+  },
+
+  // ── Screenshots ───────────────────────────────────────────────────────────
+  screenshot_url: {
+    run: screenshotUrl,
+    desc: "take a screenshot of a webpage (ScreenshotOne). args: {url, format?, width?, height?, full_page?}. Returns {saved, bytes, source_url}.",
+  },
+
+  // ── Search providers ──────────────────────────────────────────────────────
+  exa_search: {
+    run: exaSearch,
+    desc: "neural web search via Exa AI. args: {query, num_results?, type?, include_domains?, exclude_domains?, start_crawl_date?, end_crawl_date?}. Returns {query, results:[{title,url,snippet,score}], count}.",
+  },
+  tavily_search: {
+    run: tavilySearch,
+    desc: "web search + direct answer via Tavily. args: {query, depth?, max_results?, include_answer?, include_domains?, exclude_domains?}. Returns {answer, results, count}.",
+  },
+
+  // ── Web scraping ──────────────────────────────────────────────────────────
+  scrapingbee_fetch: {
+    run: scrapingbeeFetch,
+    desc: "fetch a URL via ScrapingBee (bypasses bot-protection). args: {url, render_js?, premium_proxy?, country_code?}. Returns {url, body, truncated}.",
+  },
+  scrapfly_fetch: {
+    run: scrapflyFetch,
+    desc: "fetch a URL via Scrapfly (anti-scraping protection). args: {url, render_js?, anti_scraping_protection?, format?}. Returns {url, body, truncated, status}.",
+  },
+
+  // ── E2B cloud sandbox ─────────────────────────────────────────────────────
+  e2b_run_code: {
+    run: e2bRunCode,
+    desc: "run code in an E2B isolated cloud VM (no SUPER_NOVA_EXEC needed). args: {code, language?}. Supports python, javascript, bash. Returns {stdout, stderr, exitCode, language}.",
+  },
+
+  // ── OpenAI cloud tools (SAFE — sandboxed on OpenAI's servers) ────────────
+  openai_retrieval: {
+    run: openaiRetrieval,
+    desc:
+      "semantic search over an OpenAI vector store. args: {query, max_results?, vector_store_id?, score_threshold?, rewrite_query?, attribute_filter?}. " +
+      "Requires OPENAI_VECTOR_STORE_ID env var (or pass vector_store_id). Returns {query, results:[{file,score,content}], count}.",
+  },
+  openai_code_interpreter: {
+    run: openaiCodeInterpreter,
+    desc:
+      "run Python code in OpenAI's sandboxed container (no SUPER_NOVA_EXEC needed). args: {code, max_tokens?}. " +
+      "Returns {output, stdout, code_ran, files?, usage}. Safe alternative to run_python.",
+  },
+  openai_hosted_shell: {
+    run: openaiHostedShell,
+    desc:
+      "run a shell command in OpenAI's managed Debian container (no SUPER_NOVA_EXEC needed). args: {command, max_tokens?}. " +
+      "Returns {output, commands_run, usage}. Ephemeral — no persistent state between calls.",
+  },
+
+  // ── Brave Search ──────────────────────────────────────────────────────────
+  brave_search: {
+    run: braveSearch,
+    desc: "web search via Brave Search API. args: {query, count?}. Requires BRAVE_SEARCH_API_KEY. Returns {results:[{title,url,description,age}], count}.",
+  },
+
+  // ── Pinecone vector ops ────────────────────────────────────────────────────
+  pinecone_query: {
+    run: pineconeQuery,
+    desc: "semantic vector search in Pinecone. args: {vector:float[], topK?, namespace?}. Requires PINECONE_API_KEY + PINECONE_INDEX_HOST. Returns {matches:[{id,score,metadata}]}.",
+  },
+  pinecone_upsert: {
+    run: pineconeUpsert,
+    desc: "upsert vectors into Pinecone. args: {vectors:[{id,values:float[],metadata?}], namespace?}. Requires PINECONE_API_KEY + PINECONE_INDEX_HOST. Returns {upsertedCount}.",
+  },
+
+  // ── GitHub read ────────────────────────────────────────────────────────────
+  github_read: {
+    run: githubRead,
+    desc: "read GitHub repo contents. args: {owner,repo,path?} OR {url} (full GitHub API URL). Returns directory listing or file content. Uses GITHUB_PERSONAL_ACCESS_TOKEN if set.",
+  },
+
+  // ── Composio ──────────────────────────────────────────────────────────────
+  composio_execute: {
+    run: composioExecute,
+    desc: "execute a Composio tool action (Slack, Gmail, Notion, etc.). args: {tool, input?, userId?}. Requires COMPOSIO_API_KEY. Returns tool execution result.",
+  },
+  composio_connect: {
+    run: composioConnect,
+    desc: "get a Composio OAuth Connect Link for an app. args: {toolkit, userId?, redirectUrl?}. Requires COMPOSIO_API_KEY. Returns {connectLink}.",
+  },
 
   // ── Tool catalog ──────────────────────────────────────────────────────────
   tool_search:     { run: toolSearch,     desc: "search the tool catalog. args: {query, category?}. Returns matching tool metadata." },

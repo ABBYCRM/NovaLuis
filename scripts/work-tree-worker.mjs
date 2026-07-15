@@ -36,6 +36,7 @@ import {
   ROLES,
   routerSummary,
 } from "./super-nova-router.mjs";
+import { OPENAI_FUNCTION_TOOLS } from "./tool-catalog.mjs";
 
 const { Pool } = pg;
 
@@ -122,6 +123,28 @@ const TOOL_RISK = {
   // ── Git — read-only ───────────────────────────────────────────────────────
   git_status:            "low",
   git_diff:              "low",
+
+  // ── Email ─────────────────────────────────────────────────────────────────
+  send_email:                "medium",
+
+  // ── Screenshots ───────────────────────────────────────────────────────────
+  screenshot_url:            "medium",
+
+  // ── Search providers ──────────────────────────────────────────────────────
+  exa_search:                "low",
+  tavily_search:             "low",
+
+  // ── Web scraping ──────────────────────────────────────────────────────────
+  scrapingbee_fetch:         "medium",
+  scrapfly_fetch:            "medium",
+
+  // ── E2B cloud sandbox ─────────────────────────────────────────────────────
+  e2b_run_code:              "medium",
+
+  // ── OpenAI cloud tools (sandboxed on OpenAI's servers) ───────────────────
+  openai_retrieval:          "medium",
+  openai_code_interpreter:   "medium",
+  openai_hosted_shell:       "medium",
 
   // ── Memory ────────────────────────────────────────────────────────────────
   memory_get:            "low",
@@ -407,14 +430,20 @@ async function incrementRunsToday() {
 // injects the role's persona. `model` (the run's chosen model) is honored for
 // the default bitdeer provider; a role pointed at another provider uses its own
 // configured model. See scripts/super-nova-router.mjs.
+//
+// When `tools` is supplied the router will pass them as a native OpenAI
+// tools array and return { content, toolCalls } instead of a plain string.
+// Callers that don't pass tools receive the backward-compatible string.
 async function chatCompletion({
   messages,
   maxTokens = 1500,
   temperature = 0.3,
   model,
   role = "planner",
+  tools,
+  toolChoice,
 }) {
-  return chatComplete({ role, messages, model, maxTokens, temperature });
+  return chatComplete({ role, messages, model, maxTokens, temperature, tools, toolChoice });
 }
 
 // Single-shot system+user convenience (decompose/verify/synthesize use this).
@@ -728,14 +757,92 @@ async function executeTerminal(run, nodes, node, priorIssues, role = "executor")
   const trace = [];
   const ctx = { runId: run.id };
 
+  // ── Native tool calling (OpenAI provider only) ───────────────────────────────
+  // When the router is on OpenAI, pass a typed function-tool array so the model
+  // can call tools via the native tool_calls mechanism instead of emitting raw JSON.
+  // Falls back to the text-JSON ReAct protocol for non-OpenAI providers.
+  const IMPLEMENTED = new Set(Object.keys(TOOL_RISK));
+  let nativeTools;
+  try {
+    const providerName = resolveRole(role).providerName;
+    if (providerName === "openai") {
+      nativeTools = OPENAI_FUNCTION_TOOLS.filter(
+        ft => IMPLEMENTED.has(ft.name) && isToolAllowed(ft.name),
+      );
+    }
+  } catch {
+    // resolveRole may throw if no provider is configured yet — fall back gracefully.
+    nativeTools = undefined;
+  }
+
   for (let step = 0; step < MAX_TOOL_STEPS; step++) {
-    const raw = await chatCompletion({
+    const response = await chatCompletion({
       messages,
       model: run.model,
       maxTokens: 4000,
       temperature: 0.4,
       role,
+      tools: nativeTools,
     });
+
+    // Unpack: router returns { content, toolCalls } when tools are active, else a string.
+    const raw         = typeof response === "object" ? (response.content || "") : response;
+    const nativeCalls = typeof response === "object" ? response.toolCalls   : null;
+
+    // ── Native OpenAI tool calls ────────────────────────────────────────────
+    if (nativeCalls && nativeCalls.length > 0) {
+      // Record the assistant turn with its tool_calls (content may be empty/null).
+      messages.push({ role: "assistant", content: raw || null, tool_calls: nativeCalls });
+
+      for (const tc of nativeCalls) {
+        const toolName = String(tc.function?.name || "");
+        let toolArgs;
+        try { toolArgs = JSON.parse(tc.function?.arguments || "{}"); }
+        catch { toolArgs = {}; }
+
+        if (!isToolAllowed(toolName)) {
+          const risk = toolRisk(toolName);
+          globalAudit.write("tool_blocked", {
+            runId: run.id, nodeId: node.id, tool: toolName, risk, native: true,
+            reason: risk === "destructive" ? "SUPER_NOVA_ALLOW_DESTRUCTIVE not set" : "SUPER_NOVA_EXEC not set",
+          });
+          messages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({
+              error: `Tool "${toolName}" is blocked (risk: ${risk}). Set SUPER_NOVA_EXEC=1 to enable.`,
+            }),
+          });
+          continue;
+        }
+
+        globalAudit.write("tool_call", {
+          runId: run.id, nodeId: node.id, step: step + 1,
+          tool: toolName, risk: toolRisk(toolName), args: toolArgs, native: true,
+        });
+        const exec = await runTool(toolName, toolArgs, ctx);
+        const toolOk = !(exec && exec.error);
+        globalAudit.write("tool_result", {
+          runId: run.id, nodeId: node.id, step: step + 1,
+          tool: toolName, ok: toolOk, error: exec?.error, native: true,
+        });
+        trace.push({
+          step: step + 1, stage: "execute", role,
+          tool: toolName, args: toolArgs, ok: toolOk,
+          result: clip(JSON.stringify(exec), 1200), native: true,
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: clip(JSON.stringify(exec), 4000),
+        });
+      }
+      continue;
+    }
+
+    // ── Text-parsed JSON ReAct protocol ──────────────────────────────────────
+    // Used for non-native providers (Bitdeer, OpenRouter) or when native tools
+    // returned no calls (model answered directly without invoking a tool).
     const obj = parseAgentJson(raw);
     if (!obj) {
       messages.push({ role: "assistant", content: raw });
