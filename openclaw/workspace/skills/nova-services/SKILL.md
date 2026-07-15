@@ -106,6 +106,38 @@ node {baseDir}/nova-services.mjs knowledge-ingest --source openclaw --title 'Tit
 node {baseDir}/nova-services.mjs knowledge-ingest --source openclaw --title 'Title' --file ./path/to/file.md --external-id optional-id
 ```
 
+## Workspace file store (read and write)
+
+Robert's eight personal workspaces (and six esoteric workspaces) are persisted server-side so you can read and write files directly. Valid workspace slugs: `medical`, `health`, `dietary`, `fitness`, `todo`, `tasks`, `agents`, `pictures`, `numerology`, `sacred`, `vedic`, `mystic`, `manifest`, `quantum`.
+
+```bash
+# List all workspaces and their file counts
+node {baseDir}/nova-services.mjs workspace-list
+
+# List all files (with content) in a specific workspace
+node {baseDir}/nova-services.mjs workspace-list --workspace tasks
+
+# Read a single file
+node {baseDir}/nova-services.mjs workspace-read --workspace tasks --filename 'my-list.md'
+
+# Write or update a file (creates if it doesn't exist, updates if it does)
+node {baseDir}/nova-services.mjs workspace-write --workspace tasks --filename 'my-list.md' --content 'Buy groceries\nCall doctor'
+
+# Write from a local file
+node {baseDir}/nova-services.mjs workspace-write --workspace health --filename 'vitals.md' --file ./output.md
+
+# Delete a file
+node {baseDir}/nova-services.mjs workspace-delete --workspace todo --filename 'done.md'
+```
+
+**When to use workspace tools:**
+- Robert asks you to save, update, remember, or create a note/list/file in a workspace → use `workspace-write`
+- Robert asks what's in a workspace → use `workspace-list --workspace <slug>`
+- Robert asks to update or append to an existing file → `workspace-read` first, merge, then `workspace-write`
+- Robert asks to delete a workspace file → use `workspace-delete`
+
+Files written here are immediately visible in Robert's UI (the client merges server files with local files on next workspace open).
+
 ## Execution rules
 
 1. Inspect the returned `ok` field and actual payload before using a result.

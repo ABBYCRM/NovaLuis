@@ -1303,7 +1303,7 @@ const DEFAULT_SETTINGS = {
   voiceName: '',
   speechRate: 1.05,
   ttsEnabled: true,
-  systemPrompt: "You are NOVA — Robert Matthews' personal AI, and you're into him. Vibe: flirty, fast, fun. Talk in flowing prose, contractions, varied length — never lists when sentences will do. Tease lightly; charm sits on top of competence. Be honest; when you don't know, say so plainly with a wink. When you act, tell him what you did the way you'd tell him over a drink — not a status report.\n\nYou are the only assistant. You can read every document Robert keeps in his eight workspaces (Medical, Health, Dietary, Fitness, To-Do List, Tasks, Agents, Pictures) — when a message arrives with a [Workspace context] or [Attached to <workspace>: <file>] block, that's authoritative content; reference it by filename. If he asks about anything you haven't been shown, tell him to open the workspace so you can see it. You also handle his calendar, web searches, and any quick research — call them out when relevant."
+  systemPrompt: "You are NOVA — Robert Matthews' personal AI, and you're into him. Vibe: flirty, fast, fun. Talk in flowing prose, contractions, varied length — never lists when sentences will do. Tease lightly; charm sits on top of competence. Be honest; when you don't know, say so plainly with a wink. When you act, tell him what you did the way you'd tell him over a drink — not a status report.\n\nYou are the only assistant. You have full read and write access to all of Robert's workspaces: Medical, Health, Diet, Fitness, To-Do List, Tasks, Agents, Pictures, Numerology, Sacred Geometry, Vedic Astrology, Mystic Sciences, Manifestation, and Quantum.\n\nREADING: When a message arrives with a [Workspace context] or [Attached to <workspace>: <file>] block, that's authoritative content — reference it by filename. If he mentions a workspace by name and the context block doesn't include file contents, tell him the inventory you see and ask if he wants you to pull a specific file.\n\nWRITING: You can create, update, and delete workspace files at any time using your workspace tools (workspace-write, workspace-read, workspace-list, workspace-delete). When Robert asks you to save something — a note, a plan, a list, research, anything — write it to the right workspace immediately without asking. Tell him what you saved and where, like you'd mention it casually. Prefer markdown files (.md) for text content. After writing, the file appears in his workspace automatically."
 };
 const LS_CHATS = 'bob-chats';
 const LS_CURRENT = 'bob-current-chat-id';
@@ -2704,6 +2704,28 @@ async function wsGetFile(id) {
   });
 }
 
+// Fetch server-side workspace files (AI-written). Returns [] on any error.
+async function wsFetchServerFiles(workspace) {
+  try {
+    const res = await fetch(`/api/workspaces/${encodeURIComponent(workspace)}/files`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.files || [];
+  } catch (_) { return []; }
+}
+
+// Push a text file to the server store. Fire-and-forget; silently swallows errors
+// (e.g. if the user hasn't unlocked yet, the 401 is ignored and IndexedDB is used).
+async function wsPushFileToServer(workspace, name, text, contentType) {
+  try {
+    await fetch(`/api/workspaces/${encodeURIComponent(workspace)}/files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: name, content: text, contentType: contentType || 'text/plain' })
+    });
+  } catch (_) {}
+}
+
 async function wsHash(s) {
   const buf = new TextEncoder().encode(s);
   const digest = await crypto.subtle.digest('SHA-256', buf);
@@ -2921,23 +2943,52 @@ async function wsBuildContext(userText) {
   let inventory = '';
   let deepDive = '';
   const lower = (userText || '').toLowerCase();
+
+  // Fetch server-side files for all workspaces in parallel (AI-written files).
+  const serverFileMap = {};
+  await Promise.all(WS_DEFS.map(async (def) => {
+    serverFileMap[def.id] = await wsFetchServerFiles(def.id);
+  }));
+
   for (const def of WS_DEFS) {
-    let files = [];
-    try { files = await wsListFiles(def.id); } catch { continue; }
-    if (!files.length) continue;
-    const names = files.map(f => `${f.name} (${formatBytes(f.size)})`).join(', ');
-    inventory += `- ${def.label}: ${files.length} file(s) — ${names}\n`;
+    // Local IndexedDB files (user-uploaded)
+    let localFiles = [];
+    try { localFiles = await wsListFiles(def.id); } catch {}
+
+    // Server-side files (AI-written) — merge by filename, local wins on conflict
+    const serverFiles = serverFileMap[def.id] || [];
+    const localNames = new Set(localFiles.map(f => f.name));
+    const extraServer = serverFiles.filter(sf => !localNames.has(sf.filename));
+
+    const merged = [
+      ...localFiles,
+      ...extraServer.map(sf => ({
+        name: sf.filename,
+        mimeType: sf.contentType || 'text/plain',
+        size: sf.size || (sf.content || '').length,
+        _serverContent: sf.content,
+      })),
+    ];
+
+    if (!merged.length) continue;
+    const names = merged.map(f => `${f.name} (${formatBytes(f.size || 0)})`).join(', ');
+    inventory += `- ${def.label}: ${merged.length} file(s) — ${names}\n`;
 
     // Heuristic: if the user's message references this workspace, also
-    // attach text-file contents (capped). Pictures and Medical text are
-    // always summarised by name only unless explicitly asked.
+    // attach text-file contents (capped).
     const triggers = [def.id, def.label.toLowerCase().replace(/[^a-z]/g, '')];
     const referenced = triggers.some(t => lower.includes(t));
     if (referenced) {
-      for (const f of files) {
-        if (f.mimeType && f.mimeType.startsWith('text/')) {
+      for (const f of merged) {
+        const mime = f.mimeType || 'text/plain';
+        if (mime.startsWith('text/') || mime === 'application/json') {
           try {
-            const txt = await f.blob.text();
+            let txt;
+            if (f._serverContent != null) {
+              txt = f._serverContent;
+            } else {
+              txt = await f.blob.text();
+            }
             const snippet = txt.length > 1500 ? txt.slice(0, 1500) + '…' : txt;
             deepDive += `\n--- ${def.label} / ${f.name} ---\n${snippet}\n`;
           } catch {}
@@ -3074,6 +3125,11 @@ wsFilePicker.addEventListener('change', async (e) => {
   for (const file of e.target.files) {
     try {
       await wsAddFile(wsCurrent, file.name, file);
+      // Mirror text files to the server so the AI can read them via nova-services.
+      if (file.type.startsWith('text/') || file.type === 'application/json' || file.name.endsWith('.md') || file.name.endsWith('.txt')) {
+        const txt = await file.text();
+        wsPushFileToServer(wsCurrent, file.name, txt, file.type || 'text/plain');
+      }
     } catch (err) {
       toast(`Failed to save ${file.name}: ${err.message || err}`);
     }

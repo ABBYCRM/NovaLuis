@@ -285,9 +285,46 @@ async function run(command, args) {
     }
     case "scratchpad":
       return request("/scratchpad");
+
+    // ── Workspace file store ──────────────────────────────────────────────
+    case "workspace-list": {
+      // List all workspaces (no --workspace) or files in one workspace.
+      const ws = typeof args.workspace === "string" ? args.workspace.trim().toLowerCase() : "";
+      if (ws) {
+        return request(`/workspaces/${encodeURIComponent(ws)}/files`);
+      }
+      return request("/workspaces");
+    }
+    case "workspace-read": {
+      const ws = required(args, "workspace").toLowerCase();
+      const filename = required(args, "filename");
+      return request(`/workspaces/${encodeURIComponent(ws)}/files/${encodeURIComponent(filename)}`);
+    }
+    case "workspace-write": {
+      const ws = required(args, "workspace").toLowerCase();
+      let content = typeof args.content === "string" ? args.content : "";
+      if (typeof args.file === "string") {
+        content = await fs.readFile(args.file, "utf8");
+      }
+      if (!content && !args.file) throw new Error("Provide --content 'text' or --file ./path for workspace-write");
+      const filename = required(args, "filename");
+      const contentType = typeof args["content-type"] === "string" ? args["content-type"] : "text/plain";
+      return request(`/workspaces/${encodeURIComponent(ws)}/files`, {
+        method: "POST",
+        body: JSON.stringify({ filename, content, contentType }),
+      });
+    }
+    case "workspace-delete": {
+      const ws = required(args, "workspace").toLowerCase();
+      const filename = required(args, "filename");
+      return request(`/workspaces/${encodeURIComponent(ws)}/files/${encodeURIComponent(filename)}`, {
+        method: "DELETE",
+      });
+    }
+
     default:
       throw new Error(
-        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad",
+        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, workspace-list, workspace-read, workspace-write, workspace-delete",
       );
   }
 }
