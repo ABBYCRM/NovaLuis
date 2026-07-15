@@ -2066,6 +2066,23 @@ function regenerate() {
   }
 }
 
+// ── Gateway WebSocket helpers ─────────────────────────────────────────────────
+
+// Extract displayable text from an OpenClaw message object.
+// Handles: { text }, { content: string }, { content: [{type:"text",text:...}] }
+function extractMsgText(msg) {
+  if (!msg) return '';
+  if (typeof msg.text === 'string' && msg.text) return msg.text;
+  if (typeof msg.content === 'string' && msg.content) return msg.content;
+  if (Array.isArray(msg.content)) {
+    return msg.content
+      .filter(function(b) { return b && b.type === 'text' && typeof b.text === 'string'; })
+      .map(function(b) { return b.text; })
+      .join('');
+  }
+  return '';
+}
+
 // ── Gateway WebSocket ─────────────────────────────────────────────────────────
 function sendGateway(text, chat) {
   streaming = true;
@@ -2079,6 +2096,11 @@ function sendGateway(text, chat) {
 
   let streamRow = appendStreamingRow();
   let accumulated = '';
+  // P0-2: track the runId returned by chat.send so stale final events from
+  // other runs cannot prematurely terminate this request.
+  let activeRunId = null;
+  let chatSendReqId = null;
+
   wsCounter++;
   const reqId = String(wsCounter);
 
@@ -2134,56 +2156,115 @@ function sendGateway(text, chat) {
       wsConnected = true;
       setStatus('Connected', 'connected');
       wsCounter++;
+      chatSendReqId = String(wsCounter); // P0-2: remember this id
       ws.send(JSON.stringify({
-        type: 'req', id: String(wsCounter), method: 'chat.send',
+        type: 'req', id: chatSendReqId, method: 'chat.send',
         params: { sessionKey: 'agent:main:main', message: text, idempotencyKey: (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(36).slice(2))) }
       }));
       return;
     }
 
+    // P0-2: capture runId from the chat.send acknowledgement
+    if (frame.type === 'res' && frame.ok && frame.id === chatSendReqId && frame.payload?.runId) {
+      activeRunId = frame.payload.runId;
+      return;
+    }
+
+    // P0-3: gateway-level errors — show specific message, not "model returned empty"
     if (frame.type === 'res' && !frame.ok) {
-      toast('Gateway error: ' + (frame.error?.message || 'Unknown'), true);
-      endGatewayStream(accumulated, chat);
+      endGatewayStream(accumulated, chat, 'gateway', frame.error?.message || 'Unknown gateway error');
       return;
     }
 
     if (frame.type === 'event' && frame.event === 'chat') {
       const p = frame.payload;
       if (!p || p.sessionKey !== 'agent:main:main') return;
-      if (p.state === 'delta' && p.deltaText) {
-        accumulated += p.deltaText;
-        updateStreamingRow(accumulated, false);
+
+      // P0-2: ignore terminal events belonging to a different run
+      if (activeRunId && p.runId && p.runId !== activeRunId) return;
+
+      if (p.state === 'delta') {
+        if (p.replace) {
+          // P1: replace mode — deltaText is the full replacement, not an increment
+          const replacement = p.deltaText || extractMsgText(p.message) || '';
+          if (replacement) { accumulated = replacement; updateStreamingRow(accumulated, false); }
+        } else if (p.deltaText) {
+          accumulated += p.deltaText;
+          updateStreamingRow(accumulated, false);
+        } else {
+          // P1: no deltaText — use message snapshot as a fallback
+          const snap = extractMsgText(p.message);
+          if (snap && snap.length > accumulated.length) {
+            accumulated = snap;
+            updateStreamingRow(accumulated, false);
+          }
+        }
       } else if (p.state === 'final') {
-        endGatewayStream(accumulated, chat);
+        // P0-1: extract the terminal assistant message from payload.message.
+        // The final event carries no deltaText; all content is in p.message.
+        const finalText = extractMsgText(p.message);
+        if (finalText && !accumulated) accumulated = finalText;
+        endGatewayStream(accumulated, chat, 'final', null);
+      } else if (p.state === 'aborted') {
+        endGatewayStream(accumulated, chat, 'aborted', null);
       } else if (p.state === 'error') {
-        toast('Agent error: ' + (p.errorMessage || 'Unknown'), true);
-        endGatewayStream(accumulated, chat);
+        // P0-3: show actual agent error text
+        endGatewayStream(accumulated, chat, 'error', p.errorMessage || 'Agent error');
       }
     }
   };
 
+  // P0-3: transport errors — distinct from empty model responses
   ws.onerror = () => {
-    toast('WebSocket error', true);
-    endGatewayStream(accumulated, chat);
+    endGatewayStream(accumulated, chat, 'transport', 'WebSocket connection error');
   };
 
   ws.onclose = () => {
     wsConnected = false;
-    if (streaming) endGatewayStream(accumulated, chat);
+    if (streaming) endGatewayStream(accumulated, chat, 'close', null);
   };
 }
 
-function endGatewayStream(text, chat) {
-  if ((text || '').trim()) {
-    finalizeBotMessage(text, chat);
-  } else {
-    // §17: empty gateway result → recoverable retry, not a silent disappearance.
-    finalizeEmptyResponse();
-  }
+// reason: 'final' | 'error' | 'gateway' | 'transport' | 'close' | 'aborted'
+function endGatewayStream(text, chat, reason, detail) {
   streaming = false;
   updateButtons();
   setStatus('Ready', '');
   if (ws) { try { ws.close(); } catch {} ws = null; }
+
+  if ((text || '').trim()) {
+    finalizeBotMessage(text, chat);
+    return;
+  }
+
+  // P0-3: separate error outcomes — each gets a distinct, accurate message
+  if (reason === 'error') {
+    toast('Agent error: ' + (detail || 'Unknown'), true);
+    finalizeBotMessage('⚠️ ' + (detail || 'Agent error'), chat);
+    return;
+  }
+  if (reason === 'gateway') {
+    toast('Gateway error: ' + (detail || 'Unknown'), true);
+    finalizeEmptyResponse();
+    return;
+  }
+  if (reason === 'transport') {
+    toast('Connection error — check network', true);
+    finalizeEmptyResponse();
+    return;
+  }
+  if (reason === 'close') {
+    toast('Connection closed before response arrived', true);
+    finalizeEmptyResponse();
+    return;
+  }
+  if (reason === 'aborted') {
+    // user-initiated stop — silent
+    return;
+  }
+
+  // §17: genuine empty model response (final with no content at all)
+  finalizeEmptyResponse();
 }
 
 // ── Stop ──────────────────────────────────────────────────────────────────────
