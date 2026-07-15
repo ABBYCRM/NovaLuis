@@ -295,6 +295,75 @@ const refImageSchema = z.object({
   dataBase64: z.string().min(1), // raw base64, no data-URI prefix
 });
 
+// ── POST /social/smart-suggest — AI picks optimal platform/format/tone ────────
+router.post("/social/smart-suggest", async (req, res) => {
+  const { description = "", currentPlatform = "" } = req.body ?? {};
+  if (!description || typeof description !== "string") {
+    res.status(400).json({ error: "description required" }); return;
+  }
+
+  const prompt = `You are a world-class social media strategist with deep knowledge of current algorithm performance data.
+
+Analyze this content description and return the single best posting strategy:
+
+DESCRIPTION: "${description.slice(0, 500)}"
+CURRENT PLATFORM: ${currentPlatform || "none"}
+
+Platform options: instagram, tiktok, twitter, facebook, linkedin, youtube
+Content types per platform — instagram: post|portrait|reel|story, tiktok: video, twitter: post|square, facebook: post|story, linkedin: post|square, youtube: shorts|thumbnail
+Tone options: motivational, sarcastic, optimistic, funny, professional, bold, inspirational, educational
+
+Consider: content type (video/image/text), target audience, current algorithm priorities, engagement patterns, virality potential.
+
+Return ONLY valid JSON (no markdown):
+{"platform":"instagram","contentType":"reel","tone":"funny","intervalHours":24,"reasoning":"one sentence max","postingTip":"one specific tactical tip"}`;
+
+  try {
+    const { OpenAI } = await import("openai");
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: "https://openai.helicone.ai/v1",
+      defaultHeaders: {
+        "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY}`,
+        "Helicone-Property-Feature": "social-smart-suggest",
+      },
+    });
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini", temperature: 0.3, max_tokens: 300,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const raw = (completion.choices[0]?.message?.content ?? "{}").trim()
+      .replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+    const rec = JSON.parse(raw);
+    res.json({
+      platform:     rec.platform     || currentPlatform || "instagram",
+      contentType:  rec.contentType  || "reel",
+      tone:         rec.tone         || "motivational",
+      intervalHours: Number(rec.intervalHours) || null,
+      reasoning:    rec.reasoning    || "",
+      postingTip:   rec.postingTip   || "",
+    });
+  } catch (_e) {
+    // Keyword fallback
+    const d = description.toLowerCase();
+    const isVideo = /video|reel|clip|film|anim|motion|shorts/.test(d);
+    const isLinkedIn = /professional|career|b2b|saas|business|corporate/.test(d);
+    const isTikTok = /tiktok|tik tok|dance|trend/.test(d);
+    const platform = isLinkedIn ? "linkedin" : isTikTok ? "tiktok" : currentPlatform || "instagram";
+    const toneM = d.match(/funny|humor|motivat|inspir|educati|professional|bold|sarcas/);
+    const toneMap: Record<string,string> = { motivat:"motivational", inspir:"inspirational", educati:"educational" };
+    const rawTone = toneM?.[0] ?? "motivational";
+    const tone = toneMap[rawTone] ?? rawTone;
+    res.json({
+      platform,
+      contentType: isVideo ? (platform === "youtube" ? "shorts" : platform === "instagram" ? "reel" : "video") : "post",
+      tone, intervalHours: null,
+      reasoning: "Based on content keywords — describe more for deeper AI analysis",
+      postingTip: "",
+    });
+  }
+});
+
 router.post("/social/reference-images", async (req, res) => {
   if (!dbGuard(res)) return;
   const parsed = refImageSchema.safeParse(req.body);

@@ -396,6 +396,36 @@ body {
 .fav-empty { text-align:center; color:var(--muted); font-size:0.85rem; padding:48px 24px; }
 .fav-count { font-size:0.72rem; color:var(--muted); padding:0 20px 8px; flex-shrink:0; }
 
+/* ── Smart Recommendation Banner ───────────────────────────────────────── */
+.sm-smart-banner {
+  display:flex; align-items:flex-start; gap:9px; padding:10px 13px;
+  background:linear-gradient(135deg,rgba(255,107,53,0.1) 0%,rgba(255,107,53,0.04) 100%);
+  border:1px solid rgba(255,107,53,0.25); border-radius:10px;
+  margin:8px 0 0; animation:smBannerIn 0.25s ease;
+}
+@keyframes smBannerIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+.sm-smart-icon { color:var(--accent); font-size:0.9rem; flex-shrink:0; margin-top:1px; line-height:1; }
+.sm-smart-text { flex:1; font-size:0.78rem; color:var(--text); line-height:1.45; }
+.sm-smart-text strong { color:var(--accent); }
+.sm-smart-dismiss { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:0.8rem; padding:0 2px; flex-shrink:0; line-height:1; margin-top:1px; }
+.sm-smart-dismiss:hover { color:var(--text); }
+.sm-desc-actions { display:flex; align-items:center; gap:10px; margin-top:8px; }
+.sm-ai-btn {
+  display:flex; align-items:center; gap:6px; padding:7px 14px;
+  background:linear-gradient(135deg,rgba(255,107,53,0.15),rgba(255,107,53,0.05));
+  border:1px solid rgba(255,107,53,0.35); border-radius:8px;
+  color:var(--accent); font-size:0.8rem; font-weight:600; cursor:pointer;
+  transition:all 0.15s; white-space:nowrap; font-family:inherit;
+}
+.sm-ai-btn:hover { background:rgba(255,107,53,0.22); border-color:var(--accent); }
+.sm-ai-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.sm-ai-hint { font-size:0.72rem; color:var(--muted); }
+.sm-auto-tag {
+  display:inline-flex; align-items:center; gap:3px; font-size:0.66rem; padding:1px 6px;
+  border-radius:8px; background:rgba(255,107,53,0.15); color:var(--accent);
+  border:1px solid rgba(255,107,53,0.2); margin-left:6px; vertical-align:middle;
+}
+
 /* ── Social Media Panel ─────────────────────────────────────────────────── */
 #social-btn {
   width:100%; padding:9px 12px; background:transparent;
@@ -2628,9 +2658,22 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
         <div class="sm-pane" id="sm-create-pane">
 
           <div>
-            <div class="sm-field-label">Describe your content</div>
+            <div class="sm-field-label">Describe your content <span style="font-size:0.7rem;color:var(--muted);font-weight:400;">— AI auto-picks the best format as you type</span></div>
             <textarea id="sm-desc" class="sm-desc" rows="3"
               placeholder="e.g. Sarcastic Monday motivation with my cartoon duck character. Short, punchy, relatable."></textarea>
+            <!-- Smart recommendation banner (shown after auto-selection) -->
+            <div id="sm-smart-banner" class="sm-smart-banner" hidden>
+              <span class="sm-smart-icon">✦</span>
+              <div id="sm-smart-text" class="sm-smart-text"></div>
+              <button id="sm-smart-dismiss" class="sm-smart-dismiss" aria-label="Dismiss">✕</button>
+            </div>
+            <!-- AI Optimize button -->
+            <div class="sm-desc-actions">
+              <button id="sm-ai-btn" class="sm-ai-btn">
+                <span id="sm-ai-label">✦ AI Optimize</span>
+              </button>
+              <span class="sm-ai-hint">AI picks your best platform, format &amp; tone</span>
+            </div>
           </div>
 
           <div>
@@ -2746,6 +2789,59 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
 <script>
 (function () {
 'use strict';
+
+// ── Smart automation defaults (best-performing format per platform) ───────────
+var SMART = {
+  instagram: {
+    best: 'reel',     tone: 'motivational',
+    why: 'Reels get <strong>3× more organic reach</strong> than static posts on Instagram right now',
+    keywords: ['instagram','ig','insta'],
+  },
+  tiktok: {
+    best: 'video',    tone: 'funny',
+    why: 'Short-form vertical video + <strong>funny/bold content</strong> drives the highest TikTok completion rate',
+    keywords: ['tiktok','tik tok','short video'],
+  },
+  twitter: {
+    best: 'post',     tone: 'bold',
+    why: 'Landscape tweets get <strong>2× more engagement</strong>; bold, direct copy performs best on X',
+    keywords: ['twitter','tweet','x post','𝕏'],
+  },
+  facebook: {
+    best: 'post',     tone: 'optimistic',
+    why: 'Image posts drive the <strong>most comments</strong> on Facebook — optimistic tone builds community',
+    keywords: ['facebook','fb'],
+  },
+  linkedin: {
+    best: 'post',     tone: 'professional',
+    why: 'Landscape 1.91:1 posts get the <strong>most LinkedIn feed real estate</strong> and shares',
+    keywords: ['linkedin','linked in'],
+  },
+  youtube: {
+    best: 'shorts',   tone: 'educational',
+    why: 'YouTube Shorts has <strong>50B daily views</strong> — educational hooks + value-first content performs best',
+    keywords: ['youtube','yt','shorts'],
+  },
+};
+
+// ── Keyword → format override rules (description-aware) ──────────────────────
+var FORMAT_KEYWORDS = {
+  reel:    ['reel','reels','short video','vertical video','60 sec','60sec','tiktok style'],
+  story:   ['story','stories','24 hour','disappears','ephemeral'],
+  portrait:['portrait','4:5','tall photo','vertical photo'],
+  shorts:  ['shorts','youtube short','under 60'],
+  thumbnail:['thumbnail','youtube thumb','preview image','cover image'],
+};
+var TONE_KEYWORDS = {
+  funny:        ['funny','humor','humour','joke','lol','meme','hilarious','comedy','laugh','duck','cartoon','character'],
+  sarcastic:    ['sarcas','ironic','dry wit','satir','deadpan'],
+  motivational: ['motivat','inspir','hustle','grind','success','achieve','goal','push','drive','ambition'],
+  educational:  ['tutorial','how to','how-to','learn','teach','guide','explain','tip','hack','step by step','breakdown'],
+  professional: ['professional','career','job','business','work','industry','corporate','office','b2b','saas'],
+  bold:         ['bold','direct','statement','contro','take','opinion','unpopular'],
+  inspirational:['inspir','story','journey','overcom','transform','mindset','believe'],
+  optimistic:   ['positive','optimist','bright','uplift','good news','celebrat'],
+};
 
 // ── Platform / content-type specs ────────────────────────────────────────────
 var PLATFORMS = {
@@ -3184,17 +3280,108 @@ document.querySelectorAll('.sm-tab').forEach(function (tab) {
   });
 });
 
-// ── Platform selection ────────────────────────────────────────────────────────
+// ── Smart banner helpers ──────────────────────────────────────────────────────
+var smartBanner   = document.getElementById('sm-smart-banner');
+var smartBannerTx = document.getElementById('sm-smart-text');
+var smartDismiss  = document.getElementById('sm-smart-dismiss');
+
+function showSmartBanner(html) {
+  smartBannerTx.innerHTML = html;
+  smartBanner.hidden = false;
+}
+function hideSmartBanner() { smartBanner.hidden = true; }
+smartDismiss.addEventListener('click', hideSmartBanner);
+
+// ── Programmatic platform + contentType + tone setter ────────────────────────
+function setActivePlatformBtn(platform) {
+  document.querySelectorAll('.sm-platform-btn').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.platform === platform);
+  });
+}
+function setActiveTone(tone) {
+  toneChips.querySelectorAll('.sm-chip').forEach(function (c) {
+    c.classList.toggle('active', c.dataset.tone === tone);
+  });
+  smState.tone = tone;
+}
+
+// Apply smart defaults for a platform and show reasoning banner
+function applySmartDefaults(platform, source, skipBanner) {
+  var s = SMART[platform];
+  if (!s) return;
+  smState.platform     = platform;
+  smState.contentType  = s.best;
+  setActivePlatformBtn(platform);
+  renderTypeList();
+  setActiveTone(s.tone);
+  smState.generated    = null;
+  previewSection.hidden = true;
+  if (!skipBanner) {
+    var src = source === 'keyword' ? ' <span class="sm-auto-tag">✦ auto</span>' : '';
+    showSmartBanner('✦ ' + PLATFORMS[platform].label + ' · <strong>' + s.best + '</strong> · ' + s.tone + src + ' — ' + s.why);
+  }
+}
+
+// ── Keyword-based format override for the current platform ───────────────────
+function detectFormatFromDesc(desc) {
+  var d = desc.toLowerCase();
+  var types = PLATFORMS[smState.platform].types;
+  for (var fmt in FORMAT_KEYWORDS) {
+    var kws = FORMAT_KEYWORDS[fmt];
+    for (var i = 0; i < kws.length; i++) {
+      if (d.indexOf(kws[i]) !== -1) {
+        var match = types.find(function (t) { return t.id === fmt; });
+        if (match) return fmt;
+      }
+    }
+  }
+  return null;
+}
+function detectToneFromDesc(desc) {
+  var d = desc.toLowerCase();
+  for (var tone in TONE_KEYWORDS) {
+    var kws = TONE_KEYWORDS[tone];
+    for (var i = 0; i < kws.length; i++) {
+      if (d.indexOf(kws[i]) !== -1) return tone;
+    }
+  }
+  return null;
+}
+
+// ── Platform selection → smart auto-select ────────────────────────────────────
 document.querySelectorAll('.sm-platform-btn').forEach(function (btn) {
   btn.addEventListener('click', function () {
-    document.querySelectorAll('.sm-platform-btn').forEach(function (b) { b.classList.remove('active'); });
-    btn.classList.add('active');
-    smState.platform = btn.dataset.platform;
-    smState.contentType = PLATFORMS[smState.platform].types[0].id;
-    renderTypeList();
-    smState.generated = null;
-    previewSection.hidden = true;
+    applySmartDefaults(btn.dataset.platform, 'platform');
   });
+});
+
+// ── Description-driven auto-update (debounced 900ms) ─────────────────────────
+var _descTimer = null;
+descEl.addEventListener('input', function () {
+  clearTimeout(_descTimer);
+  _descTimer = setTimeout(function () {
+    var desc = descEl.value.trim();
+    if (!desc || desc.length < 8) return;
+    var changed = false;
+    // Keyword → tone
+    var detectedTone = detectToneFromDesc(desc);
+    if (detectedTone && detectedTone !== smState.tone) {
+      setActiveTone(detectedTone);
+      changed = true;
+    }
+    // Keyword → format (within current platform)
+    var detectedFmt = detectFormatFromDesc(desc);
+    if (detectedFmt && detectedFmt !== smState.contentType) {
+      smState.contentType = detectedFmt;
+      renderTypeList();
+      changed = true;
+    }
+    if (changed) {
+      var pf = PLATFORMS[smState.platform];
+      var typeObj = pf.types.find(function (t) { return t.id === smState.contentType; }) || pf.types[0];
+      showSmartBanner('✦ Auto-selected <strong>' + typeObj.label + '</strong> · <strong>' + smState.tone + '</strong> based on your description <span class="sm-auto-tag">✦ auto</span>');
+    }
+  }, 900);
 });
 
 // ── Content type selection (delegated) ────────────────────────────────────────
@@ -3291,10 +3478,74 @@ savePost = async function(scheduleAt) {
   return rd.post;
 };
 
+// ── AI Optimize button ────────────────────────────────────────────────────────
+var aiBtn   = document.getElementById('sm-ai-btn');
+var aiLabel = document.getElementById('sm-ai-label');
+
+aiBtn.addEventListener('click', async function () {
+  var desc = descEl.value.trim();
+  if (!desc) { descEl.focus(); descEl.placeholder = 'Describe your content first…'; return; }
+
+  aiBtn.disabled = true;
+  aiLabel.innerHTML = '<span class="sm-spinner"></span> Analyzing…';
+  hideSmartBanner();
+
+  try {
+    var r = await smFetch('/api/social/smart-suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: desc, currentPlatform: smState.platform }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Analysis failed');
+
+    // Apply all AI recommendations
+    if (d.platform && PLATFORMS[d.platform]) {
+      setActivePlatformBtn(d.platform);
+      smState.platform = d.platform;
+    }
+    if (d.contentType) {
+      var types = PLATFORMS[smState.platform].types;
+      var valid = types.find(function (t) { return t.id === d.contentType; });
+      smState.contentType = valid ? d.contentType : types[0].id;
+    }
+    renderTypeList();
+    if (d.tone) setActiveTone(d.tone);
+    if (d.intervalHours && Number(d.intervalHours) >= 1 && Number(d.intervalHours) <= 12) {
+      var autoCheck2 = document.getElementById('sm-auto-check');
+      var intervalSel2 = document.getElementById('sm-interval-sel');
+      autoCheck2.checked = true;
+      intervalSel2.disabled = false;
+      intervalSel2.value = String(d.intervalHours);
+    }
+    smState.generated = null;
+    previewSection.hidden = true;
+
+    // Build reasoning banner
+    var pf = PLATFORMS[smState.platform];
+    var typeObj = pf.types.find(function (t) { return t.id === smState.contentType; }) || pf.types[0];
+    var bannerHtml = '✦ AI chose <strong>' + pf.label + ' · ' + typeObj.label + '</strong> · <strong>' + smState.tone + '</strong>';
+    if (d.reasoning) bannerHtml += ' — ' + d.reasoning;
+    if (d.postingTip) bannerHtml += '<br><span style="color:var(--muted);font-size:0.72rem">💡 ' + d.postingTip + '</span>';
+    showSmartBanner(bannerHtml);
+  } catch (e) {
+    showSmartBanner('✗ Could not optimize: ' + e.message);
+  } finally {
+    aiBtn.disabled = false;
+    aiLabel.textContent = '✦ AI Optimize';
+  }
+});
+
 // ── Open / Close ──────────────────────────────────────────────────────────────
 function openSocialMedia() {
   overlay.hidden = false;
-  renderTypeList();
+  // Apply smart defaults for current platform on first open
+  var s = SMART[smState.platform];
+  if (s && smState.contentType === 'post') {
+    applySmartDefaults(smState.platform, 'platform', false);
+  } else {
+    renderTypeList();
+  }
   loadRefImages();
   loadScheduledPosts();
 }
