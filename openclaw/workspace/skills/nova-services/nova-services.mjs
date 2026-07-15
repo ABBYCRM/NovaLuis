@@ -306,7 +306,7 @@ async function run(command, args) {
       const voiceId   = typeof args["voice-id"]   === "string" ? args["voice-id"]   : undefined;
       const quality   = typeof args.quality       === "string" ? args.quality       : "standard";
       const background = typeof args.background   === "string" ? args.background    : undefined;
-      const body: Record<string, unknown> = { script, quality };
+      const body = { script, quality };
       if (avatarId)  body.avatar_id  = avatarId;
       if (voiceId)   body.voice_id   = voiceId;
       if (background) body.background = background;
@@ -321,7 +321,7 @@ async function run(command, args) {
       const imageUrl = required(args, "image-url");
       const prompt   = typeof args.prompt   === "string" ? args.prompt   : undefined;
       const duration = args.duration != null ? Number(args.duration) : 5;
-      const body: Record<string, unknown> = { image_url: imageUrl, duration };
+      const body = { image_url: imageUrl, duration };
       if (prompt) body.prompt = prompt;
       return request("/media/video/image-to-video", {
         method: "POST",

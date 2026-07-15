@@ -24,13 +24,17 @@ const { Pool } = pg;
 const DATABASE_URL =
   process.env.SCRATCHPAD_DATABASE_URL || process.env.DATABASE_URL;
 const BITDEER_KEY = process.env.BITDEER_API_KEY;
+const KIMI_KEY   = process.env.KIMI_API_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
-// Resolve the active LLM key and base URL — BITDEER first, OpenAI as fallback.
-const ACTIVE_LLM_KEY = BITDEER_KEY || OPENAI_KEY;
+// Resolve the active LLM key and base URL — BITDEER → KIMI → OPENAI.
+const ACTIVE_LLM_KEY = BITDEER_KEY || KIMI_KEY || OPENAI_KEY;
 const BASE_URL = BITDEER_KEY
   ? (process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1")
-  : (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
-const MODEL = process.env.SCRATCHPAD_MODEL || "XiaomiMiMo/MiMo-V2-Flash";
+  : KIMI_KEY
+  ? (process.env.KIMI_BASE_URL    || "https://api.moonshot.cn/v1")
+  : (process.env.OPENAI_BASE_URL  || "https://api.openai.com/v1");
+const MODEL = process.env.SCRATCHPAD_MODEL ||
+  (BITDEER_KEY ? "moonshotai/Kimi-K2.6" : KIMI_KEY ? "kimi-k2" : "gpt-4o-mini");
 const POLL_MS = Number(process.env.SCRATCHPAD_POLL_MS || 15000);
 const BATCH_CONVERSATIONS = Number(process.env.SCRATCHPAD_BATCH || 5);
 // After this many failed attempts a turn is dead-lettered (marked processed)
