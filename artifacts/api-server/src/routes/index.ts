@@ -17,6 +17,8 @@ import mediaRouter from "./media";
 import socialMediaRouter from "./social-media";
 import favoritesRouter from "./favorites";
 import renderScenariosRouter from "./render-scenarios";
+import githubScenariosRouter from "./github-scenarios";
+import composioScenariosRouter from "./composio-scenarios";
 import { requireWtAuth } from "../lib/work-tree-auth";
 
 const router: IRouter = Router();
@@ -28,7 +30,7 @@ router.use(scratchpadRouter);
 router.use(workTreeRouter);
 // The credential store, knowledge base, vector memory, workspace files, and
 // direct GitHub diagnostic surface are sensitive — PIN/peer-key gated.
-router.use(["/integrations", "/knowledge", "/vector-memory", "/github", "/workspaces", "/media", "/social", "/favorites", "/render-scenarios"], requireWtAuth);
+router.use(["/integrations", "/knowledge", "/vector-memory", "/github", "/workspaces", "/media", "/social", "/favorites", "/render-scenarios", "/github-scenarios", "/composio-scenarios"], requireWtAuth);
 router.use(integrationsRouter);
 router.use(composioRouter);
 router.use(githubRouter);
@@ -39,6 +41,8 @@ router.use(mediaRouter);
 router.use(socialMediaRouter);
 router.use(favoritesRouter);
 router.use(renderScenariosRouter);
+router.use(githubScenariosRouter);
+router.use(composioScenariosRouter);
 // Browser chat uses the OpenClaw agent loop. OpenClaw's own model provider still
 // calls /v1/* below, keeping the agent endpoint and raw inference endpoint separate.
 router.use(agentChatRouter);
