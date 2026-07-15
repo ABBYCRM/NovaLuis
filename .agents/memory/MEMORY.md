@@ -82,3 +82,4 @@ OBSERVED
 +
 NO REGRESSION
 ```
+- [Render supernova-db connectivity](render-supernova-db.md) — IP allowlist, deleted DB, pg SSL conflict, missing schema, GOVERNANCE.json fixes.

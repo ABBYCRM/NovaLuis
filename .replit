@@ -117,5 +117,5 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-SCRATCHPAD_DATABASE_URL = "postgresql://nova:c5LyHhCkMG0BmZY0ocsbRGfmPRxxlMmV@dpg-d8dmksf7f7vs73cd3ic0-a.oregon-postgres.render.com:5432/nova_sdk8?sslmode=no-verify"
+SCRATCHPAD_DATABASE_URL = "postgresql://supernova:YNHzNCuSi0AqVHHq7T3YLkN10F1YAbzJ@dpg-d94pgbnaqgkc73e7u8hg-a.oregon-postgres.render.com:5432/supernova_db_q5bt"
 SUPER_NOVA_EXEC = "1"
