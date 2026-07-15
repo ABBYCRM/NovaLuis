@@ -1,0 +1,86 @@
+##############################################################################
+# DigitalOcean App Platform — NovaLuis
+# https://docs.digitalocean.com/products/app-platform/reference/app-spec/
+#
+# Secret values are NEVER stored here. Set them in the DO dashboard or via
+# the API. This file is the structural reference only.
+##############################################################################
+
+name: nova-luis
+region: nyc
+
+services:
+  - name: nova
+    github:
+      repo: ABBYCRM/NovaLuis
+      branch: main
+      deploy_on_push: false
+    dockerfile_path: Dockerfile
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-s
+
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 30
+      period_seconds: 30
+      timeout_seconds: 10
+      failure_threshold: 3
+
+    envs:
+      # ── Non-secret config ─────────────────────────────────────────────────
+      - key: NODE_ENV
+        value: "production"
+      - key: PORT
+        value: "8080"
+      - key: OPENCLAW_AGENT_MODEL
+        value: "openclaw/default"
+      - key: LOG_LEVEL
+        value: "info"
+      # Set to the live app URL after first deploy
+      - key: PUBLIC_BASE_URL
+        value: ""
+      - key: NOVA_AGENT_CHAT_GATEWAY_URL
+        value: ""
+
+      # ── Secrets (values set via API / dashboard, never committed) ─────────
+      - key: OPENAI_API_KEY
+        type: SECRET
+      - key: COMPOSIO_API_KEY
+        type: SECRET
+      - key: COMPOSIO_ORG_API_KEY
+        type: SECRET
+      - key: GEMINI_API_KEY
+        type: SECRET
+      - key: EXA_API_KEY
+        type: SECRET
+      - key: FIRECRAWL_API_KEY
+        type: SECRET
+      - key: TAVILY_API_KEY
+        type: SECRET
+      - key: STEEL_API_KEY
+        type: SECRET
+      - key: SCRAPFLY_API_KEY
+        type: SECRET
+      - key: SCRAPINGBEE_API_KEY
+        type: SECRET
+      - key: RESEND_API_KEY
+        type: SECRET
+      - key: HELICONE_API_KEY
+        type: SECRET
+      - key: PINECONE_API_KEY
+        type: SECRET
+      - key: SESSION_SECRET
+        type: SECRET
+      - key: SCREENSHOTONE_ACCESS_KEY
+        type: SECRET
+      - key: SCREENSHOTONE_SECRET_KEY
+        type: SECRET
+      - key: GITHUB_PERSONAL_ACCESS_TOKEN
+        type: SECRET
+      - key: E2B_API_KEY
+        type: SECRET
+      - key: SCRATCHPAD_DATABASE_URL
+        type: SECRET
+      - key: DATABASE_URL
+        type: SECRET
