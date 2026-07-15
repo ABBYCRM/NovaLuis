@@ -7,6 +7,7 @@ import {
   type ChatMessage,
 } from "../lib/scratchpad";
 import { getKnowledgeContext } from "../lib/knowledge";
+import { getModelPreference } from "./nova-config";
 
 const router = Router();
 
@@ -172,6 +173,13 @@ router.all("/v1/*splat", async (req, res) => {
   if (isChat && !isInternalOpenClaw) {
     await proxyBrowserChatToAgent(req, res);
     return;
+  }
+
+  // When the internal OpenClaw agent calls back with its configured model,
+  // override it with the user's live model preference so the selection in
+  // Settings takes effect immediately without restarting the gateway.
+  if (isChat && isInternalOpenClaw) {
+    req.body.model = getModelPreference().model;
   }
 
   // Memory injection + capture setup for raw/internal inference calls.

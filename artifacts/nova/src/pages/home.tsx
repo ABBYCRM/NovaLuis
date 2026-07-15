@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "wouter";
-import { Send, Loader2, Zap, RotateCcw, Bookmark } from "lucide-react";
+import { Send, Loader2, Zap, RotateCcw, Bookmark, Settings, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -11,6 +11,12 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+}
+
+interface ModelOption {
+  id: string;
+  model: string;
+  label: string;
 }
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -118,6 +124,104 @@ function EmptyState() {
   );
 }
 
+// ── Settings panel ─────────────────────────────────────────────────────────
+
+interface SettingsPanelProps {
+  open: boolean;
+  onClose: () => void;
+  modelPreference: string;
+  modelOptions: ModelOption[];
+  onSelectProvider: (id: string) => void;
+  saving: boolean;
+}
+
+function SettingsPanel({
+  open,
+  onClose,
+  modelPreference,
+  modelOptions,
+  onSelectProvider,
+  saving,
+}: SettingsPanelProps) {
+  // Trap clicks on the overlay backdrop
+  if (!open) return null;
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/30 z-40 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      {/* Panel */}
+      <div className="fixed top-0 right-0 h-full w-80 bg-white shadow-2xl z-50 flex flex-col">
+        {/* Panel header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Settings className="w-4 h-4 text-indigo-600" />
+            <span className="font-semibold text-gray-900 text-sm">Settings</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Panel body */}
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+            Inference Provider
+          </p>
+          <p className="text-xs text-gray-400 mb-4">
+            Choose which AI provider Nova uses for chat. Takes effect on the next message.
+          </p>
+          <div className="space-y-2">
+            {modelOptions.map((opt) => {
+              const active = opt.id === modelPreference;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => onSelectProvider(opt.id)}
+                  disabled={saving}
+                  className={[
+                    "w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all",
+                    active
+                      ? "border-indigo-400 bg-indigo-50 ring-1 ring-indigo-300"
+                      : "border-gray-200 hover:border-indigo-200 hover:bg-gray-50",
+                    saving ? "opacity-60 cursor-wait" : "cursor-pointer",
+                  ].join(" ")}
+                >
+                  <div>
+                    <p className={`text-sm font-medium ${active ? "text-indigo-700" : "text-gray-800"}`}>
+                      {opt.label}
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-0.5 font-mono">{opt.model}</p>
+                  </div>
+                  {active && (
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center">
+                      <Check className="w-3 h-3 text-white" />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Panel footer */}
+        <div className="px-5 py-4 border-t border-gray-100">
+          <p className="text-[10px] text-gray-400 text-center">
+            Provider changes apply server-side immediately — no restart needed.
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -126,6 +230,43 @@ export default function Home() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Settings state
+  const [showSettings, setShowSettings] = useState(false);
+  const [modelPreference, setModelPreference] = useState("bitdeer");
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [savingModel, setSavingModel] = useState(false);
+
+  // Load config (model preference + options) on mount
+  useEffect(() => {
+    fetch(`${BASE}/api/nova-config`)
+      .then((r) => r.json())
+      .then((cfg) => {
+        if (cfg.modelPreference) setModelPreference(cfg.modelPreference);
+        if (Array.isArray(cfg.modelOptions)) setModelOptions(cfg.modelOptions);
+      })
+      .catch(() => {/* non-fatal: UI still works */});
+  }, []);
+
+  const handleSelectProvider = useCallback(async (id: string) => {
+    if (id === modelPreference || savingModel) return;
+    setSavingModel(true);
+    try {
+      const r = await fetch(`${BASE}/api/nova-config`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelPreference: id }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        setModelPreference(data.modelPreference ?? id);
+      }
+    } catch {
+      // silently ignore — preference unchanged
+    } finally {
+      setSavingModel(false);
+    }
+  }, [modelPreference, savingModel]);
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -194,6 +335,10 @@ export default function Home() {
     setLoading(false);
   };
 
+  // Derive the active label for the header badge
+  const activeOption = modelOptions.find((o) => o.id === modelPreference);
+  const providerLabel = activeOption?.label ?? "Kimi K2.6 (Bitdeer)";
+
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {/* Header */}
@@ -206,8 +351,20 @@ export default function Home() {
           <Badge variant="outline" className="text-[10px] text-indigo-600 border-indigo-200 bg-indigo-50 py-0">
             OpenClaw
           </Badge>
+          {/* Active model badge */}
+          <Badge variant="outline" className="text-[10px] text-gray-500 border-gray-200 bg-gray-50 py-0 hidden sm:inline-flex">
+            {providerLabel}
+          </Badge>
         </div>
         <div className="flex items-center gap-1 ml-auto">
+          {/* Settings gear */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-indigo-600 transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
           <Link href="/favorites">
             <button className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-indigo-600 transition-colors" title="Favorites">
               <Bookmark className="w-4 h-4" />
@@ -287,6 +444,16 @@ export default function Home() {
           Nova may use tools — search, code execution, email, and connected apps.
         </p>
       </div>
+
+      {/* Settings slide panel */}
+      <SettingsPanel
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        modelPreference={modelPreference}
+        modelOptions={modelOptions}
+        onSelectProvider={handleSelectProvider}
+        saving={savingModel}
+      />
     </div>
   );
 }
