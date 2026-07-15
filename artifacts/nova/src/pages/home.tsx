@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Zap, RotateCcw } from "lucide-react";
+import { Link } from "wouter";
+import { Send, Loader2, Zap, RotateCcw, Bookmark } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -206,12 +207,19 @@ export default function Home() {
             OpenClaw
           </Badge>
         </div>
-        {messages.length > 0 && (
-          <Button variant="ghost" size="sm" onClick={reset} className="text-gray-400 hover:text-gray-700 h-7 px-2">
-            <RotateCcw className="w-3.5 h-3.5 mr-1" />
-            <span className="text-xs">Clear</span>
-          </Button>
-        )}
+        <div className="flex items-center gap-1 ml-auto">
+          <Link href="/favorites">
+            <button className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-indigo-600 transition-colors" title="Favorites">
+              <Bookmark className="w-4 h-4" />
+            </button>
+          </Link>
+          {messages.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={reset} className="text-gray-400 hover:text-gray-700 h-7 px-2">
+              <RotateCcw className="w-3.5 h-3.5 mr-1" />
+              <span className="text-xs">Clear</span>
+            </Button>
+          )}
+        </div>
       </header>
 
       {/* Message list */}
