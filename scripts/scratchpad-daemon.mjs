@@ -167,7 +167,18 @@ function parseDistillation(raw) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start !== -1 && end !== -1) text = text.slice(start, end + 1);
-  const obj = JSON.parse(text);
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    // Model returned non-JSON; treat entire raw response as the summary text.
+    return {
+      category: "general",
+      title: "Untitled",
+      summary: clip(String(raw || ""), 1200),
+      keyFacts: "",
+    };
+  }
   let category = String(obj.category || "general").toLowerCase().trim();
   if (!CATEGORIES.includes(category)) category = "general";
   return {

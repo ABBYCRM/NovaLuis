@@ -142,26 +142,8 @@ async function geminiImage(
   for (const candidate of d.candidates ?? []) {
     for (const part of candidate.content.parts) {
       if (part.inlineData?.data) {
-        const buf = Buffer.from(part.inlineData.data, "base64");
         const mime = part.inlineData.mimeType ?? "image/png";
-        // Store in media cache via internal endpoint
-        const port = Number(process.env.PORT || 8080);
-        const apiKey = process.env.SUPERNOVA_API_KEY || process.env.OPENCLAW_API_KEY || "";
-        const cr = await fetch(`http://127.0.0.1:${port}/api/media/image/generate`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-          },
-          body: JSON.stringify({ prompt: "__cache_bypass__" }),
-        }).catch(() => null);
-
-        // Store directly in imageCache by calling media store helper
-        // Since we can't import the in-memory cache, we'll embed the base64 as a data URL
-        // and return it as an absolute URL using our own image endpoint
-        void cr; // unused — we store the image ourselves
-
-        // Return as data URL (client can display directly; we also store it as a workspace file)
+        // Return as data URL — client displays directly.
         const dataUrl = `data:${mime};base64,${part.inlineData.data}`;
         return { id: "inline", url: dataUrl };
       }

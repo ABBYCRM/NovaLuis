@@ -19,7 +19,11 @@ interface SkillMeta {
 }
 
 function getSkillMeta(name: string): SkillMeta {
-  const skillDir = path.join(SKILLS_ROOT, name);
+  // Prevent path traversal: resolve and confirm it stays inside SKILLS_ROOT.
+  const skillDir = path.resolve(SKILLS_ROOT, name);
+  if (!skillDir.startsWith(SKILLS_ROOT + path.sep) && skillDir !== SKILLS_ROOT) {
+    return { name, description: name, tags: [], content: "" };
+  }
   const skillMd = path.join(skillDir, "SKILL.md");
   const composioMd = path.join(SKILLS_ROOT, `${name}.md`);
 
