@@ -5,3 +5,4 @@ export * from "./integrations";
 export * from "./knowledge";
 export * from "./vector-memory";
 export * from "./workspaces";
+export * from "./social-media";

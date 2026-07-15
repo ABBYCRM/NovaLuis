@@ -291,6 +291,213 @@ body {
 #settings-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--border-strong); }
 #settings-btn svg { width: 15px; height: 15px; }
 
+/* ── Social Media Panel ─────────────────────────────────────────────────── */
+#social-btn {
+  width:100%; padding:9px 12px; background:transparent;
+  border:1px solid var(--border); border-radius:9px; color:var(--muted);
+  font-size:0.82rem; cursor:pointer; display:flex; align-items:center; gap:8px;
+  margin-bottom:8px; transition:background 0.12s,color 0.12s,border-color 0.12s;
+}
+#social-btn:hover { background:var(--surface2); color:var(--text); border-color:var(--border-strong); }
+#social-btn svg { width:15px; height:15px; flex-shrink:0; }
+
+.sm-overlay {
+  position:fixed; inset:0; z-index:120;
+  background:rgba(0,0,0,0.72); backdrop-filter:blur(4px);
+  display:flex; align-items:stretch; justify-content:center;
+}
+.sm-panel {
+  display:flex; flex-direction:column; width:100%; max-width:1100px;
+  background:var(--surface); border-left:1px solid var(--border); border-right:1px solid var(--border);
+  overflow:hidden;
+}
+.sm-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 20px; border-bottom:1px solid var(--border); flex-shrink:0;
+  background:var(--surface2);
+}
+.sm-header-left { display:flex; align-items:center; gap:10px; }
+.sm-header-left svg { width:18px; height:18px; color:var(--accent); }
+.sm-header h2 { font-size:1rem; font-weight:600; color:var(--text); margin:0; }
+.sm-close { background:transparent; border:none; color:var(--muted); font-size:1.1rem; cursor:pointer; padding:4px 8px; border-radius:6px; }
+.sm-close:hover { background:var(--surface3,#222); color:var(--text); }
+
+.sm-body { display:flex; flex:1; overflow:hidden; }
+
+/* Left sidebar */
+.sm-left {
+  width:190px; flex-shrink:0; border-right:1px solid var(--border);
+  display:flex; flex-direction:column; overflow-y:auto; padding:12px 8px; gap:4px;
+  background:var(--bg);
+}
+.sm-section-title {
+  font-size:0.68rem; font-weight:700; color:var(--muted); letter-spacing:0.08em;
+  text-transform:uppercase; padding:8px 6px 4px; margin-top:4px;
+}
+.sm-platform-btn {
+  display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:8px;
+  border:none; background:transparent; cursor:pointer; width:100%; text-align:left;
+  font-size:0.82rem; color:var(--muted); transition:background 0.1s,color 0.1s;
+}
+.sm-platform-btn:hover { background:var(--surface2); color:var(--text); }
+.sm-platform-btn.active { background:var(--surface2); color:var(--text); font-weight:600; }
+.sm-platform-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.sm-platform-btn.active .sm-platform-dot { box-shadow:0 0 0 2px rgba(255,255,255,0.15); }
+
+.sm-type-btn {
+  display:flex; align-items:center; justify-content:space-between; padding:7px 10px;
+  border-radius:7px; border:none; background:transparent; cursor:pointer; width:100%;
+  font-size:0.79rem; color:var(--muted); transition:background 0.1s,color 0.1s;
+}
+.sm-type-btn:hover { background:var(--surface2); color:var(--text); }
+.sm-type-btn.active { background:rgba(var(--accent-rgb,255,107,53),0.12); color:var(--accent); font-weight:600; }
+.sm-type-dims { font-size:0.67rem; color:var(--muted); opacity:0.7; }
+
+/* Right main */
+.sm-right { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+
+.sm-tabs { display:flex; border-bottom:1px solid var(--border); flex-shrink:0; }
+.sm-tab {
+  padding:10px 20px; background:transparent; border:none; border-bottom:2px solid transparent;
+  color:var(--muted); font-size:0.84rem; cursor:pointer; transition:color 0.12s,border-color 0.12s;
+}
+.sm-tab.active { color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
+.sm-tab:hover:not(.active) { color:var(--text); }
+
+.sm-pane { flex:1; overflow-y:auto; padding:20px 24px; display:flex; flex-direction:column; gap:18px; }
+.sm-pane[hidden] { display:none; }
+
+.sm-field-label {
+  font-size:0.75rem; font-weight:600; color:var(--muted); letter-spacing:0.04em;
+  text-transform:uppercase; margin-bottom:7px; display:flex; align-items:center; gap:6px;
+}
+.sm-field-label .sm-badge {
+  background:var(--surface2); border:1px solid var(--border); color:var(--muted);
+  font-size:0.62rem; padding:1px 5px; border-radius:4px; font-weight:500;
+}
+
+.sm-desc {
+  width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px;
+  color:var(--text); font-size:0.88rem; padding:10px 13px; resize:vertical;
+  font-family:inherit; line-height:1.5; min-height:72px;
+  transition:border-color 0.12s;
+}
+.sm-desc:focus { outline:none; border-color:var(--accent); }
+
+.sm-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.sm-chip {
+  padding:5px 12px; border-radius:20px; border:1px solid var(--border);
+  background:var(--surface2); color:var(--muted); font-size:0.77rem; cursor:pointer;
+  transition:all 0.1s;
+}
+.sm-chip:hover { border-color:var(--border-strong); color:var(--text); }
+.sm-chip.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+
+/* Reference images */
+.sm-ref-grid { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }
+.sm-ref-img {
+  width:64px; height:64px; border-radius:8px; object-fit:cover;
+  border:2px solid var(--border); cursor:pointer; transition:border-color 0.1s;
+  position:relative;
+}
+.sm-ref-item { position:relative; display:inline-flex; }
+.sm-ref-item.selected .sm-ref-img { border-color:var(--accent); }
+.sm-ref-del {
+  position:absolute; top:-4px; right:-4px; width:16px; height:16px; border-radius:50%;
+  background:#e53; border:1px solid #fff; color:#fff; font-size:10px; line-height:16px;
+  text-align:center; cursor:pointer; display:none;
+}
+.sm-ref-item:hover .sm-ref-del { display:block; }
+.sm-ref-upload {
+  width:64px; height:64px; border-radius:8px; border:1.5px dashed var(--border);
+  background:var(--surface2); cursor:pointer; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:3px; color:var(--muted);
+  font-size:0.65rem; text-align:center; transition:border-color 0.1s,color 0.1s;
+}
+.sm-ref-upload:hover { border-color:var(--accent); color:var(--accent); }
+.sm-ref-upload svg { width:18px; height:18px; }
+
+/* Schedule row */
+.sm-schedule-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.sm-radio-label { display:flex; align-items:center; gap:5px; font-size:0.82rem; color:var(--muted); cursor:pointer; }
+.sm-radio-label input { accent-color:var(--accent); }
+.sm-dt {
+  padding:7px 11px; background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); font-size:0.82rem; cursor:pointer;
+  color-scheme:dark;
+}
+.sm-dt:disabled { opacity:0.4; cursor:not-allowed; }
+
+/* Buttons */
+.sm-btn-primary {
+  padding:10px 22px; background:var(--accent); border:none; border-radius:10px;
+  color:#fff; font-size:0.88rem; font-weight:600; cursor:pointer;
+  transition:opacity 0.12s,transform 0.1s; display:flex; align-items:center; gap:7px;
+}
+.sm-btn-primary:hover { opacity:0.88; }
+.sm-btn-primary:active { transform:scale(0.97); }
+.sm-btn-primary:disabled { opacity:0.45; cursor:not-allowed; }
+.sm-btn-secondary {
+  padding:9px 18px; background:var(--surface2); border:1px solid var(--border);
+  border-radius:10px; color:var(--text); font-size:0.84rem; cursor:pointer;
+  transition:background 0.1s;
+}
+.sm-btn-secondary:hover { background:var(--surface3,#1e1e1e); }
+
+.sm-gen-row { display:flex; align-items:center; gap:10px; }
+
+/* Preview */
+.sm-preview-card {
+  border:1px solid var(--border); border-radius:12px; overflow:hidden;
+  background:var(--surface2); display:flex; gap:0;
+}
+.sm-preview-img-wrap {
+  width:180px; flex-shrink:0; background:var(--bg);
+  display:flex; align-items:center; justify-content:center; min-height:120px;
+}
+.sm-preview-img-wrap img { width:100%; height:100%; object-fit:cover; display:block; }
+.sm-preview-text { flex:1; padding:14px 16px; display:flex; flex-direction:column; gap:8px; min-width:0; }
+.sm-preview-caption { font-size:0.87rem; color:var(--text); line-height:1.5; white-space:pre-wrap; }
+.sm-preview-hashtags { font-size:0.79rem; color:var(--accent); opacity:0.8; word-break:break-all; }
+.sm-preview-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:4px; }
+.sm-preview-platform-badge {
+  font-size:0.69rem; padding:2px 8px; border-radius:12px; font-weight:600;
+  background:var(--surface2); border:1px solid var(--border); color:var(--muted);
+}
+
+/* Scheduled list */
+.sm-post-card {
+  border:1px solid var(--border); border-radius:10px; padding:13px 15px;
+  background:var(--surface2); display:flex; gap:12px; align-items:flex-start;
+}
+.sm-post-thumb {
+  width:52px; height:52px; border-radius:7px; object-fit:cover;
+  background:var(--bg); flex-shrink:0; display:flex; align-items:center;
+  justify-content:center; color:var(--muted); font-size:1.3rem;
+}
+.sm-post-info { flex:1; min-width:0; }
+.sm-post-meta { font-size:0.72rem; color:var(--muted); margin-bottom:3px; display:flex; gap:6px; align-items:center; }
+.sm-post-caption { font-size:0.82rem; color:var(--text); overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.sm-status-badge {
+  font-size:0.67rem; padding:2px 7px; border-radius:10px; font-weight:600;
+  text-transform:uppercase; letter-spacing:0.04em;
+}
+.sm-status-pending   { background:rgba(250,190,0,0.15); color:#fabc00; border:1px solid rgba(250,190,0,0.25); }
+.sm-status-published { background:rgba(34,197,94,0.12); color:#22c55e; border:1px solid rgba(34,197,94,0.25); }
+.sm-status-failed    { background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.25); }
+.sm-status-draft     { background:rgba(100,116,139,0.12); color:#94a3b8; border:1px solid rgba(100,116,139,0.2); }
+.sm-status-publishing { background:rgba(99,102,241,0.12); color:#818cf8; border:1px solid rgba(99,102,241,0.25); }
+
+.sm-empty { text-align:center; color:var(--muted); font-size:0.85rem; padding:40px 20px; }
+.sm-spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 0.7s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+@media (max-width:700px) {
+  .sm-panel { max-width:100%; }
+  .sm-left { width:140px; }
+  .sm-preview-img-wrap { width:100px; }
+}
+
 /* ── Main Area ──────────────────────────────────────────────────────────── */
 #main {
   flex: 1; display: flex; flex-direction: column; overflow: hidden;
@@ -979,6 +1186,13 @@ body {
   </div>
 
   <div class="sidebar-footer">
+    <button id="social-btn" title="Social Media">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+      </svg>
+      Social Media
+    </button>
     <button id="settings-btn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"/>
@@ -2204,5 +2418,680 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
 })();
 </script>
 <script src="/assets/composio-settings.js"></script>
+
+<!-- ── Social Media Panel ─────────────────────────────────────────────────── -->
+<div id="sm-overlay" class="sm-overlay" hidden>
+  <div class="sm-panel" role="dialog" aria-modal="true" aria-labelledby="sm-title">
+
+    <header class="sm-header">
+      <div class="sm-header-left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+        </svg>
+        <h2 id="sm-title">Social Media</h2>
+      </div>
+      <button class="sm-close" id="sm-close-btn" aria-label="Close">✕</button>
+    </header>
+
+    <div class="sm-body">
+
+      <!-- Left: Platform + Content Type sidebar -->
+      <div class="sm-left">
+        <div class="sm-section-title">Platform</div>
+        <button class="sm-platform-btn active" data-platform="instagram">
+          <span class="sm-platform-dot" style="background:#E1306C"></span>Instagram
+        </button>
+        <button class="sm-platform-btn" data-platform="tiktok">
+          <span class="sm-platform-dot" style="background:#ff0050"></span>TikTok
+        </button>
+        <button class="sm-platform-btn" data-platform="twitter">
+          <span class="sm-platform-dot" style="background:#1DA1F2"></span>X / Twitter
+        </button>
+        <button class="sm-platform-btn" data-platform="facebook">
+          <span class="sm-platform-dot" style="background:#1877F2"></span>Facebook
+        </button>
+        <button class="sm-platform-btn" data-platform="linkedin">
+          <span class="sm-platform-dot" style="background:#0A66C2"></span>LinkedIn
+        </button>
+        <button class="sm-platform-btn" data-platform="youtube">
+          <span class="sm-platform-dot" style="background:#FF0000"></span>YouTube
+        </button>
+
+        <div class="sm-section-title" style="margin-top:12px">Content Type</div>
+        <div id="sm-type-list"></div>
+
+        <div id="sm-specs-box" style="margin-top:14px; padding:8px 10px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
+          <div style="font-size:0.67rem; color:var(--muted); font-weight:700; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px;">Dimensions</div>
+          <div id="sm-dims" style="font-size:0.82rem; color:var(--text); font-weight:600;">1080×1080</div>
+          <div id="sm-ar" style="font-size:0.72rem; color:var(--muted); margin-top:1px;">Aspect 1:1</div>
+        </div>
+      </div>
+
+      <!-- Right: Create + Scheduled -->
+      <div class="sm-right">
+        <div class="sm-tabs">
+          <button class="sm-tab active" data-sm-tab="create">Create</button>
+          <button class="sm-tab" data-sm-tab="scheduled">Scheduled <span id="sm-sched-count" style="opacity:0.6;font-size:0.75rem"></span></button>
+        </div>
+
+        <!-- CREATE PANE -->
+        <div class="sm-pane" id="sm-create-pane">
+
+          <div>
+            <div class="sm-field-label">Describe your content</div>
+            <textarea id="sm-desc" class="sm-desc" rows="3"
+              placeholder="e.g. Sarcastic Monday motivation with my cartoon duck character. Short, punchy, relatable."></textarea>
+          </div>
+
+          <div>
+            <div class="sm-field-label">Tone</div>
+            <div class="sm-chips" id="sm-tone-chips">
+              <button class="sm-chip active" data-tone="motivational">Motivational</button>
+              <button class="sm-chip" data-tone="sarcastic">Sarcastic</button>
+              <button class="sm-chip" data-tone="optimistic">Optimistic</button>
+              <button class="sm-chip" data-tone="funny">Funny</button>
+              <button class="sm-chip" data-tone="professional">Professional</button>
+              <button class="sm-chip" data-tone="bold">Bold</button>
+              <button class="sm-chip" data-tone="inspirational">Inspirational</button>
+              <button class="sm-chip" data-tone="educational">Educational</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="sm-field-label">
+              Reference Image
+              <span class="sm-badge">keeps AI visuals consistent</span>
+            </div>
+            <div class="sm-ref-grid" id="sm-ref-grid">
+              <label class="sm-ref-upload" title="Upload reference image">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Upload
+                <input type="file" id="sm-ref-input" accept="image/*" hidden>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <div class="sm-field-label">Schedule</div>
+            <div class="sm-schedule-row">
+              <label class="sm-radio-label">
+                <input type="radio" name="sm-when" value="now" checked> Post Now
+              </label>
+              <label class="sm-radio-label">
+                <input type="radio" name="sm-when" value="schedule"> Schedule For
+              </label>
+              <input type="datetime-local" id="sm-dt-input" class="sm-dt" disabled>
+            </div>
+          </div>
+
+          <div class="sm-gen-row">
+            <button id="sm-gen-btn" class="sm-btn-primary">
+              <span id="sm-gen-label">⚡ Generate Content</span>
+            </button>
+            <span id="sm-gen-status" style="font-size:0.78rem; color:var(--muted);"></span>
+          </div>
+
+          <!-- Preview -->
+          <div id="sm-preview-section" hidden>
+            <div class="sm-field-label" style="margin-bottom:10px">Preview</div>
+            <div class="sm-preview-card">
+              <div class="sm-preview-img-wrap" id="sm-preview-img-wrap">
+                <span style="font-size:2rem; opacity:0.3">🖼</span>
+              </div>
+              <div class="sm-preview-text">
+                <div class="sm-preview-platform-badge" id="sm-preview-badge">Instagram · Post</div>
+                <div class="sm-preview-caption" id="sm-preview-caption"></div>
+                <div class="sm-preview-hashtags" id="sm-preview-hashtags"></div>
+              </div>
+            </div>
+            <div class="sm-preview-actions">
+              <button id="sm-regen-btn" class="sm-btn-secondary">↺ Regenerate</button>
+              <button id="sm-save-btn" class="sm-btn-secondary">💾 Save Draft</button>
+              <button id="sm-post-btn" class="sm-btn-primary" style="margin-left:auto">
+                <span id="sm-post-label">▶ Post Now</span>
+              </button>
+              <button id="sm-sched-btn" class="sm-btn-secondary" hidden>📅 Schedule</button>
+            </div>
+            <div id="sm-post-result" style="font-size:0.79rem; margin-top:6px; display:none;"></div>
+          </div>
+
+        </div><!-- /create pane -->
+
+        <!-- SCHEDULED PANE -->
+        <div class="sm-pane" id="sm-sched-pane" hidden>
+          <div id="sm-sched-list">
+            <div class="sm-empty">Loading scheduled posts…</div>
+          </div>
+        </div>
+
+      </div><!-- /sm-right -->
+    </div><!-- /sm-body -->
+  </div><!-- /sm-panel -->
+</div><!-- /sm-overlay -->
+
+<script>
+(function () {
+'use strict';
+
+// ── Platform / content-type specs ────────────────────────────────────────────
+var PLATFORMS = {
+  instagram: { label:'Instagram', color:'#E1306C', types:[
+    { id:'post',      label:'Post',           dims:'1080×1080', ar:'1:1' },
+    { id:'portrait',  label:'Portrait Post',  dims:'1080×1350', ar:'4:5' },
+    { id:'reel',      label:'Reel',           dims:'1080×1920', ar:'9:16' },
+    { id:'story',     label:'Story',          dims:'1080×1920', ar:'9:16' },
+  ]},
+  tiktok: { label:'TikTok', color:'#ff0050', types:[
+    { id:'video', label:'Video', dims:'1080×1920', ar:'9:16' },
+  ]},
+  twitter: { label:'X / Twitter', color:'#1DA1F2', types:[
+    { id:'post',   label:'Tweet (landscape)', dims:'1200×675',  ar:'16:9' },
+    { id:'square', label:'Tweet (square)',    dims:'1200×1200', ar:'1:1' },
+  ]},
+  facebook: { label:'Facebook', color:'#1877F2', types:[
+    { id:'post',  label:'Post',  dims:'1200×1200', ar:'1:1' },
+    { id:'story', label:'Story', dims:'1080×1920', ar:'9:16' },
+  ]},
+  linkedin: { label:'LinkedIn', color:'#0A66C2', types:[
+    { id:'post',   label:'Post',   dims:'1200×627',  ar:'1.91:1' },
+    { id:'square', label:'Square', dims:'1200×1200', ar:'1:1' },
+  ]},
+  youtube: { label:'YouTube', color:'#FF0000', types:[
+    { id:'shorts',    label:'Shorts',    dims:'1080×1920', ar:'9:16' },
+    { id:'thumbnail', label:'Thumbnail', dims:'1280×720',  ar:'16:9' },
+  ]},
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+var smState = {
+  platform: 'instagram',
+  contentType: 'post',
+  tone: 'motivational',
+  selectedRefId: null,    // number | null
+  refImages: [],          // [{id,name,mimeType,preview}]
+  generated: null,        // {caption,hashtags,imageUrl,aspectRatio,dimensions}
+  generating: false,
+  posting: false,
+};
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+var overlay       = document.getElementById('sm-overlay');
+var typeList      = document.getElementById('sm-type-list');
+var dimsEl        = document.getElementById('sm-dims');
+var arEl          = document.getElementById('sm-ar');
+var descEl        = document.getElementById('sm-desc');
+var toneChips     = document.getElementById('sm-tone-chips');
+var refGrid       = document.getElementById('sm-ref-grid');
+var refInput      = document.getElementById('sm-ref-input');
+var dtInput       = document.getElementById('sm-dt-input');
+var genBtn        = document.getElementById('sm-gen-btn');
+var genLabel      = document.getElementById('sm-gen-label');
+var genStatus     = document.getElementById('sm-gen-status');
+var previewSection= document.getElementById('sm-preview-section');
+var previewImgWrap= document.getElementById('sm-preview-img-wrap');
+var previewBadge  = document.getElementById('sm-preview-badge');
+var previewCaption= document.getElementById('sm-preview-caption');
+var previewHtags  = document.getElementById('sm-preview-hashtags');
+var regenBtn      = document.getElementById('sm-regen-btn');
+var saveBtn       = document.getElementById('sm-save-btn');
+var postBtn       = document.getElementById('sm-post-btn');
+var postLabel     = document.getElementById('sm-post-label');
+var schedBtn      = document.getElementById('sm-sched-btn');
+var postResult    = document.getElementById('sm-post-result');
+var schedCount    = document.getElementById('sm-sched-count');
+var schedListEl   = document.getElementById('sm-sched-list');
+
+// ── Auth helper (uses existing gFetch if available) ───────────────────────────
+function smFetch(path, opts) {
+  return (typeof gFetch === 'function' ? gFetch : fetch)(path, opts);
+}
+
+// ── Build content type list ───────────────────────────────────────────────────
+function renderTypeList() {
+  var types = PLATFORMS[smState.platform].types;
+  typeList.innerHTML = '';
+  types.forEach(function (t) {
+    var btn = document.createElement('button');
+    btn.className = 'sm-type-btn' + (t.id === smState.contentType ? ' active' : '');
+    btn.dataset.type = t.id;
+    btn.innerHTML = '<span>' + t.label + '</span><span class="sm-type-dims">' + t.dims + '</span>';
+    typeList.appendChild(btn);
+  });
+  // Ensure current content type is valid for this platform
+  var valid = types.some(function (t) { return t.id === smState.contentType; });
+  if (!valid) { smState.contentType = types[0].id; renderTypeList(); return; }
+  updateSpecs();
+}
+
+function updateSpecs() {
+  var types = PLATFORMS[smState.platform].types;
+  var t = types.find(function (x) { return x.id === smState.contentType; }) || types[0];
+  dimsEl.textContent = t.dims;
+  arEl.textContent = 'Aspect ' + t.ar;
+}
+
+// ── Reference images ──────────────────────────────────────────────────────────
+async function loadRefImages() {
+  try {
+    var r = await smFetch('/api/social/reference-images');
+    if (!r.ok) return;
+    var d = await r.json();
+    smState.refImages = (d.images || []).map(function (img) {
+      return { id: img.id, name: img.name, mimeType: img.mimeType, preview: null };
+    });
+    renderRefGrid();
+  } catch (_) {}
+}
+
+function renderRefGrid() {
+  // Keep upload label
+  var uploadLabel = refGrid.querySelector('label.sm-ref-upload');
+  refGrid.innerHTML = '';
+  refGrid.appendChild(uploadLabel);
+
+  smState.refImages.forEach(function (img) {
+    var item = document.createElement('div');
+    item.className = 'sm-ref-item' + (smState.selectedRefId === img.id ? ' selected' : '');
+    item.dataset.refId = img.id;
+
+    var imgEl = document.createElement('img');
+    imgEl.className = 'sm-ref-img';
+    imgEl.title = img.name;
+    // Load preview lazily from the stored base64 in the API (we'll just show name placeholder)
+    imgEl.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="%23222"/><text x="32" y="38" text-anchor="middle" font-size="20">🖼</text></svg>';
+    imgEl.onerror = function () { this.src = ''; };
+
+    var del = document.createElement('div');
+    del.className = 'sm-ref-del';
+    del.title = 'Delete';
+    del.textContent = '×';
+    del.addEventListener('click', async function (e) {
+      e.stopPropagation();
+      if (!confirm('Delete reference image "' + img.name + '"?')) return;
+      try {
+        await smFetch('/api/social/reference-images/' + img.id, { method: 'DELETE' });
+        smState.refImages = smState.refImages.filter(function (x) { return x.id !== img.id; });
+        if (smState.selectedRefId === img.id) smState.selectedRefId = null;
+        renderRefGrid();
+      } catch (_) {}
+    });
+
+    item.appendChild(imgEl);
+    item.appendChild(del);
+    item.addEventListener('click', function () {
+      smState.selectedRefId = smState.selectedRefId === img.id ? null : img.id;
+      renderRefGrid();
+    });
+    // Insert before upload label
+    refGrid.insertBefore(item, uploadLabel);
+  });
+}
+
+// Upload reference image
+refInput.addEventListener('change', async function (e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = async function (ev) {
+    var dataUrl = ev.target.result;
+    var base64 = dataUrl.split(',')[1];
+    try {
+      var r = await smFetch('/api/social/reference-images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: file.name, mimeType: file.type || 'image/png', dataBase64: base64 }),
+      });
+      if (!r.ok) return;
+      var d = await r.json();
+      smState.refImages.unshift({ id: d.id, name: file.name, mimeType: file.type, preview: dataUrl });
+      smState.selectedRefId = d.id;
+      renderRefGrid();
+    } catch (_) {}
+  };
+  reader.readAsDataURL(file);
+  refInput.value = '';
+});
+
+// ── Generate content ──────────────────────────────────────────────────────────
+async function generate() {
+  if (smState.generating) return;
+  var desc = descEl.value.trim();
+  if (!desc) { descEl.focus(); return; }
+
+  smState.generating = true;
+  genBtn.disabled = true;
+  genLabel.innerHTML = '<span class="sm-spinner"></span> Generating…';
+  genStatus.textContent = 'Creating caption + image via AI…';
+  previewSection.hidden = true;
+  postResult.style.display = 'none';
+
+  try {
+    var body = {
+      platform: smState.platform,
+      contentType: smState.contentType,
+      description: desc,
+      tone: smState.tone,
+      generateImage: true,
+    };
+    if (smState.selectedRefId) body.referenceImageId = smState.selectedRefId;
+
+    var r = await smFetch('/api/social/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) { throw new Error(d.error || 'Generation failed'); }
+
+    smState.generated = d;
+    renderPreview(d);
+    previewSection.hidden = false;
+    genStatus.textContent = '';
+
+    // Show/hide Schedule button based on radio
+    var when = document.querySelector('input[name="sm-when"]:checked');
+    if (when && when.value === 'schedule') {
+      schedBtn.hidden = false;
+      postBtn.hidden = true;
+    } else {
+      schedBtn.hidden = true;
+      postBtn.hidden = false;
+    }
+  } catch (e) {
+    genStatus.textContent = '✗ ' + (e.message || 'Error');
+    genStatus.style.color = '#ef4444';
+    setTimeout(function () { genStatus.textContent = ''; genStatus.style.color = ''; }, 4000);
+  } finally {
+    smState.generating = false;
+    genBtn.disabled = false;
+    genLabel.textContent = '⚡ Generate Content';
+  }
+}
+
+function renderPreview(d) {
+  var pf = PLATFORMS[smState.platform];
+  var typeObj = pf.types.find(function (t) { return t.id === smState.contentType; }) || pf.types[0];
+  previewBadge.textContent = pf.label + ' · ' + typeObj.label;
+
+  // Image
+  previewImgWrap.innerHTML = '';
+  if (d.imageUrl) {
+    var img = document.createElement('img');
+    img.src = d.imageUrl;
+    img.alt = 'Generated';
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+    previewImgWrap.appendChild(img);
+  } else {
+    previewImgWrap.innerHTML = '<span style="font-size:2rem;opacity:0.3">🖼</span>';
+  }
+
+  previewCaption.textContent = d.caption || '';
+  previewHtags.textContent = d.hashtags || '';
+}
+
+// ── Post / Schedule ───────────────────────────────────────────────────────────
+async function savePost(scheduleAt) {
+  if (!smState.generated) return;
+  var d = smState.generated;
+  var body = {
+    platform: smState.platform,
+    contentType: smState.contentType,
+    description: descEl.value.trim(),
+    tone: smState.tone,
+    caption: d.caption || '',
+    hashtags: d.hashtags || '',
+    imageUrl: d.imageUrl || '',
+    aspectRatio: d.aspectRatio || '1:1',
+    dimensions: d.dimensions || '1080×1080',
+    status: scheduleAt ? 'pending' : 'draft',
+  };
+  if (smState.selectedRefId) body.referenceImageId = smState.selectedRefId;
+  if (scheduleAt) body.scheduledAt = scheduleAt;
+
+  var r = await smFetch('/api/social/schedule', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  var rd = await r.json();
+  if (!r.ok) throw new Error(rd.error || 'Save failed');
+  return rd.post;
+}
+
+async function publishNow() {
+  if (smState.posting || !smState.generated) return;
+  smState.posting = true;
+  postBtn.disabled = true;
+  postLabel.innerHTML = '<span class="sm-spinner"></span> Publishing…';
+  postResult.style.display = 'none';
+
+  try {
+    var post = await savePost(null);
+    var r = await smFetch('/api/social/publish/' + post.id, { method: 'POST' });
+    var d = await r.json();
+    postResult.style.display = 'block';
+    if (r.ok && d.ok) {
+      postResult.style.color = '#22c55e';
+      postResult.textContent = '✓ Posted successfully to ' + PLATFORMS[smState.platform].label + '!';
+    } else {
+      postResult.style.color = '#ef4444';
+      postResult.textContent = '✗ ' + (d.error || 'Posting failed. Check Composio connection.');
+    }
+    loadScheduledPosts();
+  } catch (e) {
+    postResult.style.display = 'block';
+    postResult.style.color = '#ef4444';
+    postResult.textContent = '✗ ' + e.message;
+  } finally {
+    smState.posting = false;
+    postBtn.disabled = false;
+    postLabel.textContent = '▶ Post Now';
+  }
+}
+
+async function schedulePost() {
+  if (!smState.generated) return;
+  var dt = dtInput.value;
+  if (!dt) { dtInput.focus(); return; }
+  try {
+    await savePost(new Date(dt).toISOString());
+    postResult.style.display = 'block';
+    postResult.style.color = '#22c55e';
+    postResult.textContent = '✓ Scheduled for ' + new Date(dt).toLocaleString();
+    loadScheduledPosts();
+  } catch (e) {
+    postResult.style.display = 'block';
+    postResult.style.color = '#ef4444';
+    postResult.textContent = '✗ ' + e.message;
+  }
+}
+
+// ── Scheduled posts list ──────────────────────────────────────────────────────
+async function loadScheduledPosts() {
+  try {
+    var r = await smFetch('/api/social/schedule');
+    if (!r.ok) return;
+    var d = await r.json();
+    var posts = d.posts || [];
+    schedCount.textContent = posts.length ? '(' + posts.length + ')' : '';
+    renderScheduledList(posts);
+  } catch (_) {}
+}
+
+function renderScheduledList(posts) {
+  if (!posts.length) {
+    schedListEl.innerHTML = '<div class="sm-empty">No scheduled posts yet. Create your first one!</div>';
+    return;
+  }
+  schedListEl.innerHTML = '';
+  posts.forEach(function (p) {
+    var pf = PLATFORMS[p.platform] || { label: p.platform, color: '#888' };
+    var card = document.createElement('div');
+    card.className = 'sm-post-card';
+
+    var thumb = document.createElement('div');
+    thumb.className = 'sm-post-thumb';
+    if (p.image_url && !p.image_url.startsWith('data:')) {
+      var img = document.createElement('img');
+      img.src = p.image_url; img.style.cssText = 'width:52px;height:52px;border-radius:7px;object-fit:cover;';
+      thumb.appendChild(img);
+    } else {
+      thumb.textContent = { instagram:'📸', tiktok:'🎵', twitter:'𝕏', facebook:'f', linkedin:'in', youtube:'▶' }[p.platform] || '📱';
+    }
+
+    var info = document.createElement('div');
+    info.className = 'sm-post-info';
+
+    var meta = document.createElement('div');
+    meta.className = 'sm-post-meta';
+    var badge = document.createElement('span');
+    badge.className = 'sm-status-badge sm-status-' + (p.status || 'draft');
+    badge.textContent = p.status || 'draft';
+    meta.appendChild(badge);
+    var platSpan = document.createElement('span');
+    platSpan.style.cssText = 'color:' + pf.color;
+    platSpan.textContent = pf.label;
+    meta.appendChild(platSpan);
+    if (p.scheduled_at) {
+      var when = document.createElement('span');
+      when.textContent = '· ' + new Date(p.scheduled_at).toLocaleString();
+      meta.appendChild(when);
+    }
+    info.appendChild(meta);
+
+    var caption = document.createElement('div');
+    caption.className = 'sm-post-caption';
+    caption.textContent = p.caption || p.description || '(no caption)';
+    info.appendChild(caption);
+
+    // Actions
+    if (p.status === 'draft' || p.status === 'failed') {
+      var actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+      var pubBtn = document.createElement('button');
+      pubBtn.className = 'sm-btn-secondary';
+      pubBtn.style.cssText = 'font-size:0.75rem;padding:5px 10px;';
+      pubBtn.textContent = '▶ Publish Now';
+      pubBtn.addEventListener('click', async function () {
+        pubBtn.disabled = true; pubBtn.textContent = '…';
+        var r = await smFetch('/api/social/publish/' + p.id, { method: 'POST' });
+        var d = await r.json();
+        loadScheduledPosts();
+      });
+      var delBtn = document.createElement('button');
+      delBtn.className = 'sm-btn-secondary';
+      delBtn.style.cssText = 'font-size:0.75rem;padding:5px 10px;color:#ef4444;';
+      delBtn.textContent = '🗑 Delete';
+      delBtn.addEventListener('click', async function () {
+        if (!confirm('Delete this post?')) return;
+        await smFetch('/api/social/schedule/' + p.id, { method: 'DELETE' });
+        loadScheduledPosts();
+      });
+      actions.appendChild(pubBtn);
+      actions.appendChild(delBtn);
+      info.appendChild(actions);
+    }
+
+    card.appendChild(thumb);
+    card.appendChild(info);
+    schedListEl.appendChild(card);
+  });
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.sm-tab').forEach(function (tab) {
+  tab.addEventListener('click', function () {
+    document.querySelectorAll('.sm-tab').forEach(function (t) { t.classList.remove('active'); });
+    tab.classList.add('active');
+    var which = tab.dataset.smTab;
+    document.getElementById('sm-create-pane').hidden  = which !== 'create';
+    document.getElementById('sm-sched-pane').hidden   = which !== 'scheduled';
+    if (which === 'scheduled') loadScheduledPosts();
+  });
+});
+
+// ── Platform selection ────────────────────────────────────────────────────────
+document.querySelectorAll('.sm-platform-btn').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    document.querySelectorAll('.sm-platform-btn').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    smState.platform = btn.dataset.platform;
+    smState.contentType = PLATFORMS[smState.platform].types[0].id;
+    renderTypeList();
+    smState.generated = null;
+    previewSection.hidden = true;
+  });
+});
+
+// ── Content type selection (delegated) ────────────────────────────────────────
+typeList.addEventListener('click', function (e) {
+  var btn = e.target.closest('.sm-type-btn');
+  if (!btn) return;
+  document.querySelectorAll('.sm-type-btn').forEach(function (b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  smState.contentType = btn.dataset.type;
+  updateSpecs();
+  smState.generated = null;
+  previewSection.hidden = true;
+});
+
+// ── Tone chips ────────────────────────────────────────────────────────────────
+toneChips.addEventListener('click', function (e) {
+  var chip = e.target.closest('.sm-chip');
+  if (!chip) return;
+  toneChips.querySelectorAll('.sm-chip').forEach(function (c) { c.classList.remove('active'); });
+  chip.classList.add('active');
+  smState.tone = chip.dataset.tone;
+});
+
+// ── Schedule radio ────────────────────────────────────────────────────────────
+document.querySelectorAll('input[name="sm-when"]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    var isSchedule = this.value === 'schedule';
+    dtInput.disabled = !isSchedule;
+    if (smState.generated) {
+      schedBtn.hidden = !isSchedule;
+      postBtn.hidden  = isSchedule;
+    }
+  });
+});
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+genBtn.addEventListener('click', generate);
+regenBtn.addEventListener('click', generate);
+postBtn.addEventListener('click', publishNow);
+saveBtn.addEventListener('click', async function () {
+  try {
+    await savePost(null);
+    saveBtn.textContent = '✓ Saved!';
+    setTimeout(function () { saveBtn.textContent = '💾 Save Draft'; }, 2000);
+    loadScheduledPosts();
+  } catch (e) { alert('Save failed: ' + e.message); }
+});
+schedBtn.addEventListener('click', schedulePost);
+
+// ── Open / Close ──────────────────────────────────────────────────────────────
+function openSocialMedia() {
+  overlay.hidden = false;
+  renderTypeList();
+  loadRefImages();
+  loadScheduledPosts();
+}
+function closeSocialMedia() { overlay.hidden = true; }
+
+document.getElementById('social-btn').addEventListener('click', openSocialMedia);
+document.getElementById('sm-close-btn').addEventListener('click', closeSocialMedia);
+overlay.addEventListener('click', function (e) { if (e.target === overlay) closeSocialMedia(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !overlay.hidden) closeSocialMedia(); });
+
+// Pre-populate type list so it's ready before first open
+renderTypeList();
+
+})();
+</script>
 </body>
 </html>
