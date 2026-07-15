@@ -1,6 +1,6 @@
 ---
 name: "DigitalOcean App Platform deployment"
-description: "Nova-luis live on DO App Platform — account, app ID, URL, known gaps."
+description: "Nova-luis live on DO App Platform — account, app ID, URL, env vars, and verified working state."
 ---
 
 # DigitalOcean App Platform — nova-luis
@@ -17,24 +17,45 @@ description: "Nova-luis live on DO App Platform — account, app ID, URL, known 
 - autoDeploy: false (manual trigger required)
 - Spec file: .do/app.yaml (no secret values — committed to repo)
 
-## Verified working (2026-07-15)
+## Verified working (2026-07-15, commit 15e4225)
 - /healthz → 200
 - / (Nova UI) → 200
-- /api/nova-config → 200
-- /api/scratchpad → 200
-- /api/social/platforms → 401 (auth gate working)
+- /api/nova-config → 200 (apiKey present)
+- /api/scratchpad → 200 (groups: 0)
+- /api/favorites → 200 (favorites: [])
+- /api/agent/v1/chat/completions → real responses (gpt-4o model)
 - OpenClaw gateway starts cleanly, NOVA API listens on 8080
 
-## Known gaps
-- DATABASE_URL not set → integrations/knowledge return empty (same as Render)
-- SCRATCHPAD_DATABASE_URL not set → scratchpad won't persist across restarts
-- PUBLIC_BASE_URL set to live URL but nova-config not yet returning it (check route)
+## Key env vars set in DO app
+- NOVA_OPENCLAW_MODEL_ID = gpt-4o  ← CRITICAL: mini fails with 3-token responses
+- DATABASE_URL = postgresql://...supernova_db_q5bt?sslmode=require  (Render supernova-db)
+- SCRATCHPAD_DATABASE_URL = same as DATABASE_URL
+
+## Critical lessons
+- gpt-4o-mini FAILS with the 75K-char NOVA workspace system prompt — returns only 3
+  completion tokens, triggering OpenClaw's loop detector ("No response from OpenClaw.").
+  gpt-4o handles the prompt correctly. Always use gpt-4o or better.
+- DATABASE_URL / SCRATCHPAD_DATABASE_URL must include ?sslmode=require for Render PG.
+  lib/db uses bare connectionString (no explicit ssl: object), so URL param is safe.
+- The Render supernova-db favorites table had legacy columns (owner/label/position) and
+  was missing the nova-luis schema columns (title/description/favicon/tags).
+  Fixed with ALTER TABLE ADD COLUMN IF NOT EXISTS on 2026-07-15.
+- NOVA_OPENCLAW_PROXY_KEY is randomly generated per start-openclaw.mjs run; both
+  OpenClaw gateway and express server receive the same key via childEnv, so no mismatch.
+  No need to set it explicitly for single-replica deployments.
 
 ## How to redeploy
 ```bash
+# After git push, trigger a new build:
 curl -s -X POST \
   "https://api.digitalocean.com/v2/apps/a1046ca0-ab98-4775-8ed7-24f156432aaf/deployments" \
   -H "Authorization: Bearer $DIGITALOCEAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"force_build": false}'
 ```
+
+## Render supernova-db (shared with DO)
+- DB ID: dpg-d94pgbnaqgkc73e7u8hg-a
+- External host: dpg-d94pgbnaqgkc73e7u8hg-a.oregon-postgres.render.com:5432
+- DB: supernova_db_q5bt, user: supernova
+- IP allowlist: 0.0.0.0/0 (open — required for DO egress)
