@@ -1925,29 +1925,8 @@ INPUT → Parse Tone/Workspace → Adjust Hormone/Valence Vectors → Run Active
     el.classList.toggle('on', !!on);
   }
 
-  // PIN gate: the credential store + knowledge base are locked behind a PIN.
-  // On a 401 we prompt for the PIN, POST it to /unlock (sets a 12h cookie scoped
-  // to /api), then retry the original request.
-  async function unlock() {
-    var p = window.prompt('Enter PIN to unlock Integrations (stays unlocked 12h):');
-    if (p == null) return false;
-    try {
-      var r = await fetch('/api/work-tree/unlock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: String(p).trim() })
-      });
-      if (!r.ok) { window.alert('Wrong PIN.'); return false; }
-      return true;
-    } catch (_) { return false; }
-  }
   async function gFetch(url, opts) {
-    var res = await fetch(url, opts);
-    if (res.status === 401) {
-      var ok = await unlock();
-      if (ok) res = await fetch(url, opts);
-    }
-    return res;
+    return fetch(url, opts);
   }
 
   async function load() {
