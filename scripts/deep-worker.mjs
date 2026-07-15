@@ -49,6 +49,10 @@ const FAILED_DIR = path.join(JOBS_ROOT, "failed");
 const BITDEER_KEY = process.env.BITDEER_API_KEY;
 const BASE_URL = process.env.BITDEER_BASE_URL || "https://api-inference.bitdeer.ai/v1";
 const DEFAULT_MODEL = process.env.DEEP_WORKER_DEFAULT_MODEL || "moonshotai/Kimi-K2.6";
+// OpenAI Responses API — used for web_search jobs (webSearch:true in job file).
+const OPENAI_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+const WEB_SEARCH_MODEL = process.env.DEEP_WORKER_WEB_SEARCH_MODEL || "gpt-4o-mini";
 const POLL_MS = Number(process.env.DEEP_WORKER_POLL_MS || 2000);
 const MAX_CONCURRENT = Number(process.env.DEEP_WORKER_CONCURRENCY || 1);
 const REQUEST_TIMEOUT_MS = Number(process.env.DEEP_WORKER_TIMEOUT_MS || 300_000); // 5 min
@@ -127,6 +131,58 @@ async function callModel(prompt, systemPrompt, model, maxTokens) {
   }
 }
 
+// ── OpenAI Responses API — web search path ────────────────────────────────────
+// Used when a job sets  webSearch: true  in its JSON file.
+// Calls the Responses API with the built-in web_search_preview tool so the model
+// can fetch live search results before composing its answer.
+// Falls back to a regular callModel() if OPENAI_API_KEY is not set.
+async function callModelWithWebSearch(prompt, systemPrompt, maxTokens) {
+  if (!OPENAI_KEY) {
+    console.warn("deep-worker: OPENAI_API_KEY not set — falling back to regular model for web-search job");
+    return callModel(prompt, systemPrompt, DEFAULT_MODEL, maxTokens);
+  }
+  const DEFAULT_SYSTEM =
+    "You are a deep-research subagent for NOVA, the personal AI assistant to Robert Matthews. " +
+    "You have live web search access. Use it to find current, accurate information before answering. " +
+    "Cite the URLs you relied on. Produce a complete, well-structured answer — no meta-commentary about the process.";
+  const body = {
+    model: WEB_SEARCH_MODEL,
+    tools: [{ type: "web_search_preview" }],
+    tool_choice: "auto",
+    input: [
+      { role: "system", content: systemPrompt || DEFAULT_SYSTEM },
+      { role: "user",   content: prompt }
+    ],
+    max_output_tokens: maxTokens || 8192,
+  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${OPENAI_BASE}/responses`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Responses API HTTP ${res.status}: ${text.slice(0, 500)}`);
+    }
+    const j = await res.json();
+    // Extract the assistant message text from the output array.
+    const msgItem = (j.output || []).find(o => o.type === "message");
+    const text = (msgItem?.content || []).find(c => c.type === "output_text")?.text || "";
+    return {
+      result: text,
+      usage: j.usage,
+      model: j.model || WEB_SEARCH_MODEL,
+      webSearch: true,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function processJob(name) {
   const runningPath = await claimJob(name);
   if (!runningPath) return;
@@ -143,12 +199,10 @@ async function processJob(name) {
 
   let outcome;
   try {
-    const r = await callModel(
-      job.prompt,
-      job.systemPrompt,
-      job.model || DEFAULT_MODEL,
-      job.maxTokens
-    );
+    // Route to OpenAI Responses API + web_search when job requests live search.
+    const r = job.webSearch
+      ? await callModelWithWebSearch(job.prompt, job.systemPrompt, job.maxTokens)
+      : await callModel(job.prompt, job.systemPrompt, job.model || DEFAULT_MODEL, job.maxTokens);
     outcome = {
       id, ok: true,
       result: r.result, model: r.model, usage: r.usage,

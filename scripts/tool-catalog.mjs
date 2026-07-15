@@ -409,6 +409,29 @@ export const TOOL_DEFS = [
     { requiresApproval: true }),
 ];
 
+// ── OpenAI native function calling format ─────────────────────────────────────
+
+// Convert one TOOL_DEF to OpenAI Chat Completions / Responses API function tool
+// shape.  The inputSchema produced by obj() already carries additionalProperties:false
+// and a required array, so it is a valid JSON Schema for the parameters field.
+export function toOpenAIFunctionTool(td) {
+  return {
+    type: "function",
+    name: td.name,
+    description: td.description,
+    parameters: td.inputSchema,
+  };
+}
+
+// Safe subset of the catalog exported as OpenAI function schemas.
+// Excludes:  requiresApproval (code/shell/file ops that need SUPER_NOVA_EXEC=1)
+//            destructive risk level (delete ops)
+// Callers should further filter by which tool names are wired in their runtime
+// (e.g. keep only names present in their TOOL_RISK map).
+export const OPENAI_FUNCTION_TOOLS = TOOL_DEFS
+  .filter(td => !td.requiresApproval && td.risk !== "destructive")
+  .map(toOpenAIFunctionTool);
+
 // ── Lookup helpers ────────────────────────────────────────────────────────────
 
 const CATALOG_MAP = new Map(TOOL_DEFS.map((td) => [td.name, td]));
