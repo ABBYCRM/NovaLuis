@@ -190,16 +190,54 @@ router.post("/social/generate", async (req, res) => {
 
   try {
     // 1. Generate caption + hashtags
-    const captionPrompt = `You are a professional social media copywriter.
-Platform: ${platform} (${contentType})
-Tone: ${tone}
-Content description: ${description}
-Max caption length: ${maxChars} characters
-Aspect ratio: ${spec.aspectRatio} (${spec.dims})
+    const captionPrompt = `You are an elite social media strategist and copywriter who has studied viral content psychology at depth. Your captions consistently achieve 10x average engagement because you understand exactly what triggers human attention, emotion, and action.
 
-Write a high-quality, engaging caption AND 10-15 relevant hashtags.
-Return ONLY a JSON object with keys "caption" and "hashtags" (hashtags as a single string starting with #).
-Make it feel authentic and platform-native. Match the ${tone} tone precisely.`;
+PLATFORM: ${platform} (${contentType}) — max ${maxChars} chars
+TONE: ${tone}
+CONTENT: ${description}
+DIMENSIONS: ${spec.dims} (${spec.aspectRatio})
+
+## PSYCHOLOGICAL FRAMEWORKS YOU MUST APPLY
+
+### Hook (First Line — CRITICAL, this is the scroll-stopper):
+Choose the most powerful hook type for this content and tone:
+- **Curiosity Gap**: "The one thing nobody tells you about ___"
+- **Pattern Interrupt**: Start with something surprising, counterintuitive, or paradoxical
+- **"Them" Hook**: Speak directly to a specific person's exact emotion ("If you're the type who___")
+- **Bold Claim**: Make a confident, slightly controversial statement they can't scroll past
+- **Relatability Bomb**: Describe a feeling so precisely it feels personal
+- **Social Proof Hook**: "X people fail at ___ because of this one thing"
+- **FOMO Trigger**: Create the feeling that they'll miss something important
+The hook MUST be the single most compelling sentence. For ${platform}: it must work as a standalone hook because that's all the algorithm shows first.
+
+### Body (Middle):
+- Build on the hook with a short story, insight, or value drop
+- Use rhythm: short punchy sentences. Then a longer one that breathes and carries weight.
+- Create an emotional journey: tension → release OR problem → solution
+- For ${tone} tone: ${tone === 'sarcastic' ? 'use dry wit, irony, and self-aware humor — say the opposite of what you mean with a knowing wink' : tone === 'motivational' ? 'use power words, create urgency, make them feel capable of something bigger' : tone === 'funny' ? 'build to a punchline, use unexpected wordplay or absurdist logic' : tone === 'bold' ? 'be direct, no hedging, command attention with confident declarative statements' : tone === 'educational' ? 'teach one surprising insight clearly — give them something to share' : tone === 'inspirational' ? 'connect to a universal human truth, make them feel seen and elevated' : tone === 'optimistic' ? 'reframe the positive angle, make the future feel bright and achievable' : 'sound like a trusted expert sharing insider knowledge'}
+
+### CTA (Last Line):
+End with ONE clear, low-friction call to action appropriate for ${platform}:
+- Instagram/TikTok: "Save this", "Share with someone who needs this", "Comment your answer below"
+- Twitter: "Repost if this is you", "Reply with yours"
+- LinkedIn: "Agree? Share your experience below"
+- Facebook: "Tag someone who needs to see this"
+
+### Platform-Specific Rules:
+${platform === 'instagram' ? '- Use line breaks for readability\n- Emoji used strategically (1-3 max in hook area)\n- Hashtags in first comment or end\n- Story captions: ultra-short, punchy' :
+  platform === 'tiktok' ? '- Very short captions (under 150 chars ideally)\n- Hook IS the caption — make it a question or challenge\n- Use 3-5 trending hashtags' :
+  platform === 'twitter' ? '- 280 chars MAX — every word must earn its place\n- No hashtags unless essential (they kill engagement on X)\n- Conversational, first-person, direct' :
+  platform === 'linkedin' ? '- Professional but human\n- First line shows before "see more" — make it count\n- Tell a business story or share a professional insight\n- 3-5 relevant hashtags at end' :
+  platform === 'facebook' ? '- More conversational, community-focused\n- Slightly longer form acceptable\n- Ask a genuine question to drive comments' :
+  '- Clear title-style hook\n- Descriptive for SEO\n- Include keywords naturally'}
+
+Return ONLY valid JSON with exactly these keys:
+{
+  "caption": "full caption text with line breaks as \\n",
+  "hashtags": "#tag1 #tag2 #tag3..."
+}
+
+NO other text. NO markdown. Just the JSON object.`;
 
     const raw = await geminiText(captionPrompt);
     let captionData: { caption?: string; hashtags?: string } = {};
@@ -310,6 +348,7 @@ const scheduleSchema = z.object({
   referenceImageId: z.number().int().optional(),
   scheduledAt:     z.string().datetime().optional(), // ISO string
   status:          z.string().default("pending"),
+  intervalHours:   z.number().int().min(1).max(12).optional(), // recurring auto-post
 });
 
 router.get("/social/schedule", async (_req, res) => {
@@ -331,11 +370,13 @@ router.post("/social/schedule", async (req, res) => {
   const parsed = scheduleSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "invalid body", details: parsed.error.issues }); return; }
   try {
-    const { scheduledAt, ...rest } = parsed.data;
+    const { scheduledAt, intervalHours, ...rest } = parsed.data;
     const rows = await db!.insert(socialScheduledPostsTable).values({
       ...rest,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
-      status: scheduledAt ? "pending" : "draft",
+      status: scheduledAt || intervalHours ? "pending" : "draft",
+      // @ts-ignore — interval_hours added via migration, not yet in Drizzle type
+      interval_hours: intervalHours ?? null,
     }).returning();
     res.status(201).json({ ok: true, post: rows[0] });
   } catch (e) {
