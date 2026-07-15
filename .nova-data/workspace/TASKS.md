@@ -63,3 +63,13 @@ created: 2026-07-15
 claimed: -
 result: -
 
+### T-0003  [PENDING]  P1
+desc: [poller:runtime-log] 2 new error line(s) in openclaw-2026-07-15.log
+  The runtime poller found new error/crash lines in the gateway log. Investigate the root cause per SOUL.md §6 and patch it.
+  
+    {"0":"[agent] run chatcmpl_41e0f758-5068-4aed-a9f8-9801035686bf ended with stopReason=stop","_meta":{"runtime":"node","runtimeVersion":"24.13.0","hostname":"repl","name":"openclaw","date":"2026-07-15T14:20:04.256Z","logLevelId":5,"logLevelName":"ERROR","path":{"fullFilePath":"file:///home/runner/workspace/node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155:68","fileName":"console-qk0mTZIb.js","fileNameWithLine":"console-qk0mTZIb.js:155","fileColumn":"68","fileLine":"155","filePath":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js","filePathWithLine":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155","method":"console.error"}},"time":"2026-07-15T14:20:04.257+00:00","hostname":"repl","message":"[agent] run chatcmpl_41e0f758-5068-4aed-a9f8-9801035686bf ended with stopReason=stop","traceId":"7426269e9f2a1a5aa6574b842b5a66c6","spanId":"1d13bffb76e434ae","traceFlags":"01"}
+    {"0":"[agent] run chatcmpl_5e5dccda-e2c3-45b4-9adf-b265744973cf ended with stopReason=stop","_meta":{"runtime":"node","runtimeVersion":"24.13.0","hostname":"repl","name":"openclaw","date":"2026-07-15T14:28:53.252Z","logLevelId":5,"logLevelName":"ERROR","path":{"fullFilePath":"file:///home/runner/workspace/node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155:68","fileName":"console-qk0mTZIb.js","fileNameWithLine":"console-qk0mTZIb.js:155","fileColumn":"68","fileLine":"155","filePath":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js","filePathWithLine":"node_modules/.pnpm/openclaw@2026.6.11/node_modules/openclaw/dist/console-qk0mTZIb.js:155","method":"console.error"}},"time":"2026-07-15T14:28:53.252+00:00","hostname":"repl","message":"[agent] run chatcmpl_5e5dccda-e2c3-45b4-9adf-b265744973cf ended with stopReason=stop","traceId":"668a937ff52dc994637060f1b8aacf05","spanId":"f45bd5152a43b569","traceFlags":"01"}
+created: 2026-07-15
+claimed: -
+result: -
+
