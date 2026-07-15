@@ -27,7 +27,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
-  if (request.url.includes('/api/') || request.url.includes('supernova-luis')) return;
+  if (request.url.includes('/api/')) return;
   event.respondWith(
     fetch(request)
       .then((response) => {

@@ -1,7 +1,7 @@
 {
   "name": "NovaLuis — AI Workspace",
   "short_name": "NovaLuis",
-  "description": "AI workspace with work-tree, knowledge base, and 2,000+ skills",
+  "description": "AI workspace with knowledge base, 2,000+ skills, and agentic capabilities",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -18,12 +18,6 @@
       "name": "Skills",
       "short_name": "Skills",
       "url": "/skills"
-    },
-    {
-      "name": "Open Super Nova",
-      "short_name": "Super Nova",
-      "url": "https://supernova-luis.onrender.com",
-      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
