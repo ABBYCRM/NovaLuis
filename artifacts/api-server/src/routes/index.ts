@@ -13,6 +13,7 @@ import openaiProxyRouter from "./openai-proxy";
 import voiceRouter from "./voice";
 import skillsRouter from "./skills";
 import workspacesRouter from "./workspaces";
+import mediaRouter from "./media";
 import { requireWtAuth } from "../lib/work-tree-auth";
 
 const router: IRouter = Router();
@@ -24,13 +25,14 @@ router.use(scratchpadRouter);
 router.use(workTreeRouter);
 // The credential store, knowledge base, vector memory, workspace files, and
 // direct GitHub diagnostic surface are sensitive — PIN/peer-key gated.
-router.use(["/integrations", "/knowledge", "/vector-memory", "/github", "/workspaces"], requireWtAuth);
+router.use(["/integrations", "/knowledge", "/vector-memory", "/github", "/workspaces", "/media"], requireWtAuth);
 router.use(integrationsRouter);
 router.use(composioRouter);
 router.use(githubRouter);
 router.use(knowledgeRouter);
 router.use(vectorMemoryRouter);
 router.use(workspacesRouter);
+router.use(mediaRouter);
 // Browser chat uses the OpenClaw agent loop. OpenClaw's own model provider still
 // calls /v1/* below, keeping the agent endpoint and raw inference endpoint separate.
 router.use(agentChatRouter);

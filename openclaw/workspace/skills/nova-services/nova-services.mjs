@@ -286,6 +286,59 @@ async function run(command, args) {
     case "scratchpad":
       return request("/scratchpad");
 
+    // ── Media generation ─────────────────────────────────────────────────
+    case "image-generate": {
+      // Gemini image generation: prompt → image URL served from the API
+      const prompt = required(args, "prompt");
+      const model  = typeof args.model  === "string" ? args.model  : "gemini"; // gemini | imagen3
+      const count  = args.count  != null ? Number(args.count)  : 1;
+      const aspect = typeof args["aspect-ratio"] === "string" ? args["aspect-ratio"] : "1:1";
+      return request("/media/image/generate", {
+        method: "POST",
+        body: JSON.stringify({ prompt, model, count, aspectRatio: aspect }),
+        timeoutMs: 120_000,
+      });
+    }
+    case "video-avatar": {
+      // A2E AI avatar video: script text → speaking-avatar video URL
+      const script    = required(args, "script");
+      const avatarId  = typeof args["avatar-id"]  === "string" ? args["avatar-id"]  : undefined;
+      const voiceId   = typeof args["voice-id"]   === "string" ? args["voice-id"]   : undefined;
+      const quality   = typeof args.quality       === "string" ? args.quality       : "standard";
+      const background = typeof args.background   === "string" ? args.background    : undefined;
+      const body: Record<string, unknown> = { script, quality };
+      if (avatarId)  body.avatar_id  = avatarId;
+      if (voiceId)   body.voice_id   = voiceId;
+      if (background) body.background = background;
+      return request("/media/video/avatar", {
+        method: "POST",
+        body: JSON.stringify(body),
+        timeoutMs: 180_000,
+      });
+    }
+    case "video-from-image": {
+      // A2E image-to-video: animated video from a still image (async)
+      const imageUrl = required(args, "image-url");
+      const prompt   = typeof args.prompt   === "string" ? args.prompt   : undefined;
+      const duration = args.duration != null ? Number(args.duration) : 5;
+      const body: Record<string, unknown> = { image_url: imageUrl, duration };
+      if (prompt) body.prompt = prompt;
+      return request("/media/video/image-to-video", {
+        method: "POST",
+        body: JSON.stringify(body),
+        timeoutMs: 60_000,
+      });
+    }
+    case "video-status": {
+      // Poll an A2E async video task
+      const id = required(args, "id");
+      return request(`/media/video/status/${encodeURIComponent(id)}`);
+    }
+    case "video-list": {
+      // List all A2E video tasks
+      return request("/media/video/list");
+    }
+
     // ── Workspace file store ──────────────────────────────────────────────
     case "workspace-list": {
       // List all workspaces (no --workspace) or files in one workspace.
@@ -324,7 +377,7 @@ async function run(command, args) {
 
     default:
       throw new Error(
-        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, workspace-list, workspace-read, workspace-write, workspace-delete",
+        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, image-generate, video-avatar, video-from-image, video-status, video-list, workspace-list, workspace-read, workspace-write, workspace-delete",
       );
   }
 }

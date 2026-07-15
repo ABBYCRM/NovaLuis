@@ -106,6 +106,50 @@ node {baseDir}/nova-services.mjs knowledge-ingest --source openclaw --title 'Tit
 node {baseDir}/nova-services.mjs knowledge-ingest --source openclaw --title 'Title' --file ./path/to/file.md --external-id optional-id
 ```
 
+## Image generation (Gemini)
+
+Generate images from text prompts using Google Gemini. Returns one or more image URLs served from the NOVA API.
+
+```bash
+# Standard image generation (Gemini 2.0 Flash)
+node {baseDir}/nova-services.mjs image-generate --prompt 'A sunset over the ocean, golden hour, cinematic'
+
+# Multiple images
+node {baseDir}/nova-services.mjs image-generate --prompt 'Portrait of a futuristic city' --count 2
+
+# Higher quality with Imagen 3
+node {baseDir}/nova-services.mjs image-generate --prompt 'Hyper-realistic product photo of sneakers' --model imagen3
+
+# Different aspect ratios: 1:1 (default), 16:9, 9:16, 4:3, 3:4
+node {baseDir}/nova-services.mjs image-generate --prompt 'Wide landscape' --aspect-ratio 16:9
+```
+
+Response includes `images[].url` — share this URL directly with Robert in markdown: `![description](url)`.
+
+## Video generation (A2E AI)
+
+A2E provides AI avatar videos (avatar speaks a script) and image-to-video animation. Video tasks are async — start the task, then poll status until `completed`.
+
+```bash
+# AI avatar video: text script → speaking avatar video
+node {baseDir}/nova-services.mjs video-avatar --script 'Hello Robert, here is your daily briefing...'
+node {baseDir}/nova-services.mjs video-avatar --script 'Your report is ready.' --quality ultra
+
+# Image to video: animate a still image (async task)
+node {baseDir}/nova-services.mjs video-from-image --image-url 'https://example.com/photo.jpg' --prompt 'slow zoom in' --duration 5
+
+# Poll status of an async video task (returns videoUrl when completed)
+node {baseDir}/nova-services.mjs video-status --id '<task-id-from-start>'
+
+# List all video tasks
+node {baseDir}/nova-services.mjs video-list
+```
+
+**Workflow for image-to-video:**
+1. Call `video-from-image` → get back a task `_id`
+2. Call `video-status --id <_id>` every 10-15 seconds
+3. When `status === "completed"`, share the `videoUrl` with Robert
+
 ## Workspace file store (read and write)
 
 Robert's eight personal workspaces (and six esoteric workspaces) are persisted server-side so you can read and write files directly. Valid workspace slugs: `medical`, `health`, `dietary`, `fitness`, `todo`, `tasks`, `agents`, `pictures`, `numerology`, `sacred`, `vedic`, `mystic`, `manifest`, `quantum`.
