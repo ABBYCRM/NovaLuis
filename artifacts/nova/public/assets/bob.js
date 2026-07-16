@@ -1653,7 +1653,7 @@ function renderEmptyState() {
   div.id = 'empty-state';
   div.innerHTML = `
     <div class="es-logo">B</div>
-    <div class="es-title">Hello Robert, I'm NOVA.</div>
+    <div class="es-title">Hello, I'm NOVA.</div>
     <div class="es-sub">Your direct, sharp, evidence-driven AI assistant. What can I help you with today?</div>
     <div class="prompt-chips">
       <div class="chip">What can you do?</div>
