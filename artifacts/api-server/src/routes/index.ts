@@ -14,7 +14,6 @@ import voiceRouter from "./voice";
 import skillsRouter from "./skills";
 import workspacesRouter from "./workspaces";
 import mediaRouter from "./media";
-import instagramPublishRouter from "./instagram-publish";
 import socialMediaRouter from "./social-media";
 import instagramCampaignGuardRouter from "./instagram-campaign-guard";
 import campaignsRouter from "./campaigns";
@@ -39,10 +38,8 @@ router.use(knowledgeRouter);
 router.use(vectorMemoryRouter);
 router.use(workspacesRouter);
 router.use(mediaRouter);
-// Must be mounted before socialMediaRouter so the verified Instagram two-step
-// publisher handles /social/publish/:id and the legacy route cannot mark a
-// container-creation response as a completed Instagram post.
-router.use(instagramPublishRouter);
+// The hardened Instagram publisher is mounted directly in app.ts before this
+// aggregate router so the legacy social publisher cannot intercept the route.
 router.use(socialMediaRouter);
 // Normalize image-only Instagram campaign formats before the legacy campaign
 // implementation creates or executes them.
