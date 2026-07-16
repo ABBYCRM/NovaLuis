@@ -47,7 +47,7 @@ function normalizeRequestBody(req: Request, _res: Response, next: NextFunction):
 
 async function normalizeStoredCampaign(id: number): Promise<void> {
   if (!hasDatabase || !db || !Number.isInteger(id)) return;
-  const rows = await db
+  const rows = await db!
     .select({
       id: socialCampaignsTable.id,
       platforms: socialCampaignsTable.platforms,
@@ -67,7 +67,7 @@ async function normalizeStoredCampaign(id: number): Promise<void> {
   const normalized = normalizedContentTypes(platforms, contentTypes);
   if (!normalized || JSON.stringify(normalized) === JSON.stringify(contentTypes)) return;
 
-  await db
+  await db!
     .update(socialCampaignsTable)
     .set({ contentTypes: JSON.stringify(normalized) })
     .where(eq(socialCampaignsTable.id, campaign.id));
@@ -92,7 +92,7 @@ async function normalizeAllStoredCampaigns(_req: Request, res: Response, next: N
   }
 
   try {
-    const campaigns = await db
+    const campaigns = await db!
       .select({
         id: socialCampaignsTable.id,
         platforms: socialCampaignsTable.platforms,
@@ -107,7 +107,7 @@ async function normalizeAllStoredCampaigns(_req: Request, res: Response, next: N
       try { contentTypes = JSON.parse(campaign.contentTypes || "{}"); } catch { /* keep empty */ }
       const normalized = normalizedContentTypes(platforms, contentTypes);
       if (!normalized || JSON.stringify(normalized) === JSON.stringify(contentTypes)) continue;
-      await db
+      await db!
         .update(socialCampaignsTable)
         .set({ contentTypes: JSON.stringify(normalized) })
         .where(eq(socialCampaignsTable.id, campaign.id));
