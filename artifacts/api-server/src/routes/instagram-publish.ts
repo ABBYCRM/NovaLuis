@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import {
   db,
@@ -12,6 +14,7 @@ const router = Router();
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const PUBLISHING_LOCK_MS = 5 * 60 * 1000;
 const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+const PUBLIC_ASSET_NAME = /^instagram-[a-z0-9_-]{1,50}-[a-z0-9_-]{1,50}-\d{13}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|jpe?g|webp)$/i;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -64,6 +67,113 @@ function extensionForMime(mimeType: string): string {
   return "png";
 }
 
+function isPrivateAddress(address: string): boolean {
+  const normalized = address.toLowerCase().split("%")[0]!;
+  const family = isIP(normalized);
+
+  if (family === 4) {
+    const parts = normalized.split(".").map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+      return true;
+    }
+    const [a, b, c] = parts as [number, number, number, number];
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 0 && c === 0) ||
+      (a === 192 && b === 0 && c === 2) ||
+      (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      (a === 198 && b === 51 && c === 100) ||
+      (a === 203 && b === 0 && c === 113)
+    );
+  }
+
+  if (family === 6) {
+    return (
+      normalized === "::" ||
+      normalized === "::1" ||
+      normalized.startsWith("::ffff:") ||
+      normalized.startsWith("fc") ||
+      normalized.startsWith("fd") ||
+      normalized.startsWith("fe8") ||
+      normalized.startsWith("fe9") ||
+      normalized.startsWith("fea") ||
+      normalized.startsWith("feb") ||
+      normalized.startsWith("ff") ||
+      normalized.startsWith("2001:db8:")
+    );
+  }
+
+  return true;
+}
+
+async function assertSafeImageUrl(url: URL, baseUrl: URL): Promise<void> {
+  if (url.username || url.password) {
+    throw new Error("Generated image URL must not contain embedded credentials");
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  const baseHostname = baseUrl.hostname.toLowerCase().replace(/\.$/, "");
+  if (hostname === baseHostname) {
+    if (url.protocol !== "https:") {
+      throw new Error("Local generated media must use HTTPS");
+    }
+    return;
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error("Remote generated media must use HTTPS");
+  }
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".lan") ||
+    hostname.endsWith(".home")
+  ) {
+    throw new Error("Generated image URL points to a private hostname");
+  }
+
+  const literalFamily = isIP(hostname);
+  const addresses = literalFamily
+    ? [{ address: hostname, family: literalFamily }]
+    : await lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((item) => isPrivateAddress(item.address))) {
+    throw new Error("Generated image URL resolves to a private or reserved network address");
+  }
+}
+
+async function fetchImage(imageUrl: string, baseUrl: string): Promise<Response> {
+  const base = new URL(baseUrl);
+  let current = new URL(imageUrl, base);
+
+  for (let redirectCount = 0; redirectCount <= 3; redirectCount++) {
+    await assertSafeImageUrl(current, base);
+    const response = await fetch(current, {
+      signal: AbortSignal.timeout(20_000),
+      redirect: "manual",
+      headers: { Accept: "image/*" },
+    });
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) throw new Error("Generated image redirect did not include a location");
+      current = new URL(location, current);
+      continue;
+    }
+    return response;
+  }
+
+  throw new Error("Generated image exceeded the redirect limit");
+}
+
 async function readImage(imageUrl: string, baseUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
   if (imageUrl.startsWith("data:")) {
     const match = imageUrl.match(/^data:([^;,]+);base64,(.+)$/s);
@@ -79,21 +189,7 @@ async function readImage(imageUrl: string, baseUrl: string): Promise<{ buffer: B
     return { buffer, mimeType };
   }
 
-  const absoluteUrl = imageUrl.startsWith("/") ? `${baseUrl}${imageUrl}` : imageUrl;
-  let parsed: URL;
-  try {
-    parsed = new URL(absoluteUrl);
-  } catch {
-    throw new Error("Instagram image URL is invalid");
-  }
-  if (!new Set(["http:", "https:"]).has(parsed.protocol)) {
-    throw new Error("Instagram image URL must use HTTP or HTTPS");
-  }
-
-  const response = await fetch(parsed, {
-    signal: AbortSignal.timeout(20_000),
-    redirect: "follow",
-  });
+  const response = await fetchImage(imageUrl, baseUrl);
   if (!response.ok) {
     throw new Error(`Could not download generated image (HTTP ${response.status})`);
   }
@@ -135,13 +231,13 @@ async function persistPublicImage(
   const { buffer, mimeType } = await readImage(imageUrl, baseUrl);
   const filename = [
     "instagram",
-    platform.replace(/[^a-z0-9_-]/gi, "-"),
-    contentType.replace(/[^a-z0-9_-]/gi, "-"),
+    platform.replace(/[^a-z0-9_-]/gi, "-").slice(0, 50),
+    contentType.replace(/[^a-z0-9_-]/gi, "-").slice(0, 50),
     Date.now(),
     randomUUID(),
   ].join("-") + `.${extensionForMime(mimeType)}`;
 
-  await db.insert(workspaceFilesTable).values({
+  await db!.insert(workspaceFilesTable).values({
     workspace: "pictures",
     filename,
     content: buffer.toString("base64"),
@@ -192,9 +288,13 @@ async function composioExecute(
   toolSlug: string,
   args: JsonRecord,
 ): Promise<ComposioExecution> {
+  const apiKey = process.env.SUPERNOVA_API_KEY || process.env.OPENCLAW_API_KEY || "";
   const response = await fetch(`http://127.0.0.1:${port}/api/integrations/composio/execute`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
     body: JSON.stringify({ toolSlug, arguments: args }),
   });
   const data = await response.json().catch(() => ({ error: "Composio returned an unreadable response" }));
@@ -288,11 +388,12 @@ async function publishInstagram(
 }
 
 // Public, immutable media endpoint used by Instagram's servers. It deliberately
-// serves only image files from the Pictures workspace and exposes no file listing.
+// serves only opaque Instagram-generated files from the Pictures workspace and
+// exposes neither a file listing nor arbitrary user workspace images.
 router.get("/social/assets/:filename", async (req, res) => {
   if (!dbGuard(res)) return;
   const filename = String(req.params.filename || "");
-  if (!/^[a-zA-Z0-9._-]{1,500}$/.test(filename)) {
+  if (!PUBLIC_ASSET_NAME.test(filename)) {
     res.status(400).json({ error: "invalid asset filename" });
     return;
   }
