@@ -1,0 +1,97 @@
+name: Deploy DigitalOcean
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nova-luis-digitalocean-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DO_APP_ID: a1046ca0-ab98-4775-8ed7-24f156432aaf
+      LIVE_URL: https://nova-luis-8hjvt.ondigitalocean.app
+      DIGITALOCEAN_API_TOKEN: ${{ secrets.DIGITALOCEAN_API_TOKEN }}
+      DIGITALOCEAN_API_TOKEN_PAID: ${{ secrets.DIGITALOCEAN_API_TOKEN_PAID }}
+
+    steps:
+      - name: Check deployment credential
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="${DIGITALOCEAN_API_TOKEN:-${DIGITALOCEAN_API_TOKEN_PAID:-}}"
+          if [ -z "$TOKEN" ]; then
+            echo "Neither DIGITALOCEAN_API_TOKEN nor DIGITALOCEAN_API_TOKEN_PAID is configured as a GitHub Actions secret." >&2
+            exit 1
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger DigitalOcean deployment
+        id: trigger
+        env:
+          DO_TOKEN: ${{ steps.auth.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            "https://api.digitalocean.com/v2/apps/${DO_APP_ID}/deployments" \
+            --header "Authorization: Bearer ${DO_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"force_build":true}')"
+          DEPLOYMENT_ID="$(node -e 'const d=JSON.parse(process.argv[1]); const id=d.deployment?.id||d.id; if(!id) process.exit(2); process.stdout.write(id)' "$RESPONSE")"
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+          echo "Triggered deployment $DEPLOYMENT_ID for commit $GITHUB_SHA"
+
+      - name: Wait for deployment completion
+        env:
+          DO_TOKEN: ${{ steps.auth.outputs.token }}
+          DEPLOYMENT_ID: ${{ steps.trigger.outputs.deployment_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 100); do
+            RESPONSE="$(curl --fail-with-body --silent --show-error \
+              "https://api.digitalocean.com/v2/apps/${DO_APP_ID}/deployments/${DEPLOYMENT_ID}" \
+              --header "Authorization: Bearer ${DO_TOKEN}")"
+            PHASE="$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.deployment?.phase||d.phase||"UNKNOWN"))' "$RESPONSE")"
+            echo "Deployment phase: $PHASE"
+            case "$PHASE" in
+              ACTIVE) exit 0 ;;
+              ERROR|CANCELED|SUPERSEDED)
+                echo "$RESPONSE" >&2
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          echo "DigitalOcean deployment did not become ACTIVE before timeout." >&2
+          exit 1
+
+      - name: Verify production endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 12 --retry-all-errors --retry-delay 10 \
+            "${LIVE_URL}/api/healthz"
+          echo
+          curl --fail-with-body --silent --show-error \
+            --retry 12 --retry-all-errors --retry-delay 10 \
+            "${LIVE_URL}/api/openclaw/status"
+          echo
+
+      - name: Record deployed commit
+        run: |
+          echo "DigitalOcean deployment verified for GitHub commit ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment ID: ${{ steps.trigger.outputs.deployment_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Live URL: ${LIVE_URL}" >> "$GITHUB_STEP_SUMMARY"
