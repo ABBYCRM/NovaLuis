@@ -34,7 +34,7 @@ const CAPTION_LIMITS: Record<string, number> = {
 async function regeneratePostContent(
   post: typeof socialScheduledPostsTable.$inferSelect,
 ): Promise<{ caption: string; hashtags: string; imageUrl: string } | null> {
-  const description = (post as Record<string, unknown>).description as string | undefined;
+  const description = post.description;
   if (!description) return null; // no description = can't regenerate
 
   const platform = post.platform;
@@ -105,8 +105,8 @@ async function reschedule(id: number, intervalHours: number) {
     .set({
       status: "pending",
       scheduledAt: nextAt,
-      publishedAt: undefined as unknown as Date,
-      errorMessage: undefined as unknown as string,
+      publishedAt: null,
+      errorMessage: null,
     })
     .where(eq(socialScheduledPostsTable.id, id));
   logger.info({ id, nextAt, intervalHours }, "[social-cron] rescheduled recurring post");
@@ -149,7 +149,7 @@ async function tick(port: number) {
 
     await Promise.all(
       duePosts.map(async (post) => {
-        const intervalHours = (post as Record<string, unknown>)["interval_hours"];
+        const intervalHours = post.intervalHours;
         const isRecurring = typeof intervalHours === "number" && intervalHours >= 1;
 
         // For recurring posts: regenerate fresh caption + image BEFORE publishing.

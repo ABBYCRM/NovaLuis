@@ -626,6 +626,14 @@ router.post("/social/publish/:id", async (req, res) => {
   if (!rows.length) { res.status(404).json({ error: "post not found" }); return; }
   const post = rows[0]!;
 
+  // Idempotency guard — if the cron and the external worker both pick up the same
+  // post simultaneously, the second caller arrives here after the first has already
+  // set status to "publishing". We return 200 ok/skipped instead of double-publishing.
+  if (post.status === "publishing" || post.status === "published") {
+    res.json({ ok: true, skipped: true, status: post.status });
+    return;
+  }
+
   // Validate we have a tool for this platform + content type
   const toolSlug = COMPOSIO_TOOL_MAP[post.platform]?.[post.contentType] ?? "";
   if (!toolSlug) {
@@ -692,28 +700,36 @@ router.post("/social/publish/:id", async (req, res) => {
       });
 
       const success = step2.ok;
+      const step2Err = success
+        ? undefined
+        : `Instagram publish failed (step 2): ${JSON.stringify(step2.data).slice(0, 500)}`;
+
       await db!.update(socialScheduledPostsTable).set({
         status: success ? "published" : "failed",
         publishedAt: success ? new Date() : undefined,
         composioResult: JSON.stringify({ step: 2, creationId, result: step2.data }),
-        errorMessage: success ? undefined : `Instagram publish failed (step 2): ${JSON.stringify(step2.data).slice(0, 500)}`,
+        errorMessage: step2Err,
       }).where(eq(socialScheduledPostsTable.id, id));
 
-      res.json({ ok: success, composioResult: step2.data, toolSlug, creationId, step: 2 });
+      res.json({ ok: success, composioResult: step2.data, toolSlug, creationId, step: 2, error: step2Err });
       return;
     }
 
     // ── Single-step platforms (Twitter, LinkedIn, Facebook, TikTok) ───────
     const result = await composioExecute(port, toolSlug, baseArgs);
 
+    const singleStepErr = result.ok
+      ? undefined
+      : `Composio ${result.status}: ${JSON.stringify(result.data).slice(0, 500)}`;
+
     await db!.update(socialScheduledPostsTable).set({
       status: result.ok ? "published" : "failed",
       publishedAt: result.ok ? new Date() : undefined,
       composioResult: JSON.stringify(result.data),
-      errorMessage: result.ok ? undefined : `Composio ${result.status}: ${JSON.stringify(result.data).slice(0, 500)}`,
+      errorMessage: singleStepErr,
     }).where(eq(socialScheduledPostsTable.id, id));
 
-    res.json({ ok: result.ok, composioResult: result.data, toolSlug });
+    res.json({ ok: result.ok, composioResult: result.data, toolSlug, error: singleStepErr });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await db!.update(socialScheduledPostsTable)

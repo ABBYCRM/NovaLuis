@@ -47,6 +47,7 @@ export type InsertSocialCampaign = typeof socialCampaignsTable.$inferInsert;
 export const socialScheduledPostsTable = pgTable("social_scheduled_posts", {
   id: serial("id").primaryKey(),
   campaignId: integer("campaign_id"),                         // FK → social_campaigns.id (null = standalone)
+  intervalHours: integer("interval_hours"),                   // null = one-shot, ≥1 = recurring (hours between runs)
   platform: varchar("platform", { length: 50 }).notNull(),       // instagram, tiktok, twitter, facebook, linkedin, youtube
   contentType: varchar("content_type", { length: 50 }).notNull(),// post, reel, story, shorts, thumbnail …
   description: text("description").notNull().default(""),
