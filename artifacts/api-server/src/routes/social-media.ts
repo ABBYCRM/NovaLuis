@@ -581,20 +581,20 @@ router.delete("/social/schedule/:id", async (req, res) => {
 
 // ── Composio tool map & publish ───────────────────────────────────────────────
 //
-// Composio tool slugs for the Tool Router. These are verified against the
-// Composio v3.1 API.  Instagram posting is a TWO-STEP process:
-//   1. Create media container  → INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER or INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER
-//   2. Publish container       → INSTAGRAM_PUBLISH_MEDIA_CONTAINER
-//
-// The publish step uses the creation_id returned by step 1.
+// Composio tool slugs verified against Composio v3 API (2026-07-16).
+// Instagram posting is a TWO-STEP process:
+//   1. Create media container  → INSTAGRAM_CREATE_MEDIA_CONTAINER
+//        content_type: "photo" | "video" | "reel" | "carousel_item"
+//        media_type:   "REELS" | "STORIES" | omit for photos
+//   2. Publish container       → INSTAGRAM_CREATE_POST  (creation_id from step 1)
 //
 const COMPOSIO_TOOL_MAP: Record<string, Record<string, string>> = {
   instagram: {
-    post:      "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER",
-    portrait:  "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER",
-    landscape: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER",
-    reel:      "INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER",
-    story:     "INSTAGRAM_CREATE_STORIES_MEDIA_CONTAINER",
+    post:      "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    portrait:  "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    landscape: "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    reel:      "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    story:     "INSTAGRAM_CREATE_MEDIA_CONTAINER",
   },
   twitter:   { post: "TWITTER_CREATION_OF_A_POST", square: "TWITTER_CREATION_OF_A_POST" },
   facebook:  { post: "FACEBOOK_POST_MESSAGE", story: "FACEBOOK_POST_MESSAGE" },
@@ -669,12 +669,23 @@ router.post("/social/publish/:id", async (req, res) => {
 
     // ── Instagram two-step flow ────────────────────────────────────────────
     if (INSTAGRAM_PLATFORMS.has(post.platform)) {
-      // Step 1: create media container
-      const step1 = await composioExecute(port, toolSlug, {
+      // Step 1: create media container via INSTAGRAM_CREATE_MEDIA_CONTAINER
+      // content_type enum: "photo" | "video" | "reel" | "carousel_item"
+      // media_type string: "REELS" | "STORIES" (omit for regular photos)
+      const igContentType =
+        post.contentType === "reel"  ? "reel"  :
+        post.contentType === "story" ? "photo" : "photo";
+      const igMediaType =
+        post.contentType === "reel"  ? "REELS"  :
+        post.contentType === "story" ? "STORIES" : undefined;
+
+      const step1Args: Record<string, unknown> = {
         ...baseArgs,
-        media_type: post.contentType === "reel" ? "REELS" :
-                    post.contentType === "story" ? "STORIES" : "IMAGE",
-      });
+        content_type: igContentType,
+        ...(igMediaType ? { media_type: igMediaType } : {}),
+      };
+
+      const step1 = await composioExecute(port, toolSlug, step1Args);
 
       // Extract creation_id from step 1 response (Composio wraps Composio wraps IG API)
       const step1Data = step1.data as Record<string, unknown> | null;
@@ -697,8 +708,8 @@ router.post("/social/publish/:id", async (req, res) => {
         return;
       }
 
-      // Step 2: publish the container
-      const step2 = await composioExecute(port, "INSTAGRAM_PUBLISH_MEDIA_CONTAINER", {
+      // Step 2: publish the container via INSTAGRAM_CREATE_POST
+      const step2 = await composioExecute(port, "INSTAGRAM_CREATE_POST", {
         creation_id: String(creationId),
       });
 
