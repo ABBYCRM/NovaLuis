@@ -14,6 +14,7 @@ import voiceRouter from "./voice";
 import skillsRouter from "./skills";
 import workspacesRouter from "./workspaces";
 import mediaRouter from "./media";
+import instagramPublishRouter from "./instagram-publish";
 import socialMediaRouter from "./social-media";
 import campaignsRouter from "./campaigns";
 import favoritesRouter from "./favorites";
@@ -37,6 +38,10 @@ router.use(knowledgeRouter);
 router.use(vectorMemoryRouter);
 router.use(workspacesRouter);
 router.use(mediaRouter);
+// Must be mounted before socialMediaRouter so the verified Instagram two-step
+// publisher handles /social/publish/:id and the legacy route cannot mark a
+// container-creation response as a completed Instagram post.
+router.use(instagramPublishRouter);
 router.use(socialMediaRouter);
 router.use(campaignsRouter);
 router.use(favoritesRouter);
