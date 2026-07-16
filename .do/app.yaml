@@ -14,14 +14,14 @@ services:
     github:
       repo: ABBYCRM/NovaLuis
       branch: main
-      deploy_on_push: false
+      deploy_on_push: true
     dockerfile_path: Dockerfile
     http_port: 8080
     instance_count: 1
-    instance_size_slug: basic-s
+    instance_size_slug: apps-s-1vcpu-2gb
 
     health_check:
-      http_path: /healthz
+      http_path: /api/healthz
       initial_delay_seconds: 30
       period_seconds: 30
       timeout_seconds: 10
@@ -37,9 +37,8 @@ services:
         value: "openclaw/default"
       - key: LOG_LEVEL
         value: "info"
-      # Set to the live app URL after first deploy
       - key: PUBLIC_BASE_URL
-        value: ""
+        value: "https://nova-luis-8hjvt.ondigitalocean.app"
       - key: NOVA_AGENT_CHAT_GATEWAY_URL
         value: ""
 
