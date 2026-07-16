@@ -109,11 +109,13 @@ jobs:
             --retry 12 --retry-all-errors --retry-delay 10 \
             "${LIVE_URL}/api/openclaw/status"
           echo
-          STATUS="$(curl --fail-with-body --silent --show-error \
+          PROBE_URL="${LIVE_URL}/api/social/assets/instagram-instagram-post-0000000000000-00000000-0000-0000-0000-000000000000.png"
+          STATUS="$(curl --silent --show-error \
             --retry 12 --retry-all-errors --retry-delay 10 \
-            "${LIVE_URL}/api/social/assets/instagram-deployment-probe.png" || true)"
+            "$PROBE_URL" || true)"
           if [[ "$STATUS" != *"asset not found"* ]]; then
             echo "The hardened Instagram asset route is not active on the deployed service." >&2
+            echo "Probe response: $STATUS" >&2
             exit 1
           fi
 
