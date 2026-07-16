@@ -16,6 +16,7 @@ import workspacesRouter from "./workspaces";
 import mediaRouter from "./media";
 import instagramPublishRouter from "./instagram-publish";
 import socialMediaRouter from "./social-media";
+import instagramCampaignGuardRouter from "./instagram-campaign-guard";
 import campaignsRouter from "./campaigns";
 import favoritesRouter from "./favorites";
 import renderScenariosRouter from "./render-scenarios";
@@ -43,6 +44,9 @@ router.use(mediaRouter);
 // container-creation response as a completed Instagram post.
 router.use(instagramPublishRouter);
 router.use(socialMediaRouter);
+// Normalize image-only Instagram campaign formats before the legacy campaign
+// implementation creates or executes them.
+router.use(instagramCampaignGuardRouter);
 router.use(campaignsRouter);
 router.use(favoritesRouter);
 router.use(renderScenariosRouter);
