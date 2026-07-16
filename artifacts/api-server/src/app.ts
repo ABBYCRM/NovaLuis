@@ -58,7 +58,16 @@ if (process.env["NODE_ENV"] === "production") {
     const renderIndexHtml = (): string => {
       if (indexHtmlCache != null) return indexHtmlCache;
       const raw = fs.readFileSync(indexHtml, "utf8");
-      indexHtmlCache = raw.replace(
+      // Keep the handwritten production HTML intact while loading a small guard
+      // after its inline Social Media script. The guard removes image-only Reel
+      // selection until a real video URL pipeline exists.
+      const withSocialGuard = raw.includes("/assets/social-media-guard.js")
+        ? raw
+        : raw.replace(
+            /<\/body>/i,
+            '<script src="/assets/social-media-guard.js"></script>\n</body>',
+          );
+      indexHtmlCache = withSocialGuard.replace(
         /(\/assets\/[A-Za-z0-9_\-./]+\.(?:js|css|png|jpe?g|svg|webp|gif|woff2?|ico))/g,
         `$1?v=${BUILD_ID}`,
       );
