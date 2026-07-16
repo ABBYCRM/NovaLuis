@@ -18,6 +18,90 @@ const executeSchema = z.object({
   account: z.string().trim().min(1).max(200).optional(),
 });
 
+type JsonRecord = Record<string, unknown>;
+
+function record(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : null;
+}
+
+function executionSucceeded(data: unknown): boolean {
+  const root = record(data);
+  if (!root) return true;
+
+  for (const key of ["successful", "success", "ok"]) {
+    if (root[key] === false) return false;
+  }
+  if (root.error != null && root.error !== "") return false;
+  const status = String(root.status || root.state || "").toLowerCase();
+  if (["failed", "error", "cancelled", "canceled"].includes(status)) return false;
+
+  for (const key of ["data", "result", "response", "response_data", "output"]) {
+    const nested = record(root[key]);
+    if (nested && !executionSucceeded(nested)) return false;
+  }
+  return true;
+}
+
+function findIdentifier(value: unknown, keys: string[], depth = 0): string {
+  if (depth > 6) return "";
+  const root = record(value);
+  if (!root) return "";
+
+  for (const key of keys) {
+    const candidate = root[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+  }
+  for (const key of ["data", "result", "response", "response_data", "output", "details"]) {
+    const found = findIdentifier(root[key], keys, depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+
+function normalizeInstagramExecution(
+  toolSlug: string,
+  args: JsonRecord,
+): { toolSlug: string; arguments: JsonRecord } {
+  const normalized = { ...args };
+
+  if (toolSlug === "INSTAGRAM_PUBLISH_MEDIA_CONTAINER") {
+    return { toolSlug: "INSTAGRAM_CREATE_POST", arguments: normalized };
+  }
+
+  const legacyCreateType: Record<string, { contentType: string; mediaType?: string }> = {
+    INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER: { contentType: "photo" },
+    INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER: { contentType: "reel", mediaType: "REELS" },
+    INSTAGRAM_CREATE_STORIES_MEDIA_CONTAINER: {
+      contentType: typeof normalized.video_url === "string" && normalized.video_url
+        ? "video"
+        : "photo",
+      mediaType: "STORIES",
+    },
+  };
+
+  const legacy = legacyCreateType[toolSlug];
+  if (legacy) {
+    normalized.content_type = legacy.contentType;
+    if (legacy.mediaType) normalized.media_type = legacy.mediaType;
+    if (normalized.media_type === "IMAGE") delete normalized.media_type;
+    return { toolSlug: "INSTAGRAM_CREATE_MEDIA_CONTAINER", arguments: normalized };
+  }
+
+  if (toolSlug === "INSTAGRAM_CREATE_MEDIA_CONTAINER") {
+    if (!normalized.content_type) {
+      normalized.content_type = typeof normalized.video_url === "string" && normalized.video_url
+        ? normalized.media_type === "REELS" ? "reel" : "video"
+        : "photo";
+    }
+    if (normalized.media_type === "IMAGE") delete normalized.media_type;
+  }
+
+  return { toolSlug, arguments: normalized };
+}
+
 function sendError(res: Response, error: unknown): void {
   if (error instanceof ComposioApiError) {
     const status = error.status === 401 || error.status === 403 ? 502 : error.status;
@@ -213,18 +297,59 @@ router.post("/integrations/composio/execute", async (req, res) => {
 
   try {
     const session = await ensureComposioSession();
+    const normalized = normalizeInstagramExecution(
+      parsed.data.toolSlug,
+      parsed.data.arguments,
+    );
     const data = await composioRequest<unknown>(
       session.apiKey,
       `/tool_router/session/${encodeURIComponent(session.sessionId)}/execute`,
       {
         method: "POST",
         body: JSON.stringify({
-          tool_slug: parsed.data.toolSlug,
-          arguments: parsed.data.arguments,
+          tool_slug: normalized.toolSlug,
+          arguments: normalized.arguments,
           ...(parsed.data.account ? { account: parsed.data.account } : {}),
         }),
       },
     );
+
+    if (!executionSucceeded(data)) {
+      res.status(502).json({
+        error: `Composio tool ${normalized.toolSlug} reported failure`,
+        details: data,
+      });
+      return;
+    }
+
+    if (normalized.toolSlug === "INSTAGRAM_CREATE_MEDIA_CONTAINER") {
+      const creationId = findIdentifier(
+        data,
+        ["creation_id", "creationId", "container_id", "containerId", "id"],
+      );
+      if (!creationId) {
+        res.status(502).json({
+          error: "Instagram container creation returned no creation ID",
+          details: data,
+        });
+        return;
+      }
+    }
+
+    if (normalized.toolSlug === "INSTAGRAM_CREATE_POST") {
+      const mediaId = findIdentifier(
+        data,
+        ["media_id", "mediaId", "post_id", "postId", "id"],
+      );
+      if (!mediaId) {
+        res.status(502).json({
+          error: "Instagram publish returned no media ID",
+          details: data,
+        });
+        return;
+      }
+    }
+
     res.json(data);
   } catch (error) {
     sendError(res, error);
