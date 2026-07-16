@@ -33,6 +33,49 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Normalize and validate Instagram media arguments at the application boundary.
+// This catches legacy or external callers that use imageUrl/videoUrl and stops an
+// invalid container request before it reaches Composio. URLs are never logged.
+app.use("/api/integrations/composio/execute", (req, res, next) => {
+  const body = req.body && typeof req.body === "object"
+    ? req.body as Record<string, unknown>
+    : null;
+  if (!body) {
+    next();
+    return;
+  }
+
+  const toolSlug = String(body.toolSlug || body.tool_slug || "");
+  if (toolSlug !== "INSTAGRAM_CREATE_MEDIA_CONTAINER") {
+    next();
+    return;
+  }
+
+  const args = body.arguments && typeof body.arguments === "object" && !Array.isArray(body.arguments)
+    ? body.arguments as Record<string, unknown>
+    : {};
+  const imageUrl = String(args.image_url || args.imageUrl || body.image_url || body.imageUrl || "").trim();
+  const videoUrl = String(args.video_url || args.videoUrl || body.video_url || body.videoUrl || "").trim();
+
+  if (imageUrl) args.image_url = imageUrl;
+  if (videoUrl) args.video_url = videoUrl;
+  delete args.imageUrl;
+  delete args.videoUrl;
+  body.arguments = args;
+
+  if (!imageUrl && !videoUrl) {
+    res.status(422).json({
+      error: "Instagram container request blocked before Composio: image_url or video_url is required.",
+      code: "INSTAGRAM_MEDIA_URL_MISSING",
+      toolSlug,
+      argumentKeys: Object.keys(args).sort(),
+    });
+    return;
+  }
+
+  next();
+});
+
 // Instagram publishing is mounted at the application boundary, before the
 // legacy aggregate router. This guarantees POST /api/social/publish/:id reaches
 // the durable-media/two-step publisher and cannot fall through to the older
