@@ -174,11 +174,29 @@ node {baseDir}/nova-services.mjs workspace-write --workspace health --filename '
 node {baseDir}/nova-services.mjs workspace-delete --workspace todo --filename 'done.md'
 ```
 
+```bash
+# View / analyze an image in a workspace (screenshots, photos)
+# Returns extracted text, URLs, and any other visible content via GPT-4o vision.
+node {baseDir}/nova-services.mjs workspace-view-image --workspace pictures --filename 'screenshot.png'
+
+# With a custom extraction prompt
+node {baseDir}/nova-services.mjs workspace-view-image --workspace pictures --filename 'screenshot.png' \
+  --prompt 'List every GitHub repository URL visible in this image'
+```
+
 **When to use workspace tools:**
 - Robert asks you to save, update, remember, or create a note/list/file in a workspace → use `workspace-write`
 - Robert asks what's in a workspace → use `workspace-list --workspace <slug>`
 - Robert asks to update or append to an existing file → `workspace-read` first, merge, then `workspace-write`
 - Robert asks to delete a workspace file → use `workspace-delete`
+- **Robert references screenshots, photos, or images in a workspace (especially `pictures`)** → ALWAYS use `workspace-view-image`, never `workspace-read`. Images are stored as base64 — you cannot read them as text. `workspace-view-image` calls GPT-4o vision and returns the extracted text, URLs, or whatever is visible in the image.
+
+**Pictures workspace workflow — step by step:**
+1. `workspace-list --workspace pictures` → see what files are stored
+2. For each image file: `workspace-view-image --workspace pictures --filename '<name>'` → extract content
+3. Act on the extracted information (URLs, text, etc.)
+
+Do NOT call `workspace-read` on image files (contentType starting with `image/`) — you will receive raw base64 that is useless to you. Always use `workspace-view-image` for images.
 
 Files written here are immediately visible in Robert's UI (the client merges server files with local files on next workspace open).
 

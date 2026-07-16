@@ -115,7 +115,7 @@ router.get("/workspaces/:ws/files/:filename", async (req, res) => {
 
 const upsertSchema = z.object({
   filename: z.string().min(1).max(500),
-  content: z.string().max(500_000),
+  content: z.string().max(10_000_000), // 10 MB — images stored as base64 can be large
   contentType: z.string().max(100).default("text/plain"),
 });
 

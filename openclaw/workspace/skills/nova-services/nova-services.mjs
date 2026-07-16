@@ -340,6 +340,77 @@ async function run(command, args) {
     }
 
     // ── Workspace file store ──────────────────────────────────────────────
+    case "workspace-view-image": {
+      // Read an image stored in a workspace and extract its content via
+      // GPT-4o vision. Use this whenever a workspace file has an image
+      // contentType (image/png, image/jpeg, image/webp, etc.) — do NOT
+      // try to read raw base64 yourself.
+      //
+      // Usage:
+      //   workspace-view-image --workspace pictures --filename 'shot.png'
+      //   workspace-view-image --workspace pictures --filename 'shot.png' \
+      //     --prompt 'List every GitHub repository URL visible in this image'
+      const ws       = required(args, "workspace").toLowerCase();
+      const filename = required(args, "filename");
+      const prompt   = typeof args.prompt === "string" && args.prompt.trim()
+        ? args.prompt.trim()
+        : "Extract ALL text visible in this image verbatim. " +
+          "If you see any URLs (GitHub repos, websites, or other links), list them clearly on separate lines.";
+
+      // Step 1: fetch the file from the workspace store
+      const fileData = await request(
+        `/workspaces/${encodeURIComponent(ws)}/files/${encodeURIComponent(filename)}`,
+      );
+      const rawContent  = fileData.content ?? "";
+      const contentType = fileData.contentType || "image/png";
+
+      if (!rawContent) throw new Error(`File '${filename}' in workspace '${ws}' has no content`);
+
+      // Step 2: normalise to a data URL the vision API understands
+      const dataUrl = rawContent.startsWith("data:")
+        ? rawContent
+        : `data:${contentType};base64,${rawContent}`;
+
+      // Step 3: call GPT-4o vision directly (bypass proxy to avoid agent-loop)
+      const OPENAI_KEY = process.env.OPENAI_API_KEY || "";
+      if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY not set — vision analysis unavailable");
+
+      const ctrl   = new AbortController();
+      const timer  = setTimeout(() => ctrl.abort(), 90_000);
+      let visionJson;
+      try {
+        const visionRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization:  `Bearer ${OPENAI_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [{
+              role: "user",
+              content: [
+                { type: "text",      text: prompt },
+                { type: "image_url", image_url: { url: dataUrl, detail: "high" } },
+              ],
+            }],
+            max_tokens: 4096,
+          }),
+          signal: ctrl.signal,
+        });
+        if (!visionRes.ok) {
+          const errText = await visionRes.text().catch(() => "");
+          throw new Error(`Vision API error ${visionRes.status}: ${errText.slice(0, 400)}`);
+        }
+        visionJson = await visionRes.json();
+      } finally {
+        clearTimeout(timer);
+      }
+
+      const analysis = visionJson.choices?.[0]?.message?.content || "";
+      return { filename, workspace: ws, contentType, analysis };
+    }
+
     case "workspace-list": {
       // List all workspaces (no --workspace) or files in one workspace.
       const ws = typeof args.workspace === "string" ? args.workspace.trim().toLowerCase() : "";
@@ -377,7 +448,7 @@ async function run(command, args) {
 
     default:
       throw new Error(
-        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, image-generate, video-avatar, video-from-image, video-status, video-list, workspace-list, workspace-read, workspace-write, workspace-delete",
+        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, image-generate, video-avatar, video-from-image, video-status, video-list, workspace-list, workspace-read, workspace-write, workspace-delete, workspace-view-image",
       );
   }
 }
