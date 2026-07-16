@@ -17,7 +17,7 @@ description: "Nova-luis live on DO App Platform — account, app ID, URL, env va
 - autoDeploy: false (manual trigger required)
 - Spec file: .do/app.yaml (no secret values — committed to repo)
 
-## Verified working (2026-07-15, commit 15e4225)
+## Verified working (2026-07-16, commit 076abae)
 - /healthz → 200
 - / (Nova UI) → 200
 - /api/nova-config → 200 (apiKey present)
@@ -27,7 +27,10 @@ description: "Nova-luis live on DO App Platform — account, app ID, URL, env va
 - OpenClaw gateway starts cleanly, NOVA API listens on 8080
 
 ## Key env vars set in DO app
-- NOVA_OPENCLAW_MODEL_ID = gpt-4o  ← CRITICAL: mini fails with 3-token responses
+- NOVA_OPENCLAW_MODEL_ID = moonshotai/Kimi-K2.6  ← gateway startup model
+- NOVA_MODEL_PREFERENCE  = bitdeer  ← proxy override default (openai/bitdeer/kimi)
+- BITDEER_API_KEY (SECRET) — routes moonshotai/Kimi-K2.6 inference
+- KIMI_API_KEY    (SECRET) — dormant fallback (Moonshot native API, key unverified)
 - DATABASE_URL = postgresql://...supernova_db_q5bt?sslmode=require  (Render supernova-db)
 - SCRATCHPAD_DATABASE_URL = same as DATABASE_URL
 
