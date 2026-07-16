@@ -2795,16 +2795,76 @@ async function wsFetchServerFiles(workspace) {
   } catch (_) { return []; }
 }
 
-// Push a text file to the server store. Fire-and-forget; silently swallows errors
-// (e.g. if the user hasn't unlocked yet, the 401 is ignored and IndexedDB is used).
-async function wsPushFileToServer(workspace, name, text, contentType) {
+// Push ANY file to the server (text or binary). Fire-and-forget.
+// Binary blobs are stored as a base64 data URL so they can be reconstructed.
+async function wsPushFileToServer(workspace, name, content, contentType) {
   try {
     await fetch(`/api/workspaces/${encodeURIComponent(workspace)}/files`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: name, content: text, contentType: contentType || 'text/plain' })
+      body: JSON.stringify({ filename: name, content, contentType: contentType || 'application/octet-stream' })
     });
   } catch (_) {}
+}
+
+// Convert a Blob to a base64 data URL (for server storage of binary files).
+function wsBlobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+// Sync an IndexedDB record to the server. Handles both text and binary blobs.
+async function wsSyncRecToServer(workspace, rec) {
+  try {
+    const ct = rec.mimeType || 'application/octet-stream';
+    let content;
+    if (ct.startsWith('text/') || ct === 'application/json' || rec.name.endsWith('.md') || rec.name.endsWith('.txt')) {
+      content = await rec.blob.text();
+    } else {
+      content = await wsBlobToDataUrl(rec.blob);
+    }
+    await wsPushFileToServer(workspace, rec.name, content, ct);
+  } catch (_) {}
+}
+
+// Delete a file from the server. Silently swallows errors.
+async function wsDeleteFileFromServer(workspace, name) {
+  try {
+    await fetch(`/api/workspaces/${encodeURIComponent(workspace)}/files/${encodeURIComponent(name)}`, {
+      method: 'DELETE'
+    });
+  } catch (_) {}
+}
+
+// Pull server files into IndexedDB for the current device (cross-device sync).
+// Files already present locally (by name) are skipped to avoid duplicates.
+// Binary files were stored as data URLs — they are re-hydrated into Blobs.
+async function wsPullServerFilesToIdb(workspace) {
+  const [serverFiles, localFiles] = await Promise.all([
+    wsFetchServerFiles(workspace),
+    wsListFiles(workspace),
+  ]);
+  if (!serverFiles.length) return;
+  const localNames = new Set(localFiles.map(f => f.name));
+  for (const sf of serverFiles) {
+    if (localNames.has(sf.filename)) continue; // already on this device
+    try {
+      const ct = sf.contentType || 'text/plain';
+      let blob;
+      if (sf.content && sf.content.startsWith('data:')) {
+        // Binary file stored as base64 data URL
+        const resp = await fetch(sf.content);
+        blob = await resp.blob();
+      } else {
+        blob = new Blob([sf.content || ''], { type: ct });
+      }
+      await wsAddFile(workspace, sf.filename, blob);
+    } catch (_) {}
+  }
 }
 
 async function wsHash(s) {
@@ -3147,6 +3207,8 @@ function closeWorkspace() {
 
 async function renderWsFiles() {
   if (!wsCurrent) return;
+  // Pull any server-side files (written by AI or another device) into local IndexedDB.
+  await wsPullServerFilesToIdb(wsCurrent);
   const files = await wsListFiles(wsCurrent);
   wsList.innerHTML = '';
   wsEmpty.style.display = files.length ? 'none' : 'block';
@@ -3172,7 +3234,15 @@ async function renderWsFiles() {
     li.querySelector('[data-act="rename"]').addEventListener('click', async (e) => {
       e.stopPropagation();
       const next = prompt('New name', f.name);
-      if (next && next !== f.name) { await wsRenameFile(f.id, next); renderWsFiles(); }
+      if (next && next !== f.name) {
+        const oldName = f.name;
+        await wsRenameFile(f.id, next);
+        // Mirror rename to server: delete old name, push under new name
+        wsDeleteFileFromServer(wsCurrent, oldName);
+        const rec = await wsGetFile(f.id);
+        wsSyncRecToServer(wsCurrent, rec);
+        renderWsFiles();
+      }
     });
     li.querySelector('[data-act="download"]').addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -3184,7 +3254,11 @@ async function renderWsFiles() {
     });
     li.querySelector('[data-act="delete"]').addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (confirm(`Delete "${f.name}"?`)) { await wsDeleteFile(f.id); renderWsFiles(); }
+      if (confirm(`Delete "${f.name}"?`)) {
+        await wsDeleteFile(f.id);
+        wsDeleteFileFromServer(wsCurrent, f.name); // mirror to server
+        renderWsFiles();
+      }
     });
     wsList.appendChild(li);
   }
@@ -3205,12 +3279,11 @@ wsFilePicker.addEventListener('change', async (e) => {
   if (!wsCurrent) return;
   for (const file of e.target.files) {
     try {
-      await wsAddFile(wsCurrent, file.name, file);
-      // Mirror text files to the server so the AI can read them via nova-services.
-      if (file.type.startsWith('text/') || file.type === 'application/json' || file.name.endsWith('.md') || file.name.endsWith('.txt')) {
-        const txt = await file.text();
-        wsPushFileToServer(wsCurrent, file.name, txt, file.type || 'text/plain');
-      }
+      const id = await wsAddFile(wsCurrent, file.name, file);
+      // Sync ALL file types to the server for cross-device persistence.
+      // Text files are stored as plain text; binaries are stored as base64 data URLs.
+      const rec = await wsGetFile(id);
+      wsSyncRecToServer(wsCurrent, rec);
     } catch (err) {
       toast(`Failed to save ${file.name}: ${err.message || err}`);
     }
