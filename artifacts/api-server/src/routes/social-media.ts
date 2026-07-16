@@ -4,6 +4,7 @@
  * All routes require PIN cookie or peer-key (mounted under /social in routes/index.ts).
  *
  *  POST /social/generate                  AI generates caption + image from description
+ *  POST /social/smart-suggest             AI picks optimal platform/format/tone
  *  POST /social/reference-images          Upload a reference image
  *  GET  /social/reference-images          List saved reference images
  *  DELETE /social/reference-images/:id    Delete a reference image
@@ -12,6 +13,8 @@
  *  PUT  /social/schedule/:id              Update a post
  *  DELETE /social/schedule/:id            Cancel / delete a post
  *  POST /social/publish/:id               Publish now (calls Composio)
+ *  GET  /social/debug                     Composio + last-post diagnostics
+ *  GET  /social/due                       Due posts (cron worker)
  */
 
 import { Router } from "express";
@@ -22,32 +25,34 @@ import { eq, desc, and, lte } from "drizzle-orm";
 const router = Router();
 
 // ── Platform dimension map ────────────────────────────────────────────────────
-const PLATFORM_SPECS: Record<string, Record<string, { aspectRatio: string; dims: string; geminiAspect: string }>> = {
+const PLATFORM_SPECS: Record<string, Record<string, {
+  aspectRatio: string; dims: string; geminiAspect: string; bitdeerSize: string;
+}>> = {
   instagram: {
-    post:      { aspectRatio: "1:1",    dims: "1080×1080", geminiAspect: "1:1"  },
-    portrait:  { aspectRatio: "4:5",    dims: "1080×1350", geminiAspect: "3:4"  },
-    landscape: { aspectRatio: "1.91:1", dims: "1080×566",  geminiAspect: "4:3"  },
-    reel:      { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16" },
-    story:     { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16" },
+    post:      { aspectRatio: "1:1",    dims: "1080×1080", geminiAspect: "1:1",  bitdeerSize: "1024x1024" },
+    portrait:  { aspectRatio: "4:5",    dims: "1080×1350", geminiAspect: "3:4",  bitdeerSize: "1024x1365" },
+    landscape: { aspectRatio: "1.91:1", dims: "1080×566",  geminiAspect: "4:3",  bitdeerSize: "1792x1024" },
+    reel:      { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16", bitdeerSize: "1024x1792" },
+    story:     { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16", bitdeerSize: "1024x1792" },
   },
   tiktok: {
-    video:     { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16" },
+    video:     { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16", bitdeerSize: "1024x1792" },
   },
   twitter: {
-    post:      { aspectRatio: "16:9",   dims: "1200×675",  geminiAspect: "16:9" },
-    square:    { aspectRatio: "1:1",    dims: "1200×1200", geminiAspect: "1:1"  },
+    post:      { aspectRatio: "16:9",   dims: "1200×675",  geminiAspect: "16:9", bitdeerSize: "1792x1024" },
+    square:    { aspectRatio: "1:1",    dims: "1200×1200", geminiAspect: "1:1",  bitdeerSize: "1024x1024" },
   },
   facebook: {
-    post:      { aspectRatio: "1:1",    dims: "1200×1200", geminiAspect: "1:1"  },
-    story:     { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16" },
+    post:      { aspectRatio: "1:1",    dims: "1200×1200", geminiAspect: "1:1",  bitdeerSize: "1024x1024" },
+    story:     { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16", bitdeerSize: "1024x1792" },
   },
   linkedin: {
-    post:      { aspectRatio: "1.91:1", dims: "1200×627",  geminiAspect: "16:9" },
-    square:    { aspectRatio: "1:1",    dims: "1200×1200", geminiAspect: "1:1"  },
+    post:      { aspectRatio: "1.91:1", dims: "1200×627",  geminiAspect: "16:9", bitdeerSize: "1792x1024" },
+    square:    { aspectRatio: "1:1",    dims: "1200×1200", geminiAspect: "1:1",  bitdeerSize: "1024x1024" },
   },
   youtube: {
-    shorts:    { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16" },
-    thumbnail: { aspectRatio: "16:9",   dims: "1280×720",  geminiAspect: "16:9" },
+    shorts:    { aspectRatio: "9:16",   dims: "1080×1920", geminiAspect: "9:16", bitdeerSize: "1024x1792" },
+    thumbnail: { aspectRatio: "16:9",   dims: "1280×720",  geminiAspect: "16:9", bitdeerSize: "1792x1024" },
   },
 };
 
@@ -61,12 +66,158 @@ function dbGuard(res: import("express").Response): boolean {
   return true;
 }
 
-// ── Helpers: Gemini text + image ──────────────────────────────────────────────
+// ── Image generation ──────────────────────────────────────────────────────────
 
-async function geminiText(prompt: string): Promise<string> {
+/**
+ * PRIMARY: Bitdeer `google/flash-image-2.5` — fast, high quality, returns public URLs.
+ * Follows the OpenAI images.generate API format.
+ */
+async function bitdeerImage(
+  prompt: string,
+  size: string,
+): Promise<{ url: string; source: "bitdeer" }> {
+  const key = process.env.BITDEER_API_KEY ?? "";
+  if (!key) throw new Error("BITDEER_API_KEY not set");
+
+  // Normalize to supported Bitdeer sizes
+  const validSizes = new Set(["1024x1024", "1024x1792", "1792x1024"]);
+  const safeSize = validSizes.has(size) ? size : "1024x1024";
+
+  const r = await fetch("https://api-inference.bitdeer.ai/v1/images/generations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: "google/flash-image-2.5",
+      prompt,
+      size: safeSize,
+      n: 1,
+    }),
+  });
+
+  if (!r.ok) {
+    const err = await r.text().catch(() => "");
+    throw new Error(`Bitdeer image error ${r.status}: ${err.slice(0, 300)}`);
+  }
+
+  const d = await r.json() as {
+    data?: ({ url?: string; b64_json?: string })[];
+  };
+
+  const item = d.data?.[0];
+  if (!item) throw new Error("Bitdeer returned no image data");
+
+  if (item.url) {
+    return { url: item.url, source: "bitdeer" };
+  }
+  if (item.b64_json) {
+    // Return as data URL — client displays directly, and we store it.
+    return { url: `data:image/png;base64,${item.b64_json}`, source: "bitdeer" };
+  }
+  throw new Error("Bitdeer image: no url or b64_json in response");
+}
+
+/**
+ * FALLBACK: Gemini imagen — used when Bitdeer is unavailable.
+ */
+async function geminiImage(
+  prompt: string,
+  _aspectRatio: string,
+  refBase64?: string,
+  refMime?: string,
+): Promise<{ url: string; source: "gemini" }> {
   const key = process.env.GEMINI_API_KEY ?? "";
+  if (!key) throw new Error("GEMINI_API_KEY not configured");
+
+  const parts: unknown[] = [];
+  if (refBase64) {
+    parts.push({ inlineData: { mimeType: refMime ?? "image/png", data: refBase64 } });
+    parts.push({ text: `Use the style from the reference image. ${prompt}` });
+  } else {
+    parts.push({ text: prompt });
+  }
+
+  // Try current model names in order — Gemini experimental models change frequently.
+  const GEMINI_IMAGE_MODELS = [
+    "gemini-2.0-flash-preview-image-generation",
+    "gemini-2.5-flash-preview-image-generation",
+    "imagen-3.0-generate-002",
+  ];
+
+  let lastErr: Error = new Error("All Gemini image models unavailable");
+  for (const model of GEMINI_IMAGE_MODELS) {
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts }],
+            generationConfig: { responseModalities: ["IMAGE", "TEXT"], candidateCount: 1 },
+          }),
+        },
+      );
+      if (!r.ok) {
+        const errText = await r.text();
+        lastErr = new Error(`Gemini ${model} error ${r.status}: ${errText.slice(0, 200)}`);
+        continue;
+      }
+      const d = await r.json() as {
+        candidates?: { content: { parts: { inlineData?: { data?: string; mimeType?: string } }[] } }[];
+      };
+      for (const candidate of d.candidates ?? []) {
+        for (const part of candidate.content.parts) {
+          if (part.inlineData?.data) {
+            const mime = part.inlineData.mimeType ?? "image/png";
+            return { url: `data:${mime};base64,${part.inlineData.data}`, source: "gemini" };
+          }
+        }
+      }
+      lastErr = new Error(`Gemini ${model} returned no image data`);
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Generate an image — Bitdeer primary, Gemini fallback.
+ * Returns the image URL (may be a data URL if Bitdeer returns b64_json or Gemini is used).
+ */
+async function generateImage(
+  prompt: string,
+  bitdeerSize: string,
+  geminiAspect: string,
+  refBase64?: string,
+  refMime?: string,
+): Promise<{ url: string; source: string }> {
+  // If there's a reference image, Gemini handles it better (it can condition on the reference).
+  if (refBase64) {
+    return geminiImage(prompt, geminiAspect, refBase64, refMime);
+  }
+  // Otherwise Bitdeer is primary.
+  try {
+    return await bitdeerImage(prompt, bitdeerSize);
+  } catch (bitdeerErr) {
+    // Fall back to Gemini
+    try {
+      return await geminiImage(prompt, geminiAspect, refBase64, refMime);
+    } catch (geminiErr) {
+      throw new Error(
+        `Image generation failed. Bitdeer: ${bitdeerErr instanceof Error ? bitdeerErr.message : bitdeerErr}. Gemini: ${geminiErr instanceof Error ? geminiErr.message : geminiErr}`,
+      );
+    }
+  }
+}
+
+// ── Text generation ───────────────────────────────────────────────────────────
+
+async function generateCaption(prompt: string): Promise<string> {
   const openaiKey = process.env.OPENAI_API_KEY ?? "";
-  // Prefer OpenAI for text (faster, cheaper); fall back to Gemini Flash
   if (openaiKey) {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -75,12 +226,13 @@ async function geminiText(prompt: string): Promise<string> {
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
-        max_tokens: 600,
+        max_tokens: 800,
       }),
     });
     const d = await r.json() as { choices?: { message: { content: string } }[] };
     return d.choices?.[0]?.message?.content ?? "{}";
   }
+  const key = process.env.GEMINI_API_KEY ?? "";
   if (!key) throw new Error("No text generation key available (OPENAI_API_KEY or GEMINI_API_KEY)");
   const r = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
@@ -97,77 +249,22 @@ async function geminiText(prompt: string): Promise<string> {
   return d.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text ?? "{}";
 }
 
-async function geminiImage(
-  prompt: string,
-  aspectRatio: string,
-  refBase64?: string,
-  refMime?: string,
-): Promise<{ id: string; url: string }> {
-  const key = process.env.GEMINI_API_KEY ?? "";
-  if (!key) throw new Error("GEMINI_API_KEY not configured");
-
-  const parts: unknown[] = [];
-  if (refBase64) {
-    parts.push({ inlineData: { mimeType: refMime ?? "image/png", data: refBase64 } });
-    parts.push({ text: `Use the style, character, and visual elements from the reference image above. ${prompt}` });
-  } else {
-    parts.push({ text: prompt });
-  }
-
-  const model = "gemini-2.0-flash-exp-image-generation";
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          responseModalities: ["IMAGE", "TEXT"],
-          candidateCount: 1,
-        },
-      }),
-    },
-  );
-
-  if (!r.ok) {
-    const err = await r.text();
-    throw new Error(`Gemini image error ${r.status}: ${err.slice(0, 300)}`);
-  }
-
-  const d = await r.json() as {
-    candidates?: { content: { parts: { inlineData?: { data?: string; mimeType?: string } }[] } }[];
-  };
-
-  for (const candidate of d.candidates ?? []) {
-    for (const part of candidate.content.parts) {
-      if (part.inlineData?.data) {
-        const mime = part.inlineData.mimeType ?? "image/png";
-        // Return as data URL — client displays directly.
-        const dataUrl = `data:${mime};base64,${part.inlineData.data}`;
-        return { id: "inline", url: dataUrl };
-      }
-    }
-  }
-  throw new Error("Gemini returned no image data");
-}
-
 // ── POST /social/generate ─────────────────────────────────────────────────────
 const generateSchema = z.object({
-  platform:        z.string().min(1),
-  contentType:     z.string().min(1),
-  description:     z.string().min(1).max(2000),
-  tone:            z.string().default("motivational"),
+  platform:         z.string().min(1),
+  contentType:      z.string().min(1),
+  description:      z.string().min(1).max(2000),
+  tone:             z.string().default("motivational"),
   referenceImageId: z.number().int().optional(),
-  generateImage:   z.boolean().default(true),
+  generateImage:    z.boolean().default(true),
 });
 
 router.post("/social/generate", async (req, res) => {
   const parsed = generateSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "invalid body", details: parsed.error.issues }); return; }
-  const { platform, contentType, description, tone, referenceImageId, generateImage } = parsed.data;
+  const { platform, contentType, description, tone, referenceImageId, generateImage: doGenImage } = parsed.data;
 
-  const spec = PLATFORM_SPECS[platform]?.[contentType] ?? { aspectRatio: "1:1", dims: "1080×1080", geminiAspect: "1:1" };
+  const spec = PLATFORM_SPECS[platform]?.[contentType] ?? { aspectRatio: "1:1", dims: "1080×1080", geminiAspect: "1:1", bitdeerSize: "1024x1024" };
   const maxChars = CAPTION_LIMITS[platform] ?? 2200;
 
   try {
@@ -196,7 +293,7 @@ The hook MUST be the single most compelling sentence. For ${platform}: it must w
 - Build on the hook with a short story, insight, or value drop
 - Use rhythm: short punchy sentences. Then a longer one that breathes and carries weight.
 - Create an emotional journey: tension → release OR problem → solution
-- For ${tone} tone: ${tone === 'sarcastic' ? 'use dry wit, irony, and self-aware humor — say the opposite of what you mean with a knowing wink' : tone === 'motivational' ? 'use power words, create urgency, make them feel capable of something bigger' : tone === 'funny' ? 'build to a punchline, use unexpected wordplay or absurdist logic' : tone === 'bold' ? 'be direct, no hedging, command attention with confident declarative statements' : tone === 'educational' ? 'teach one surprising insight clearly — give them something to share' : tone === 'inspirational' ? 'connect to a universal human truth, make them feel seen and elevated' : tone === 'optimistic' ? 'reframe the positive angle, make the future feel bright and achievable' : 'sound like a trusted expert sharing insider knowledge'}
+- For ${tone} tone: ${tone === 'sarcastic' ? 'use dry wit, irony, and self-aware humor' : tone === 'motivational' ? 'use power words, create urgency, make them feel capable of something bigger' : tone === 'funny' ? 'build to a punchline, use unexpected wordplay or absurdist logic' : tone === 'bold' ? 'be direct, no hedging, command attention with confident declarative statements' : tone === 'educational' ? 'teach one surprising insight clearly — give them something to share' : tone === 'inspirational' ? 'connect to a universal human truth, make them feel seen and elevated' : 'sound like a trusted expert sharing insider knowledge'}
 
 ### CTA (Last Line):
 End with ONE clear, low-friction call to action appropriate for ${platform}:
@@ -207,10 +304,10 @@ End with ONE clear, low-friction call to action appropriate for ${platform}:
 
 ### Platform-Specific Rules:
 ${platform === 'instagram' ? '- Use line breaks for readability\n- Emoji used strategically (1-3 max in hook area)\n- Hashtags in first comment or end\n- Story captions: ultra-short, punchy' :
-  platform === 'tiktok' ? '- Very short captions (under 150 chars ideally)\n- Hook IS the caption — make it a question or challenge\n- Use 3-5 trending hashtags' :
-  platform === 'twitter' ? '- 280 chars MAX — every word must earn its place\n- No hashtags unless essential (they kill engagement on X)\n- Conversational, first-person, direct' :
-  platform === 'linkedin' ? '- Professional but human\n- First line shows before "see more" — make it count\n- Tell a business story or share a professional insight\n- 3-5 relevant hashtags at end' :
-  platform === 'facebook' ? '- More conversational, community-focused\n- Slightly longer form acceptable\n- Ask a genuine question to drive comments' :
+  platform === 'tiktok' ? '- Very short captions (under 150 chars ideally)\n- Hook IS the caption\n- Use 3-5 trending hashtags' :
+  platform === 'twitter' ? '- 280 chars MAX — every word must earn its place\n- No hashtags unless essential\n- Conversational, first-person, direct' :
+  platform === 'linkedin' ? '- Professional but human\n- First line shows before "see more" — make it count\n- 3-5 relevant hashtags at end' :
+  platform === 'facebook' ? '- More conversational, community-focused\n- Ask a genuine question to drive comments' :
   '- Clear title-style hook\n- Descriptive for SEO\n- Include keywords naturally'}
 
 Return ONLY valid JSON with exactly these keys:
@@ -221,7 +318,7 @@ Return ONLY valid JSON with exactly these keys:
 
 NO other text. NO markdown. Just the JSON object.`;
 
-    const raw = await geminiText(captionPrompt);
+    const raw = await generateCaption(captionPrompt);
     let captionData: { caption?: string; hashtags?: string } = {};
     try { captionData = JSON.parse(raw); } catch { captionData = { caption: raw, hashtags: "" }; }
 
@@ -230,28 +327,34 @@ NO other text. NO markdown. Just the JSON object.`;
 
     // 2. Generate image (if requested)
     let imageUrl = "";
-    if (generateImage) {
-      // Fetch reference image if provided
+    let imageSource = "";
+    if (doGenImage) {
       let refBase64: string | undefined;
       let refMime: string | undefined;
-      if (referenceImageId && dbGuard(res)) {
-        const rows = await db!
-          .select()
-          .from(socialReferenceImagesTable)
-          .where(eq(socialReferenceImagesTable.id, referenceImageId))
-          .limit(1);
-        if (rows[0]) { refBase64 = rows[0].dataBase64; refMime = rows[0].mimeType; }
+      if (referenceImageId) {
+        try {
+          const rows = await db!
+            .select()
+            .from(socialReferenceImagesTable)
+            .where(eq(socialReferenceImagesTable.id, referenceImageId))
+            .limit(1);
+          if (rows[0]) { refBase64 = rows[0].dataBase64; refMime = rows[0].mimeType; }
+        } catch { /* non-fatal */ }
       }
 
-      const imagePrompt = `Professional ${platform} ${contentType} image. ${description}. 
-Tone: ${tone}. Format: ${spec.aspectRatio} ratio for ${platform} (${spec.dims}).
-High quality, platform-optimised, eye-catching, brand-safe.`;
+      const imagePrompt = `Professional ${platform} ${contentType} social media image.
+Subject/theme: ${description}.
+Tone: ${tone}.
+Format: ${spec.aspectRatio} aspect ratio optimised for ${platform} (${spec.dims}).
+Style: High quality, eye-catching, brand-safe, platform-native aesthetic.
+Do NOT include text overlays or watermarks.`;
 
       try {
-        const img = await geminiImage(imagePrompt, spec.geminiAspect, refBase64, refMime);
+        const img = await generateImage(imagePrompt, spec.bitdeerSize, spec.geminiAspect, refBase64, refMime);
         imageUrl = img.url;
+        imageSource = img.source;
       } catch (e) {
-        req.log?.warn?.({ err: e }, "image generation failed, continuing without image");
+        req.log?.warn?.({ err: e }, "[social/generate] image generation failed, continuing without image");
       }
     }
 
@@ -260,6 +363,7 @@ High quality, platform-optimised, eye-catching, brand-safe.`;
       caption,
       hashtags,
       imageUrl,
+      imageSource,
       aspectRatio: spec.aspectRatio,
       dimensions:  spec.dims,
       platform,
@@ -268,13 +372,6 @@ High quality, platform-optimised, eye-catching, brand-safe.`;
   } catch (e) {
     res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
   }
-});
-
-// ── Reference images ──────────────────────────────────────────────────────────
-const refImageSchema = z.object({
-  name: z.string().min(1).max(255),
-  mimeType: z.string().default("image/png"),
-  dataBase64: z.string().min(1), // raw base64, no data-URI prefix
 });
 
 // ── POST /social/smart-suggest — AI picks optimal platform/format/tone ────────
@@ -305,13 +402,11 @@ Return ONLY valid JSON (no markdown):
     const timeoutId = setTimeout(() => ac.abort(), 30_000);
     let r: Response;
     try {
-      r = await fetch("https://openai.helicone.ai/v1/chat/completions", {
+      r = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY ?? ""}`,
-          "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY ?? ""}`,
-          "Helicone-Property-Feature": "social-smart-suggest",
         },
         body: JSON.stringify({
           model: "gpt-4o-mini", temperature: 0.3, max_tokens: 300,
@@ -324,9 +419,9 @@ Return ONLY valid JSON (no markdown):
     }
     if (!r.ok) throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
     const j = (await r.json()) as { choices: { message: { content: string } }[] };
-    const raw = (j.choices[0]?.message?.content ?? "{}").trim()
+    const rawText = (j.choices[0]?.message?.content ?? "{}").trim()
       .replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
-    const rec = JSON.parse(raw);
+    const rec = JSON.parse(rawText);
     res.json({
       platform:     rec.platform     || currentPlatform || "instagram",
       contentType:  rec.contentType  || "reel",
@@ -335,7 +430,7 @@ Return ONLY valid JSON (no markdown):
       reasoning:    rec.reasoning    || "",
       postingTip:   rec.postingTip   || "",
     });
-  } catch (_e) {
+  } catch {
     // Keyword fallback
     const d = description.toLowerCase();
     const isVideo = /video|reel|clip|film|anim|motion|shorts/.test(d);
@@ -354,6 +449,13 @@ Return ONLY valid JSON (no markdown):
       postingTip: "",
     });
   }
+});
+
+// ── Reference images ──────────────────────────────────────────────────────────
+const refImageSchema = z.object({
+  name: z.string().min(1).max(255),
+  mimeType: z.string().default("image/png"),
+  dataBase64: z.string().min(1),
 });
 
 router.post("/social/reference-images", async (req, res) => {
@@ -396,20 +498,20 @@ router.delete("/social/reference-images/:id", async (req, res) => {
 
 // ── Scheduled posts ───────────────────────────────────────────────────────────
 const scheduleSchema = z.object({
-  platform:        z.string().min(1),
-  contentType:     z.string().min(1),
-  description:     z.string().default(""),
-  tone:            z.string().default("motivational"),
-  caption:         z.string().default(""),
-  hashtags:        z.string().default(""),
-  imageUrl:        z.string().default(""),
-  videoUrl:        z.string().default(""),
-  aspectRatio:     z.string().default("1:1"),
-  dimensions:      z.string().default("1080×1080"),
+  platform:         z.string().min(1),
+  contentType:      z.string().min(1),
+  description:      z.string().default(""),
+  tone:             z.string().default("motivational"),
+  caption:          z.string().default(""),
+  hashtags:         z.string().default(""),
+  imageUrl:         z.string().default(""),
+  videoUrl:         z.string().default(""),
+  aspectRatio:      z.string().default("1:1"),
+  dimensions:       z.string().default("1080×1080"),
   referenceImageId: z.number().int().optional(),
-  scheduledAt:     z.string().datetime().optional(), // ISO string
-  status:          z.string().default("pending"),
-  intervalHours:   z.number().int().min(1).max(12).optional(), // recurring auto-post
+  scheduledAt:      z.string().datetime().optional(),
+  status:           z.string().default("pending"),
+  intervalHours:    z.number().int().min(1).max(168).optional(),
 });
 
 router.get("/social/schedule", async (_req, res) => {
@@ -432,8 +534,6 @@ router.post("/social/schedule", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "invalid body", details: parsed.error.issues }); return; }
   try {
     const { scheduledAt, intervalHours, ...rest } = parsed.data;
-    // interval_hours was added via a raw SQL migration and is not yet in the
-    // Drizzle schema type — pass values as `any` to allow the extra column.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await db!.insert(socialScheduledPostsTable).values({
       ...rest,
@@ -476,15 +576,46 @@ router.delete("/social/schedule/:id", async (req, res) => {
   }
 });
 
-// ── POST /social/publish/:id — publish now via Composio ──────────────────────
+// ── Composio tool map & publish ───────────────────────────────────────────────
+//
+// Composio tool slugs for the Tool Router. These are verified against the
+// Composio v3.1 API.  Instagram posting is a TWO-STEP process:
+//   1. Create media container  → INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER or INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER
+//   2. Publish container       → INSTAGRAM_PUBLISH_MEDIA_CONTAINER
+//
+// The publish step uses the creation_id returned by step 1.
+//
 const COMPOSIO_TOOL_MAP: Record<string, Record<string, string>> = {
-  instagram: { post: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER", reel: "INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER", story: "INSTAGRAM_CREATE_STORIES_MEDIA_CONTAINER", portrait: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER", landscape: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER" },
+  instagram: {
+    post:      "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER",
+    portrait:  "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER",
+    landscape: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER",
+    reel:      "INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER",
+    story:     "INSTAGRAM_CREATE_STORIES_MEDIA_CONTAINER",
+  },
   twitter:   { post: "TWITTER_CREATION_OF_A_POST", square: "TWITTER_CREATION_OF_A_POST" },
   facebook:  { post: "FACEBOOK_POST_MESSAGE", story: "FACEBOOK_POST_MESSAGE" },
   linkedin:  { post: "LINKEDIN_CREATE_LINKED_IN_POST", square: "LINKEDIN_CREATE_LINKED_IN_POST" },
   tiktok:    { video: "TIKTOK_UPLOAD_VIDEO_TO_TIKTOK" },
   youtube:   { shorts: "YOUTUBE_VIDEOS_INSERT", thumbnail: "YOUTUBE_THUMBNAILS_SET" },
 };
+
+// Platforms that use Instagram's two-step container→publish flow
+const INSTAGRAM_PLATFORMS = new Set(["instagram"]);
+
+async function composioExecute(
+  port: number,
+  toolSlug: string,
+  args: Record<string, unknown>,
+): Promise<{ ok: boolean; status: number; data: unknown }> {
+  const r = await fetch(`http://127.0.0.1:${port}/api/integrations/composio/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ toolSlug, arguments: args }),
+  });
+  const data = await r.json().catch(() => ({ raw: "unparseable response" }));
+  return { ok: r.ok, status: r.status, data };
+}
 
 router.post("/social/publish/:id", async (req, res) => {
   if (!dbGuard(res)) return;
@@ -495,46 +626,146 @@ router.post("/social/publish/:id", async (req, res) => {
   if (!rows.length) { res.status(404).json({ error: "post not found" }); return; }
   const post = rows[0]!;
 
-  // Mark as publishing
+  // Validate we have a tool for this platform + content type
+  const toolSlug = COMPOSIO_TOOL_MAP[post.platform]?.[post.contentType] ?? "";
+  if (!toolSlug) {
+    const msg = `No Composio tool mapped for platform="${post.platform}" contentType="${post.contentType}"`;
+    await db!.update(socialScheduledPostsTable)
+      .set({ status: "failed", errorMessage: msg })
+      .where(eq(socialScheduledPostsTable.id, id));
+    res.status(422).json({ ok: false, error: msg });
+    return;
+  }
+
   await db!.update(socialScheduledPostsTable).set({ status: "publishing" }).where(eq(socialScheduledPostsTable.id, id));
 
-  const toolSlug = COMPOSIO_TOOL_MAP[post.platform]?.[post.contentType] ?? "";
+  const port = Number(process.env.PORT || 8080);
   const fullCaption = [post.caption, post.hashtags].filter(Boolean).join("\n\n");
 
-  const composioArgs: Record<string, unknown> = { caption: fullCaption, text: fullCaption };
-  if (post.imageUrl && !post.imageUrl.startsWith("data:")) composioArgs.image_url = post.imageUrl;
-  if (post.videoUrl) composioArgs.video_url = post.videoUrl;
-
-  const port = Number(process.env.PORT || 8080);
-  const apiKey = process.env.SUPERNOVA_API_KEY || process.env.OPENCLAW_API_KEY || "";
-
   try {
-    const cr = await fetch(`http://127.0.0.1:${port}/api/integrations/composio/execute`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({ toolSlug, arguments: composioArgs }),
-    });
-    const crData = await cr.json();
+    // Build Composio arguments — image must be a public URL for Instagram
+    // (data URLs are excluded because Instagram's API won't fetch them).
+    const hasPublicImage = post.imageUrl && !post.imageUrl.startsWith("data:");
+    const hasVideo = !!post.videoUrl;
+
+    const baseArgs: Record<string, unknown> = {
+      caption: fullCaption,
+      text: fullCaption,
+      message: fullCaption,
+      ...(hasPublicImage ? { image_url: post.imageUrl } : {}),
+      ...(hasVideo ? { video_url: post.videoUrl } : {}),
+    };
+
+    // ── Instagram two-step flow ────────────────────────────────────────────
+    if (INSTAGRAM_PLATFORMS.has(post.platform)) {
+      // Step 1: create media container
+      const step1 = await composioExecute(port, toolSlug, {
+        ...baseArgs,
+        media_type: post.contentType === "reel" ? "REELS" :
+                    post.contentType === "story" ? "STORIES" : "IMAGE",
+      });
+
+      // Extract creation_id from step 1 response (Composio wraps Composio wraps IG API)
+      const step1Data = step1.data as Record<string, unknown> | null;
+      // Try multiple paths for the creation_id
+      const creationId =
+        (step1Data as any)?.data?.id ||
+        (step1Data as any)?.result?.id ||
+        (step1Data as any)?.id ||
+        (step1Data as any)?.creation_id ||
+        (step1Data as any)?.data?.creation_id;
+
+      if (!step1.ok || !creationId) {
+        const msg = `Instagram container creation failed (step 1): ${JSON.stringify(step1Data).slice(0, 600)}`;
+        await db!.update(socialScheduledPostsTable).set({
+          status: "failed",
+          errorMessage: msg,
+          composioResult: JSON.stringify({ step: 1, toolSlug, result: step1Data }),
+        }).where(eq(socialScheduledPostsTable.id, id));
+        res.json({ ok: false, error: msg, step: 1, composioResult: step1Data, toolSlug });
+        return;
+      }
+
+      // Step 2: publish the container
+      const step2 = await composioExecute(port, "INSTAGRAM_PUBLISH_MEDIA_CONTAINER", {
+        creation_id: String(creationId),
+      });
+
+      const success = step2.ok;
+      await db!.update(socialScheduledPostsTable).set({
+        status: success ? "published" : "failed",
+        publishedAt: success ? new Date() : undefined,
+        composioResult: JSON.stringify({ step: 2, creationId, result: step2.data }),
+        errorMessage: success ? undefined : `Instagram publish failed (step 2): ${JSON.stringify(step2.data).slice(0, 500)}`,
+      }).where(eq(socialScheduledPostsTable.id, id));
+
+      res.json({ ok: success, composioResult: step2.data, toolSlug, creationId, step: 2 });
+      return;
+    }
+
+    // ── Single-step platforms (Twitter, LinkedIn, Facebook, TikTok) ───────
+    const result = await composioExecute(port, toolSlug, baseArgs);
+
     await db!.update(socialScheduledPostsTable).set({
-      status: cr.ok ? "published" : "failed",
-      publishedAt: cr.ok ? new Date() : undefined,
-      composioResult: JSON.stringify(crData),
-      errorMessage: cr.ok ? undefined : `Composio ${cr.status}: ${JSON.stringify(crData).slice(0, 500)}`,
+      status: result.ok ? "published" : "failed",
+      publishedAt: result.ok ? new Date() : undefined,
+      composioResult: JSON.stringify(result.data),
+      errorMessage: result.ok ? undefined : `Composio ${result.status}: ${JSON.stringify(result.data).slice(0, 500)}`,
     }).where(eq(socialScheduledPostsTable.id, id));
-    res.json({ ok: cr.ok, composioResult: crData, toolSlug });
+
+    res.json({ ok: result.ok, composioResult: result.data, toolSlug });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await db!.update(socialScheduledPostsTable).set({ status: "failed", errorMessage: msg }).where(eq(socialScheduledPostsTable.id, id));
+    await db!.update(socialScheduledPostsTable)
+      .set({ status: "failed", errorMessage: msg })
+      .where(eq(socialScheduledPostsTable.id, id));
     res.status(502).json({ error: msg });
   }
 });
 
-// ── GET /social/due — for the cron worker ────────────────────────────────────
-router.get("/social/due", async (req, res) => {
-  // Only internal peer key can call this
+// ── GET /social/debug — diagnostics ──────────────────────────────────────────
+router.get("/social/debug", async (_req, res) => {
+  if (!dbGuard(res)) return;
+  try {
+    // Last 5 posts with status
+    const posts = await db!
+      .select({
+        id: socialScheduledPostsTable.id,
+        platform: socialScheduledPostsTable.platform,
+        contentType: socialScheduledPostsTable.contentType,
+        status: socialScheduledPostsTable.status,
+        errorMessage: socialScheduledPostsTable.errorMessage,
+        composioResult: socialScheduledPostsTable.composioResult,
+        publishedAt: socialScheduledPostsTable.publishedAt,
+        updatedAt: socialScheduledPostsTable.updatedAt,
+      })
+      .from(socialScheduledPostsTable)
+      .orderBy(desc(socialScheduledPostsTable.updatedAt))
+      .limit(5);
+
+    // Composio status
+    const port = Number(process.env.PORT || 8080);
+    const composioStatus = await fetch(`http://127.0.0.1:${port}/api/integrations/composio/status`)
+      .then(r => r.json())
+      .catch(e => ({ error: e instanceof Error ? e.message : String(e) }));
+
+    // Image gen config
+    const imageGenConfig = {
+      bitdeer: !!process.env.BITDEER_API_KEY,
+      gemini: !!process.env.GEMINI_API_KEY,
+      openai: !!process.env.OPENAI_API_KEY,
+      primaryImageModel: "google/flash-image-2.5 (Bitdeer)",
+      fallbackImageModel: "gemini-2.0-flash-preview-image-generation",
+    };
+
+    res.json({ posts, composioStatus, imageGenConfig, toolMap: COMPOSIO_TOOL_MAP });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+// ── GET /social/due — for the embedded cron ───────────────────────────────────
+router.get("/social/due", async (_req, res) => {
   if (!dbGuard(res)) return;
   try {
     const rows = await db!

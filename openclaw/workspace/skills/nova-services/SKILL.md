@@ -200,6 +200,73 @@ Do NOT call `workspace-read` on image files (contentType starting with `image/`)
 
 Files written here are immediately visible in Robert's UI (the client merges server files with local files on next workspace open).
 
+## Social Media Posting
+
+Three commands for the full generate→publish pipeline. Image generation uses **Bitdeer `google/flash-image-2.5`** as primary (fast, returns public URL), Gemini as fallback.
+
+### `social-post` — full pipeline (generate + save + optionally publish)
+
+```bash
+# Generate + publish immediately to Instagram Reel
+node {baseDir}/nova-services.mjs social-post \
+  --platform instagram --content-type reel \
+  --description "morning routine tips for busy founders" \
+  --tone motivational --post-now
+
+# Generate + schedule for a specific time
+node {baseDir}/nova-services.mjs social-post \
+  --platform twitter --content-type post \
+  --description "new product launch announcement" \
+  --tone bold --schedule-at "2026-07-18T14:00:00Z"
+
+# Provide your own caption, skip image gen
+node {baseDir}/nova-services.mjs social-post \
+  --platform linkedin --content-type post \
+  --description "thought leadership piece" \
+  --caption "The best leaders do X..." --no-image --post-now
+```
+
+**Flags:**
+- `--platform` — instagram | twitter | facebook | linkedin | tiktok | youtube
+- `--content-type` — post | reel | story | portrait | landscape | video | shorts | thumbnail | square
+- `--description` — what the post is about (REQUIRED — drives both caption and image gen)
+- `--tone` — motivational | inspirational | educational | funny | bold | sarcastic | optimistic | professional
+- `--post-now` — publish immediately via Composio after generating
+- `--schedule-at` — ISO datetime to auto-publish at that time
+- `--no-image` — skip image generation (text-only post)
+- `--caption` — use your own caption instead of AI-generated
+- `--hashtags` — use your own hashtags
+
+Returns: `{ postId, status, generated: { caption, hashtags, imageUrl, imageSource }, composioResult }`
+
+### `social-publish` — publish a saved post by ID
+
+```bash
+node {baseDir}/nova-services.mjs social-publish --id 42
+```
+
+### `social-debug` — diagnostics (Composio status + last 5 posts + image gen config)
+
+```bash
+node {baseDir}/nova-services.mjs social-debug
+```
+
+**ALWAYS run `social-debug` first if a post fails** — it shows whether Composio is connected, the actual error from the last attempt, and which image gen models are configured.
+
+### Instagram two-step flow
+Instagram posting is automatically handled as a two-step process:
+1. Create media container (`INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER` / `INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER`)
+2. Publish container (`INSTAGRAM_PUBLISH_MEDIA_CONTAINER`)
+
+The image **must be a public URL** — data URLs are not accepted by Instagram's API. Bitdeer-generated images return public URLs. If generation falls back to Gemini (which returns base64 data URLs), the image won't be included in the Instagram post.
+
+### Composio connection check
+Before posting, verify Instagram (or the target platform) is connected:
+```bash
+node {baseDir}/nova-services.mjs composio-status
+```
+If not connected, use `composio-connect --toolkit instagram` and return the Connect Link to Robert.
+
 ## Execution rules
 
 1. Inspect the returned `ok` field and actual payload before using a result.

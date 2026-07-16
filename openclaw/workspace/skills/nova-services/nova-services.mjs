@@ -446,9 +446,115 @@ async function run(command, args) {
       });
     }
 
+    // ── Social media ──────────────────────────────────────────────────────
+    case "social-post": {
+      // Full pipeline: generate caption + image (Bitdeer primary), schedule, publish.
+      //
+      // Usage:
+      //   social-post --platform instagram --content-type reel --description "morning routine tips" --tone motivational --post-now
+      //   social-post --platform twitter --content-type post --description "new product launch" --tone bold --schedule-at "2026-07-17T10:00:00Z"
+      //   social-post --platform instagram --content-type post --description "sunset photo" --no-image --post-now
+      //
+      // Flags:
+      //   --platform         instagram | twitter | facebook | linkedin | tiktok | youtube
+      //   --content-type     post | reel | story | portrait | landscape | video | shorts | thumbnail | square
+      //   --description      what the post is about (required)
+      //   --tone             motivational | inspirational | educational | funny | bold | sarcastic | optimistic | professional
+      //   --post-now         publish immediately after generating (default: save as draft)
+      //   --schedule-at      ISO datetime to schedule the post
+      //   --no-image         skip image generation
+      //   --caption          provide your own caption (skips AI caption gen)
+      //   --hashtags         provide your own hashtags
+      //
+      const platform    = typeof args.platform     === "string" ? args.platform.toLowerCase()     : "instagram";
+      const contentType = typeof args["content-type"] === "string" ? args["content-type"].toLowerCase() : "post";
+      const description = required(args, "description");
+      const tone        = typeof args.tone         === "string" ? args.tone                        : "motivational";
+      const postNow     = args["post-now"] === true || args["post-now"] === "true";
+      const scheduleAt  = typeof args["schedule-at"] === "string" ? args["schedule-at"] : undefined;
+      const noImage     = args["no-image"] === true || args["no-image"] === "true";
+      const customCaption  = typeof args.caption  === "string" ? args.caption  : undefined;
+      const customHashtags = typeof args.hashtags === "string" ? args.hashtags : undefined;
+
+      // Step 1: Generate caption + image via the social API
+      const generated = await request("/social/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          platform, contentType, description, tone,
+          generateImage: !noImage && !customCaption,
+        }),
+        timeoutMs: 120_000,
+      });
+
+      const caption  = customCaption  ?? generated.caption  ?? "";
+      const hashtags = customHashtags ?? generated.hashtags ?? "";
+      const imageUrl = generated.imageUrl ?? "";
+
+      if (!caption && !imageUrl) {
+        throw new Error("Generation produced no caption or image — cannot post");
+      }
+
+      // Step 2: Save to schedule table
+      const scheduleBody = {
+        platform, contentType, description, tone,
+        caption, hashtags, imageUrl,
+        aspectRatio: generated.aspectRatio ?? "1:1",
+        dimensions:  generated.dimensions  ?? "1080×1080",
+        ...(scheduleAt ? { scheduledAt: scheduleAt, status: "pending" } : { status: postNow ? "pending" : "draft" }),
+      };
+      const saved = await request("/social/schedule", {
+        method: "POST",
+        body: JSON.stringify(scheduleBody),
+      });
+      const postId = saved?.post?.id;
+
+      if (!postId) {
+        return { generated, saved, warning: "Post saved but no ID returned — cannot auto-publish" };
+      }
+
+      // Step 3: Publish immediately if --post-now
+      if (postNow) {
+        const published = await request(`/social/publish/${postId}`, {
+          method: "POST",
+          timeoutMs: 60_000,
+        });
+        return {
+          generated: { caption, hashtags, imageUrl, imageSource: generated.imageSource },
+          postId,
+          published,
+          status: published.ok ? "published" : "failed",
+          composioResult: published.composioResult,
+          toolSlug: published.toolSlug,
+        };
+      }
+
+      // Step 4: Return draft/scheduled summary
+      return {
+        generated: { caption, hashtags, imageUrl, imageSource: generated.imageSource },
+        postId,
+        status: scheduleAt ? `scheduled for ${scheduleAt}` : "draft (saved)",
+        note: "Call social-publish to post now, or it will auto-publish at the scheduled time.",
+      };
+    }
+
+    case "social-publish": {
+      // Publish a saved post by ID.
+      // Usage: social-publish --id 42
+      const postId = required(args, "id");
+      return request(`/social/publish/${encodeURIComponent(postId)}`, {
+        method: "POST",
+        timeoutMs: 60_000,
+      });
+    }
+
+    case "social-debug": {
+      // Show Composio status, last 5 posts, and image gen config.
+      return request("/social/debug");
+    }
+
     default:
       throw new Error(
-        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, image-generate, video-avatar, video-from-image, video-status, video-list, workspace-list, workspace-read, workspace-write, workspace-delete, workspace-view-image",
+        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, image-generate, video-avatar, video-from-image, video-status, video-list, workspace-list, workspace-read, workspace-write, workspace-delete, workspace-view-image, social-post, social-publish, social-debug",
       );
   }
 }
