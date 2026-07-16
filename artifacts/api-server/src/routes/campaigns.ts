@@ -30,6 +30,7 @@ import {
   generateCaption,
   researchCampaignStrategy,
   pickVariationAngle,
+  saveToPicturesWorkspace,
   type CampaignStrategy,
 } from "../lib/social-ai";
 
@@ -174,6 +175,8 @@ Do NOT include text overlays or watermarks.`;
     const img = await generateImage(imagePrompt, spec.bitdeerSize, spec.geminiAspect);
     imageUrl = img.url;
     imageSource = img.source;
+    // Save to Pictures workspace so the user can browse all generated images
+    void saveToPicturesWorkspace(imageUrl, platform, contentType);
   } catch { /* non-fatal — post without image */ }
 
   return { caption, hashtags, imageUrl, imageSource, aspectRatio: spec.aspectRatio, dimensions: spec.dimensions, variationAngle };

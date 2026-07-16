@@ -12,7 +12,7 @@
 import { db, hasDatabase, socialScheduledPostsTable } from "@workspace/db";
 import { and, eq, lte } from "drizzle-orm";
 import { logger } from "./lib/logger";
-import { generateCaption, generateImage, pickVariationAngle } from "./lib/social-ai";
+import { generateCaption, generateImage, pickVariationAngle, saveToPicturesWorkspace } from "./lib/social-ai";
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -74,6 +74,8 @@ Do NOT include text overlays or watermarks.`;
     try {
       const img = await generateImage(imagePrompt, spec.bitdeerSize, spec.geminiAspect);
       imageUrl = img.url;
+      // Save to Pictures workspace (fire-and-forget)
+      void saveToPicturesWorkspace(imageUrl, platform, contentType);
     } catch { /* non-fatal — post without image */ }
 
     return { caption, hashtags, imageUrl };

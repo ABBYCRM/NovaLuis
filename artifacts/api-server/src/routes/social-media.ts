@@ -21,6 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, hasDatabase, socialScheduledPostsTable, socialReferenceImagesTable } from "@workspace/db";
 import { eq, desc, and, lte } from "drizzle-orm";
+import { saveToPicturesWorkspace } from "../lib/social-ai";
 
 const router = Router();
 
@@ -353,6 +354,8 @@ Do NOT include text overlays or watermarks.`;
         const img = await generateImage(imagePrompt, spec.bitdeerSize, spec.geminiAspect, refBase64, refMime);
         imageUrl = img.url;
         imageSource = img.source;
+        // Save every generated image to the Pictures workspace (fire-and-forget)
+        void saveToPicturesWorkspace(imageUrl, platform, contentType);
       } catch (e) {
         req.log?.warn?.({ err: e }, "[social/generate] image generation failed, continuing without image");
       }

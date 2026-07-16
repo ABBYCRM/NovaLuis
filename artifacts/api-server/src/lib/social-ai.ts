@@ -2,13 +2,15 @@
  * Shared AI functions for social media content generation.
  * Used by both social-media routes and campaign routes.
  *
- * - bitdeerImage()        : PRIMARY image gen via Bitdeer google/flash-image-2.5
- * - geminiImage()         : FALLBACK image gen (handles reference images)
- * - generateImage()       : orchestrates primary + fallback
- * - generateCaption()     : caption + hashtags via OpenAI / Gemini
- * - researchStrategy()    : web search (Tavily → Exa fallback) + AI synthesis
- * - buildVariationPrompt(): ensures every auto-post for the same subject is unique
+ * - bitdeerImage()              : PRIMARY image gen via Bitdeer google/flash-image-2.5
+ * - geminiImage()               : FALLBACK image gen (handles reference images)
+ * - generateImage()             : orchestrates primary + fallback
+ * - generateCaption()           : caption + hashtags via OpenAI / Gemini
+ * - saveToPicturesWorkspace()   : saves every generated image to the Pictures workspace
+ * - researchStrategy()          : web search (Tavily → Exa fallback) + AI synthesis
+ * - buildVariationPrompt()      : ensures every auto-post for the same subject is unique
  */
+import { db, hasDatabase, workspaceFilesTable } from "@workspace/db";
 
 // ── Image generation ──────────────────────────────────────────────────────────
 
@@ -127,6 +129,60 @@ export async function generateImage(
         `Image generation failed. Bitdeer: ${bitdeerErr instanceof Error ? bitdeerErr.message : bitdeerErr}. Gemini: ${geminiErr instanceof Error ? geminiErr.message : geminiErr}`,
       );
     }
+  }
+}
+
+// ── Save to Pictures workspace ────────────────────────────────────────────────
+/**
+ * After any social media image is generated, save it to the "pictures" workspace
+ * so the user can browse, reuse, and reference it from the Workspaces panel.
+ *
+ * Handles both Bitdeer public URLs (fetches + converts to base64) and
+ * Gemini data-URLs (strips prefix). Fails silently — never blocks the caller.
+ *
+ * Filename: social-{platform}-{contentType}-{ISO timestamp}.{ext}
+ */
+export async function saveToPicturesWorkspace(
+  imageUrl: string,
+  platform: string,
+  contentType: string,
+): Promise<{ saved: boolean; filename?: string }> {
+  if (!hasDatabase || !db || !imageUrl) return { saved: false };
+  try {
+    let base64Data: string;
+    let mimeType = "image/png";
+
+    if (imageUrl.startsWith("data:")) {
+      const match = imageUrl.match(/^data:([^;]+);base64,(.+)$/s);
+      if (!match) return { saved: false };
+      mimeType = match[1]!;
+      base64Data = match[2]!;
+    } else if (imageUrl.startsWith("http")) {
+      const r = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) });
+      if (!r.ok) return { saved: false };
+      const buf = Buffer.from(await r.arrayBuffer());
+      base64Data = buf.toString("base64");
+      const ct = r.headers.get("content-type");
+      if (ct) mimeType = ct.split(";")[0]!.trim();
+    } else {
+      return { saved: false };
+    }
+
+    const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const filename = `social-${platform}-${contentType}-${ts}.${ext}`;
+
+    await db
+      .insert(workspaceFilesTable)
+      .values({ workspace: "pictures", filename, content: base64Data, contentType: mimeType })
+      .onConflictDoUpdate({
+        target: [workspaceFilesTable.workspace, workspaceFilesTable.filename],
+        set: { content: base64Data, contentType: mimeType },
+      });
+
+    return { saved: true, filename };
+  } catch {
+    return { saved: false };
   }
 }
 
