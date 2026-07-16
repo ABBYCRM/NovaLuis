@@ -658,10 +658,162 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 .sm-spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 0.7s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
+/* ── Social Media panel — mobile (≤700px) ──────────────────────────────── */
 @media (max-width:700px) {
-  .sm-panel { max-width:100%; }
-  .sm-left { width:140px; }
-  .sm-preview-img-wrap img { max-height:380px; }
+
+  /* Full-height bottom sheet — slides up from the bottom edge */
+  .sm-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .sm-panel {
+    max-width: 100%;
+    width: 100%;
+    height: 96dvh;
+    border-radius: 20px 20px 0 0;
+    border-left: none;
+    border-right: none;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Stack body vertically so the right pane gets full width */
+  .sm-body {
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Platform + type sidebar → horizontal scrolling pill strip */
+  .sm-left {
+    width: 100%;
+    min-width: 0;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 12px;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .sm-left::-webkit-scrollbar { display: none; }
+
+  /* Section titles become dividers between pill groups */
+  .sm-section-title {
+    display: none;
+  }
+
+  /* Platform buttons → compact horizontal pills */
+  .sm-platform-btn {
+    flex-shrink: 0;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    white-space: nowrap;
+    font-size: 0.78rem;
+    gap: 6px;
+  }
+  .sm-platform-btn.active {
+    background: var(--accent-dim);
+    border-color: rgba(249,115,22,0.45);
+    color: var(--text);
+  }
+
+  /* Thin vertical separator between Platform and Type pill groups */
+  #sm-type-list {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    padding-left: 8px;
+    margin-left: 2px;
+  }
+  .sm-type-btn {
+    flex-shrink: 0;
+    padding: 5px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    white-space: nowrap;
+    font-size: 0.74rem;
+    justify-content: center;
+  }
+  .sm-type-btn.active {
+    background: var(--accent-dim);
+    border-color: rgba(249,115,22,0.45);
+    color: var(--accent);
+  }
+  .sm-type-dims { display: none; }
+
+  /* Specs box (dimensions) is redundant in compact mode */
+  #sm-specs-box { display: none; }
+
+  /* Right area fills all remaining vertical space */
+  .sm-right { flex: 1; min-height: 0; overflow: hidden; }
+
+  /* Pane scroll area — reduced padding + safe-area bottom gap */
+  .sm-pane { padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); }
+
+  /* ── Image preview: full width, NO height cap ──────────────────────────
+     The image must be fully visible — remove the 380px cap entirely.
+     The pane scrolls, so any height works. */
+  .sm-preview-img-wrap {
+    background: var(--bg);
+    border-radius: 0;
+  }
+  .sm-preview-img-wrap img {
+    max-height: none !important;
+    width: 100%;
+    height: auto;
+    display: block;
+    object-fit: contain;
+  }
+
+  /* Preview card fills full width */
+  .sm-preview-card {
+    border-radius: 10px;
+    margin: 0;
+  }
+
+  /* Action buttons: stack vertically and use full width on very small screens */
+  .sm-preview-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sm-btn-primary, .sm-btn-secondary {
+    width: 100%;
+    justify-content: center;
+    font-size: 0.84rem;
+    padding: 11px 16px;
+  }
+  #sm-post-btn { margin-left: 0 !important; }
+
+  /* Generate button: full width */
+  .sm-gen-row { flex-direction: column; align-items: stretch; }
+  .sm-gen-row .sm-btn-primary { width: 100%; justify-content: center; }
+
+  /* Header: tighten up */
+  .sm-header { padding: 12px 14px; }
+  .sm-header h2 { font-size: 0.92rem; }
+
+  /* Tabs: equal width */
+  .sm-tabs { padding: 0; }
+  .sm-tab { flex: 1; text-align: center; padding: 10px 8px; font-size: 0.82rem; }
+
+  /* Fields */
+  .sm-desc { font-size: 0.85rem; min-height: 64px; }
+  .sm-chips { gap: 5px; }
+  .sm-chip { font-size: 0.74rem; padding: 5px 10px; }
+  .sm-field-label { font-size: 0.72rem; }
+
+  /* Scheduled post cards */
+  .sm-post-card { flex-direction: column; gap: 8px; }
+  .sm-post-thumb { width: 100%; height: 160px; border-radius: 8px; }
 }
 
 /* ── Main Area ──────────────────────────────────────────────────────────── */
