@@ -1,0 +1,4 @@
+DigitalOcean production deployment requested.
+Requested at: 2026-07-16T19:14:46Z
+Target code head before trigger: 15f4ddff680251281ed2f3e97254d09861bf4efe
+Reason: deploy Instagram publishing repairs and verification pipeline.
