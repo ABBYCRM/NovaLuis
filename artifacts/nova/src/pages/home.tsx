@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "wouter";
-import { Send, Loader2, Zap, RotateCcw, Bookmark, Settings, X, Check } from "lucide-react";
+import { Send, Loader2, Zap, RotateCcw, Bookmark, Settings, X, Check, Copy, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,18 +20,52 @@ interface ModelOption {
 }
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+const USER_ID_KEY = "nova-user-id";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+/** Generate a random user ID or load an existing one from localStorage. */
+function getOrCreateUserId(): string {
+  try {
+    const stored = localStorage.getItem(USER_ID_KEY);
+    if (stored && stored.length >= 4 && /^[a-zA-Z0-9_-]+$/.test(stored)) {
+      return stored;
+    }
+    // Generate a new 16-char ID
+    const newId = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, 16);
+    localStorage.setItem(USER_ID_KEY, newId);
+    return newId;
+  } catch {
+    // localStorage unavailable (private mode etc.) — use a session-only ID
+    return uid() + uid();
+  }
+}
+
+function saveUserId(id: string) {
+  try {
+    localStorage.setItem(USER_ID_KEY, id);
+  } catch {
+    // ignore
+  }
+}
+
 async function* streamChat(
   messages: { role: string; content: string }[],
   signal: AbortSignal,
+  userId: string,
 ): AsyncGenerator<string> {
   const res = await fetch(`${BASE}/api/v1/chat/completions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      "X-Nova-User-Id": userId,
+    },
     body: JSON.stringify({ model: "openclaw/default", messages, stream: true }),
     signal,
   });
@@ -133,6 +167,8 @@ interface SettingsPanelProps {
   modelOptions: ModelOption[];
   onSelectProvider: (id: string) => void;
   saving: boolean;
+  userId: string;
+  onChangeUserId: (id: string) => void;
 }
 
 function SettingsPanel({
@@ -142,8 +178,34 @@ function SettingsPanel({
   modelOptions,
   onSelectProvider,
   saving,
+  userId,
+  onChangeUserId,
 }: SettingsPanelProps) {
-  // Trap clicks on the overlay backdrop
+  const [copied, setCopied] = useState(false);
+  const [editingId, setEditingId] = useState(false);
+  const [draftId, setDraftId] = useState(userId);
+
+  // Sync draft when userId changes externally
+  useEffect(() => { setDraftId(userId); }, [userId]);
+
+  const copyId = async () => {
+    try {
+      await navigator.clipboard.writeText(userId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  };
+
+  const applyId = () => {
+    const trimmed = draftId.trim();
+    if (trimmed.length >= 4 && /^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+      onChangeUserId(trimmed);
+      setEditingId(false);
+    }
+  };
+
   if (!open) return null;
   return (
     <>
@@ -169,44 +231,108 @@ function SettingsPanel({
         </div>
 
         {/* Panel body */}
-        <div className="flex-1 overflow-y-auto px-5 py-5">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-            Inference Provider
-          </p>
-          <p className="text-xs text-gray-400 mb-4">
-            Choose which AI provider Nova uses for chat. Takes effect on the next message.
-          </p>
-          <div className="space-y-2">
-            {modelOptions.map((opt) => {
-              const active = opt.id === modelPreference;
-              return (
-                <button
-                  key={opt.id}
-                  onClick={() => onSelectProvider(opt.id)}
-                  disabled={saving}
-                  className={[
-                    "w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all",
-                    active
-                      ? "border-indigo-400 bg-indigo-50 ring-1 ring-indigo-300"
-                      : "border-gray-200 hover:border-indigo-200 hover:bg-gray-50",
-                    saving ? "opacity-60 cursor-wait" : "cursor-pointer",
-                  ].join(" ")}
-                >
-                  <div>
-                    <p className={`text-sm font-medium ${active ? "text-indigo-700" : "text-gray-800"}`}>
-                      {opt.label}
-                    </p>
-                    <p className="text-[11px] text-gray-400 mt-0.5 font-mono">{opt.model}</p>
-                  </div>
-                  {active && (
-                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center">
-                      <Check className="w-3 h-3 text-white" />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-7">
+
+          {/* ── Session sync ─────────────────────────────────────── */}
+          <section>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+              Session Sync
+            </p>
+            <p className="text-xs text-gray-400 mb-3">
+              Your session ID links conversations across devices. Copy it to your phone or PC and paste it below to see the same history everywhere.
+            </p>
+
+            {/* Current ID display */}
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+              <span className="flex-1 text-xs font-mono text-gray-700 truncate select-all">
+                {userId}
+              </span>
+              <button
+                onClick={copyId}
+                title="Copy session ID"
+                className="flex-shrink-0 p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-indigo-600 transition-colors"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+
+            {/* Change / sync ID */}
+            {editingId ? (
+              <div className="mt-2 space-y-2">
+                <input
+                  value={draftId}
+                  onChange={(e) => setDraftId(e.target.value)}
+                  placeholder="Paste session ID from another device"
+                  className="w-full text-xs font-mono border border-indigo-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === "Enter") applyId(); if (e.key === "Escape") { setEditingId(false); setDraftId(userId); } }}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={applyId}
+                    className="flex-1 text-xs bg-indigo-600 text-white rounded-lg py-1.5 hover:bg-indigo-700 transition-colors"
+                  >
+                    Apply &amp; reload history
+                  </button>
+                  <button
+                    onClick={() => { setEditingId(false); setDraftId(userId); }}
+                    className="text-xs px-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setEditingId(true)}
+                className="mt-2 w-full text-xs flex items-center justify-center gap-1.5 text-indigo-600 hover:text-indigo-800 transition-colors py-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Use a different session ID
+              </button>
+            )}
+          </section>
+
+          {/* ── Inference provider ──────────────────────────────── */}
+          <section>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+              Inference Provider
+            </p>
+            <p className="text-xs text-gray-400 mb-3">
+              Choose which AI provider Nova uses for chat. Takes effect on the next message.
+            </p>
+            <div className="space-y-2">
+              {modelOptions.map((opt) => {
+                const active = opt.id === modelPreference;
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => onSelectProvider(opt.id)}
+                    disabled={saving}
+                    className={[
+                      "w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all",
+                      active
+                        ? "border-indigo-400 bg-indigo-50 ring-1 ring-indigo-300"
+                        : "border-gray-200 hover:border-indigo-200 hover:bg-gray-50",
+                      saving ? "opacity-60 cursor-wait" : "cursor-pointer",
+                    ].join(" ")}
+                  >
+                    <div>
+                      <p className={`text-sm font-medium ${active ? "text-indigo-700" : "text-gray-800"}`}>
+                        {opt.label}
+                      </p>
+                      <p className="text-[11px] text-gray-400 mt-0.5 font-mono">{opt.model}</p>
+                    </div>
+                    {active && (
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center">
+                        <Check className="w-3 h-3 text-white" />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
         </div>
 
         {/* Panel footer */}
@@ -223,7 +349,9 @@ function SettingsPanel({
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function Home() {
+  const [userId, setUserId] = useState<string>(() => getOrCreateUserId());
   const [messages, setMessages] = useState<Message[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -237,7 +365,7 @@ export default function Home() {
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [savingModel, setSavingModel] = useState(false);
 
-  // Load config (model preference + options) on mount
+  // ── Load config (model preference + options) on mount ────────────────────
   useEffect(() => {
     fetch(`${BASE}/api/nova-config`)
       .then((r) => r.json())
@@ -245,8 +373,36 @@ export default function Home() {
         if (cfg.modelPreference) setModelPreference(cfg.modelPreference);
         if (Array.isArray(cfg.modelOptions)) setModelOptions(cfg.modelOptions);
       })
-      .catch(() => {/* non-fatal: UI still works */});
+      .catch(() => {/* non-fatal */});
   }, []);
+
+  // ── Load session history from server on mount (or when userId changes) ───
+  useEffect(() => {
+    setHistoryLoaded(false);
+    setMessages([]);
+    fetch(`${BASE}/api/sessions/history?userId=${encodeURIComponent(userId)}&limit=60`)
+      .then((r) => r.json())
+      .then((data: { turns?: { userText: string; assistantText: string }[] }) => {
+        if (!Array.isArray(data.turns) || data.turns.length === 0) return;
+        const restored: Message[] = [];
+        for (const turn of data.turns) {
+          if (turn.userText?.trim()) {
+            restored.push({ id: uid(), role: "user", content: turn.userText });
+          }
+          if (turn.assistantText?.trim()) {
+            restored.push({ id: uid(), role: "assistant", content: turn.assistantText });
+          }
+        }
+        setMessages(restored);
+      })
+      .catch(() => {/* non-fatal: start with empty slate */})
+      .finally(() => setHistoryLoaded(true));
+  }, [userId]);
+
+  // ── Auto-scroll on new content ────────────────────────────────────────────
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const handleSelectProvider = useCallback(async (id: string) => {
     if (id === modelPreference || savingModel) return;
@@ -268,10 +424,13 @@ export default function Home() {
     }
   }, [modelPreference, savingModel]);
 
-  // Auto-scroll on new content
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  // ── Change session ID (called from Settings panel) ────────────────────────
+  const handleChangeUserId = useCallback((newId: string) => {
+    saveUserId(newId);
+    setUserId(newId);
+    setShowSettings(false);
+    // History reload is triggered by the userId useEffect above
+  }, []);
 
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -297,7 +456,7 @@ export default function Home() {
     abortRef.current = ctrl;
 
     try {
-      for await (const token of streamChat(history, ctrl.signal)) {
+      for await (const token of streamChat(history, ctrl.signal, userId)) {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId ? { ...m, content: m.content + token } : m,
@@ -318,7 +477,7 @@ export default function Home() {
       setLoading(false);
       abortRef.current = null;
     }
-  }, [messages, loading]);
+  }, [messages, loading, userId]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -383,7 +542,15 @@ export default function Home() {
       <ScrollArea className="flex-1 min-h-0">
         <div className="max-w-3xl mx-auto px-4 py-6">
           {messages.length === 0 ? (
-            <EmptyState />
+            historyLoaded ? (
+              <EmptyState />
+            ) : (
+              /* Loading skeleton while fetching history */
+              <div className="flex flex-col items-center justify-center h-full gap-3 pb-16 px-6">
+                <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+                <p className="text-xs text-gray-400">Loading your conversation history…</p>
+              </div>
+            )
           ) : (
             messages.map((m) =>
               m.role === "user" ? (
@@ -453,6 +620,8 @@ export default function Home() {
         modelOptions={modelOptions}
         onSelectProvider={handleSelectProvider}
         saving={savingModel}
+        userId={userId}
+        onChangeUserId={handleChangeUserId}
       />
     </div>
   );

@@ -192,7 +192,16 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
   }
 
   const messages = incoming.messages as ChatMessage[];
-  const conversationKey = conversationKeyFor(messages) ?? "nova-chat-default";
+
+  // Stable user identity sent by the Nova client as X-Nova-User-Id.
+  // Scoping the conversationKey to the userId means history from one user
+  // never bleeds into another and history can be queried by userId prefix.
+  const rawUserId = String(req.headers["x-nova-user-id"] ?? "").trim().slice(0, 64);
+  const userId = /^[a-zA-Z0-9_-]+$/.test(rawUserId) ? rawUserId : "";
+
+  const baseKey = conversationKeyFor(messages) ?? "nova-chat-default";
+  const conversationKey = userId ? `${userId}:${baseKey}` : baseKey;
+
   const userText = lastUserText(messages);
   const stream = incoming.stream !== false;
 

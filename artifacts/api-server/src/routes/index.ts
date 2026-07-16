@@ -21,6 +21,7 @@ import githubScenariosRouter from "./github-scenarios";
 import composioScenariosRouter from "./composio-scenarios";
 import firecrawlSteelScenariosRouter from "./firecrawl-steel-scenarios";
 import capabilitiesRouter from "./capabilities";
+import sessionsRouter from "./sessions";
 const router: IRouter = Router();
 
 router.use(healthRouter);
@@ -43,6 +44,7 @@ router.use(composioScenariosRouter);
 router.use(firecrawlSteelScenariosRouter);
 // Browser chat uses the OpenClaw agent loop. OpenClaw's own model provider still
 // calls /v1/* below, keeping the agent endpoint and raw inference endpoint separate.
+router.use(sessionsRouter);
 router.use(agentChatRouter);
 router.use(openaiProxyRouter);
 router.use("/skills", skillsRouter);
