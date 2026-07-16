@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import instagramPublishRouter from "./routes/instagram-publish";
 import { logger } from "./lib/logger";
 import "./lib/vector-memory-fetch-hook";
 
@@ -32,6 +33,21 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Instagram publishing is mounted at the application boundary, before the
+// legacy aggregate router. This guarantees POST /api/social/publish/:id reaches
+// the durable-media/two-step publisher and cannot fall through to the older
+// social-media.ts implementation that removes data: images and sends no
+// image_url. The response marker makes the active production path observable.
+app.use(
+  "/api",
+  (req, res, next) => {
+    if (req.method === "POST" && /^\/social\/publish\/\d+$/.test(req.path)) {
+      res.setHeader("X-Nova-Instagram-Publisher", "hardened-v3");
+    }
+    next();
+  },
+  instagramPublishRouter,
+);
 app.use("/api", router);
 
 // In production (Railway etc), serve the Nova UI as static files.
