@@ -1652,13 +1652,27 @@ function renderEmptyState() {
   const div = document.createElement('div');
   div.id = 'empty-state';
   div.innerHTML = `
-    <div class="es-logo">B</div>
+    <div class="es-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px">
+        <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+        <line x1="12" y1="2" x2="12" y2="6"/>
+        <line x1="12" y1="18" x2="12" y2="22"/>
+        <line x1="2" y1="12" x2="6" y2="12"/>
+        <line x1="18" y1="12" x2="22" y2="12"/>
+        <line x1="4.9" y1="4.9" x2="7.5" y2="7.5"/>
+        <line x1="16.5" y1="16.5" x2="19.1" y2="19.1"/>
+        <line x1="4.9" y1="19.1" x2="7.5" y2="16.5"/>
+        <line x1="16.5" y1="7.5" x2="19.1" y2="4.9"/>
+      </svg>
+    </div>
     <div class="es-title">Hello, I'm NOVA.</div>
-    <div class="es-sub">Your direct, sharp, evidence-driven AI assistant. What can I help you with today?</div>
+    <div class="es-sub">Your direct, sharp, evidence-driven AI assistant.<br>What can I help you with today?</div>
     <div class="prompt-chips">
+      <div class="chip">Post to my social media</div>
+      <div class="chip">Search the web for…</div>
+      <div class="chip">Screenshot a website</div>
+      <div class="chip">Help with my health plan</div>
       <div class="chip">What can you do?</div>
-      <div class="chip">Tell me about yourself</div>
-      <div class="chip">Help me think through a problem</div>
       <div class="chip">Write me something</div>
     </div>
   `;
@@ -1684,7 +1698,7 @@ function appendMessageEl(msg, isStreaming) {
 
   if (isUser) {
     row.innerHTML = `
-      <div class="avatar user-avatar">R</div>
+      <div class="avatar user-avatar"><svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
       <div class="msg-body">
         <div class="bubble">${escHtml(msg.content)}</div>
         <div class="msg-meta">
@@ -1704,7 +1718,7 @@ function appendMessageEl(msg, isStreaming) {
     });
   } else {
     row.innerHTML = `
-      <div class="avatar">B</div>
+      <div class="avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><circle cx="12" cy="12" r="2.5" fill="currentColor"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="7.5" y2="7.5"/><line x1="16.5" y1="16.5" x2="19.1" y2="19.1"/><line x1="4.9" y1="19.1" x2="7.5" y2="16.5"/><line x1="16.5" y1="7.5" x2="19.1" y2="4.9"/></svg></div>
       <div class="msg-body">
         <div class="bubble">
           <div class="md-content">${isStreaming ? '' : renderMarkdown(msg.content)}</div>

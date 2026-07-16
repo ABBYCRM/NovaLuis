@@ -61,7 +61,19 @@ body {
   height: 100%;
   height: 100dvh;
   overflow: hidden;
+  /* iOS safe areas */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
+
+/* Eliminate 300ms tap delay on all interactive elements */
+button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
+  touch-action: manipulation;
+}
+
+/* Prevent text size inflation on iOS rotation */
+* { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* ── Nova ambient background (the lady) ─────────────────────────────────────
    Fixed, non-interactive layer sitting behind all content (z-index:-1) so the
@@ -95,6 +107,8 @@ body {
   height: 100%;
   transition: transform 0.25s ease;
   z-index: 100;
+  /* iOS safe area on left when sidebar is open full-screen */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .sidebar-header {
@@ -223,7 +237,7 @@ body {
   color: var(--text); border-radius: 8px; cursor: pointer; font-size: 0.88rem;
 }
 #ws-pwgate-submit { background: var(--accent); border-color: var(--accent); color: white; }
-#ws-pwgate-submit:hover { background: #7c5cff; }
+#ws-pwgate-submit:hover { filter: brightness(1.1); }
 .ws-error { color: var(--danger); font-size: 0.82rem; }
 .ws-muted { color: var(--muted); font-size: 0.82rem; line-height: 1.5; }
 .ws-tiny { font-size: 0.72rem; line-height: 1.5; margin-top: 4px; }
@@ -701,13 +715,18 @@ body {
   text-align: center; gap: 16px; min-height: 300px;
 }
 .es-logo {
-  width: 72px; height: 72px;
+  width: 76px; height: 76px;
   background: var(--spark);
-  border-radius: 22px;
+  border-radius: 24px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 1.9rem; font-weight: 800; color: #fff;
+  color: #fff;
   margin-bottom: 8px;
   box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 18px 44px -8px var(--glow);
+  animation: logoPulse 3s ease-in-out infinite;
+}
+@keyframes logoPulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 18px 44px -8px var(--glow); }
+  50% { box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 18px 60px -4px var(--glow); }
 }
 .es-title {
   font-size: 2rem; font-weight: 500; letter-spacing: -0.01em; color: var(--text);
@@ -866,7 +885,7 @@ body {
 
 /* ── Input Bar ──────────────────────────────────────────────────────────── */
 #input-area {
-  padding: 12px 20px 18px;
+  padding: 12px 20px calc(18px + env(safe-area-inset-bottom));
   background: linear-gradient(180deg, transparent, var(--bg) 42%);
   border-top: 1px solid transparent;
   flex-shrink: 0;
@@ -885,8 +904,8 @@ body {
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 #input-bar:focus-within {
-  border-color: rgba(66,133,244,0.55);
-  box-shadow: 0 0 0 2px rgba(66,133,244,0.18);
+  border-color: rgba(249,115,22,0.55);
+  box-shadow: 0 0 0 2px rgba(249,115,22,0.15);
 }
 
 #user-input {
@@ -1005,7 +1024,7 @@ body {
   color: #fff; font-size: 0.88rem; font-weight: 600; cursor: pointer;
   transition: background 0.12s; align-self: flex-end;
 }
-#save-settings-btn:hover { background: #7c5cff; }
+#save-settings-btn:hover { filter: brightness(1.1); }
 /* Gateway fields */
 #gateway-fields { display: none; flex-direction: column; gap: 12px; }
 #gateway-fields.visible { display: flex; }
@@ -1102,14 +1121,15 @@ body {
   .msg-body { max-width: calc(100% - 42px); }
 
   /* Empty state: scale down for small screens */
-  .es-logo { width: 56px; height: 56px; font-size: 1.5rem; border-radius: 18px; }
+  .es-logo { width: 60px; height: 60px; border-radius: 18px; }
+  .es-logo svg { width: 28px; height: 28px; }
   .es-title { font-size: 1.3rem; }
   .es-sub { font-size: 0.82rem; }
   .chip { padding: 7px 12px; font-size: 0.78rem; }
-  .prompt-chips { gap: 6px; }
+  .prompt-chips { gap: 6px; max-width: 360px; }
 
-  /* Input bar */
-  #input-area { padding: 8px 8px 16px; }
+  /* Input bar — include safe area for iPhone home indicator */
+  #input-area { padding: 8px 8px calc(16px + env(safe-area-inset-bottom)); }
   #input-inner { gap: 6px; }
   #input-bar { padding: 6px 8px; gap: 6px; border-radius: 14px; }
   #user-input { font-size: 16px; }  /* Prevents iOS auto-zoom */
@@ -1155,6 +1175,7 @@ body {
 @media (max-width: 380px) {
   .es-title { font-size: 1.15rem; }
   .es-sub { display: none; }
+  .prompt-chips { max-width: 300px; }
   .header-title { max-width: 30vw; }
   .bar-btn { width: 40px; height: 40px; }
   #attach-btn, #mic-btn, #tts-btn, #stop-btn, #send-btn { width: 40px; height: 40px; }
@@ -1165,7 +1186,8 @@ body {
   #chat-inner { padding: 8px 0 64px; }
   #input-area { padding: 6px 12px 8px; }
   #header { padding: 4px 12px; }
-  .es-logo { width: 44px; height: 44px; font-size: 1.2rem; }
+  .es-logo { width: 44px; height: 44px; border-radius: 14px; }
+  .es-logo svg { width: 22px; height: 22px; }
   .es-title { font-size: 1.1rem; }
   #empty-state { gap: 8px; padding: 20px 16px; }
 }
