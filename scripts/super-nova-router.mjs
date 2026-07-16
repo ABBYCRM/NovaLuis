@@ -199,7 +199,7 @@ export async function chatComplete({
   role = "executor",
   messages,
   model,
-  maxTokens = 1500,
+  maxTokens = 16384,
   temperature,
   timeoutMs = 120_000,
   tools,

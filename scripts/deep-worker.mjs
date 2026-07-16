@@ -109,7 +109,7 @@ async function callModel(prompt, systemPrompt, model, maxTokens) {
       { role: "system", content: systemPrompt || "You are a reasoning subagent for NOVA, the personal AI assistant to Robert Matthews. Robert dispatched this task to you because it needs deeper thought than the primary chat model can provide on the live conversation timeline. Reason carefully, produce a complete answer, and cite sources you used internally if relevant. Output the final answer only; no commentary about the dispatch process." },
       { role: "user", content: prompt }
     ],
-    max_tokens: maxTokens || 8192,
+    max_tokens: maxTokens || 32768,
     temperature: 0.1,
     top_p: 1.0,
     stream: false
@@ -160,7 +160,7 @@ async function callModelWithWebSearch(prompt, systemPrompt, maxTokens) {
       { role: "system", content: systemPrompt || DEFAULT_SYSTEM },
       { role: "user",   content: prompt }
     ],
-    max_output_tokens: maxTokens || 8192,
+    max_output_tokens: maxTokens || 16384,
   };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
@@ -211,7 +211,7 @@ async function callModelWithCodeInterpreter(prompt, systemPrompt, maxTokens) {
       { role: "system", content: systemPrompt || DEFAULT_SYSTEM },
       { role: "user",   content: prompt },
     ],
-    max_output_tokens: maxTokens || 8192,
+    max_output_tokens: maxTokens || 16384,
   };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
@@ -254,7 +254,7 @@ async function callModelWithHostedShell(prompt, systemPrompt, maxTokens) {
       { role: "system", content: systemPrompt || DEFAULT_SYSTEM },
       { role: "user",   content: prompt },
     ],
-    max_output_tokens: maxTokens || 8192,
+    max_output_tokens: maxTokens || 16384,
   };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);

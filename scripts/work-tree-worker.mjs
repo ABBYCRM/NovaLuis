@@ -436,7 +436,7 @@ async function incrementRunsToday() {
 // Callers that don't pass tools receive the backward-compatible string.
 async function chatCompletion({
   messages,
-  maxTokens = 1500,
+  maxTokens = 16384,
   temperature = 0.3,
   model,
   role = "planner",
@@ -450,7 +450,7 @@ async function chatCompletion({
 async function callLLM({
   system,
   user,
-  maxTokens = 1500,
+  maxTokens = 16384,
   temperature = 0.3,
   model,
   role = "planner",
@@ -665,7 +665,7 @@ async function decompose(run, nodes, node) {
     system,
     user,
     model: run.model,
-    maxTokens: 1200,
+    maxTokens: 16384,
     temperature: 0.3,
   });
   let children = [];
@@ -779,7 +779,7 @@ async function executeTerminal(run, nodes, node, priorIssues, role = "executor")
     const response = await chatCompletion({
       messages,
       model: run.model,
-      maxTokens: 4000,
+      maxTokens: 16384,
       temperature: 0.4,
       role,
       tools: nativeTools,
@@ -941,7 +941,7 @@ async function executeTerminal(run, nodes, node, priorIssues, role = "executor")
   const raw = await chatCompletion({
     messages,
     model: run.model,
-    maxTokens: 6000,
+    maxTokens: 16384,
     temperature: 0.4,
     role,
   });
@@ -984,7 +984,7 @@ async function verify(run, node, result) {
     system,
     user,
     model: run.model,
-    maxTokens: 500,
+    maxTokens: 16384,
     temperature: 0,
     role: "critic",
   });
@@ -1136,7 +1136,7 @@ async function synthesizeReport(run, nodes) {
       system,
       user,
       model: run.model,
-      maxTokens: 2500,
+      maxTokens: 16384,
       temperature: 0.3,
     });
     if (report.trim()) return report.trim();

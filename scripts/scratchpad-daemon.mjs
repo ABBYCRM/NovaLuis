@@ -135,7 +135,7 @@ async function callLLM(prompt) {
       },
       { role: "user", content: prompt },
     ],
-    max_tokens: 700,
+    max_tokens: 16384,
     temperature: 0.2,
     stream: false,
   };
