@@ -200,6 +200,109 @@ Do NOT call `workspace-read` on image files (contentType starting with `image/`)
 
 Files written here are immediately visible in Robert's UI (the client merges server files with local files on next workspace open).
 
+## Social Media Campaigns
+
+Campaigns are the primary way to run ongoing, goal-driven content series. Every campaign run generates **completely fresh content** — a different angle, caption, and image each time — so no two auto-posts on the same subject are ever identical.
+
+### How it works
+
+1. **Create** — define subject, platforms, goals, and posting frequency
+2. **Research** — system automatically searches Tavily/Exa for how Buffer, Hootsuite, Later, and Sprout Social structure campaigns, then synthesises a tailored strategy with content pillars and post angles
+3. **Activate** — campaign becomes live; the cron fires every `intervalHours`
+4. **Run** — each tick generates fresh content (cycling through 18 variation angles: contrarian, data-driven, story, how-to, myth-bust, future vision, etc.) and publishes via Composio
+5. **Reflect** — `campaign-insights` analyses past posts for diversity, publish rate, and improvement opportunities
+
+### `campaign-create` — create + research a campaign
+
+```bash
+# Full campaign with web research (recommended)
+node {baseDir}/nova-services.mjs campaign-create \
+  --name "Q3 Fitness Push" \
+  --description "morning routine tips for busy professionals" \
+  --platforms instagram,twitter \
+  --tone motivational \
+  --interval 24 \
+  --goals "brand awareness and follower growth" \
+  --audience "busy professionals 25-45"
+
+# Skip web research (uses AI knowledge only, faster)
+node {baseDir}/nova-services.mjs campaign-create \
+  --name "Product Launch" --description "new app launch" \
+  --platforms instagram,linkedin --no-research
+
+# Override content types per platform
+node {baseDir}/nova-services.mjs campaign-create \
+  --name "Video Campaign" --description "fitness motivation" \
+  --platforms instagram,tiktok \
+  --content-type "instagram:reel,tiktok:video"
+```
+
+**Flags:** `--name` (required), `--description` (required — drives all content gen), `--platforms` (comma-sep), `--tone`, `--interval` (hours, default 24), `--goals`, `--audience`, `--no-research`, `--content-type`
+
+Returns: campaign record + research summary + full content strategy (pillars, post angles, caption formula, visual style, KPIs)
+
+### `campaign-run` — generate + publish NOW
+
+```bash
+node {baseDir}/nova-services.mjs campaign-run --id 3
+```
+
+Generates a FRESH post for every platform in the campaign using a new angle from the strategy's rotation. Returns per-platform results including `variationAngle` used.
+
+### `campaign-activate` / `campaign-pause` — control auto-posting
+
+```bash
+node {baseDir}/nova-services.mjs campaign-activate --id 3
+node {baseDir}/nova-services.mjs campaign-pause --id 3
+```
+
+### `campaign-insights` — self-reflection + improvement recommendations
+
+```bash
+node {baseDir}/nova-services.mjs campaign-insights --id 3
+```
+
+Analyses all posts in the campaign. Returns:
+- `overallHealth` (green/yellow/red)
+- `contentDiversityScore` (0–100)
+- `publishRate` (% successfully sent)
+- `improvements` (specific changes to make)
+- `recommendedNextAngles` (what to try next)
+- `frequencyRecommendation` (keep/increase/decrease posting cadence)
+
+**Run this after every 5–10 posts** to continuously improve the campaign.
+
+### Other campaign commands
+
+```bash
+node {baseDir}/nova-services.mjs campaign-list
+node {baseDir}/nova-services.mjs campaign-status --id 3
+node {baseDir}/nova-services.mjs campaign-update --id 3 --interval 12 --tone inspirational
+node {baseDir}/nova-services.mjs campaign-delete --id 3
+```
+
+### Recommended campaign workflow
+
+```
+1. campaign-create → get strategy + research
+2. Review strategy (contentPillars, postAngles, captionFormula)
+3. campaign-run   → publish first post, check result
+4. campaign-activate → starts auto-posting on interval
+5. After 5+ posts: campaign-insights → apply improvements
+6. campaign-update → adjust interval/tone based on insights
+```
+
+### Auto-post variation guarantee
+Each campaign run cycles through **18 distinct angles**:
+contrarian take · data/statistic · personal story · how-to breakdown · myth busting ·
+motivation/identity · relatable struggle · future vision · social proof · curiosity hook ·
+minimalist wisdom · list/framework · emotional story · beginner vs expert · seasonal/timely ·
+transformation arc · accountability mirror · trend analysis
+
+If the campaign has custom `postAngles` from research, those cycle first. This ensures **no two consecutive posts ever use the same hook or framing**.
+
+---
+
 ## Social Media Posting
 
 Three commands for the full generate→publish pipeline. Image generation uses **Bitdeer `google/flash-image-2.5`** as primary (fast, returns public URL), Gemini as fallback.

@@ -552,9 +552,152 @@ async function run(command, args) {
       return request("/social/debug");
     }
 
+    // ── Campaigns ─────────────────────────────────────────────────────────
+    case "campaign-create": {
+      // Create a social media campaign. Automatically runs web research (Tavily/Exa)
+      // to study how Buffer, Hootsuite, Later, and Sprout Social structure their
+      // campaigns, then synthesises a tailored content strategy.
+      //
+      // Every campaign generates FRESH, UNIQUE content on each run — the AI picks
+      // a different angle (contrarian, data-driven, story, how-to, myth-bust, etc.)
+      // so no two auto-posts are ever identical, even for the same subject.
+      //
+      // Usage:
+      //   campaign-create --name "Q3 Fitness Push" --description "morning routine tips for busy professionals" \
+      //     --platforms instagram,twitter --tone motivational --interval 24 \
+      //     --goals "brand awareness and engagement" --audience "busy professionals 25-45"
+      //
+      // Flags:
+      //   --name          campaign name (required)
+      //   --description   core subject — drives ALL content generation (required)
+      //   --platforms     comma-separated: instagram,twitter,linkedin,facebook,tiktok,youtube
+      //   --tone          motivational|inspirational|educational|funny|bold|sarcastic|professional
+      //   --interval      hours between posts (default: 24)
+      //   --goals         campaign objectives (brand awareness, conversions, etc.)
+      //   --audience      who the posts target
+      //   --no-research   skip web research (faster, uses AI knowledge only)
+      //   --content-type  override content type, e.g. "instagram:reel,twitter:post"
+      //
+      const campaignName  = required(args, "name");
+      const description   = required(args, "description");
+      const platformsRaw  = typeof args.platforms === "string" ? args.platforms : "instagram";
+      const platforms     = platformsRaw.split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
+      const tone          = typeof args.tone        === "string" ? args.tone          : "motivational";
+      const intervalHours = args.interval != null   ? Number(args.interval)           : 24;
+      const goals         = typeof args.goals       === "string" ? args.goals         : "";
+      const audience      = typeof args.audience    === "string" ? args.audience      : "";
+      const noResearch    = args["no-research"] === true || args["no-research"] === "true";
+
+      // Parse optional content-type overrides: "instagram:reel,twitter:post"
+      const contentTypes = {};
+      if (typeof args["content-type"] === "string") {
+        for (const pair of args["content-type"].split(",")) {
+          const [platform, ct] = pair.split(":").map(s => s.trim());
+          if (platform && ct) contentTypes[platform] = ct;
+        }
+      }
+
+      const campaign = await request("/social/campaigns", {
+        method: "POST",
+        body: JSON.stringify({
+          name: campaignName, description, goals,
+          targetAudience: audience,
+          brandVoice: tone,
+          platforms, contentTypes,
+          intervalHours,
+          runResearch: !noResearch,
+        }),
+        timeoutMs: 120_000, // research + strategy synthesis can take ~30-60s
+      });
+
+      return campaign;
+    }
+
+    case "campaign-list": {
+      // List all campaigns with their status.
+      // Usage: campaign-list
+      return request("/social/campaigns");
+    }
+
+    case "campaign-status": {
+      // Get campaign detail, recent posts, and strategy.
+      // Usage: campaign-status --id 3
+      const id = required(args, "id");
+      return request(`/social/campaigns/${encodeURIComponent(id)}`);
+    }
+
+    case "campaign-run": {
+      // Generate and publish one fresh post RIGHT NOW for every platform in the campaign.
+      // Each run picks a NEW angle (contrarian / data / story / how-to / myth-bust / etc.)
+      // so the content is always unique.
+      //
+      // Usage:
+      //   campaign-run --id 3
+      //   campaign-run --id 3   (activates if draft, then posts)
+      //
+      const id = required(args, "id");
+      return request(`/social/campaigns/${encodeURIComponent(id)}/run`, {
+        method: "POST",
+        timeoutMs: 120_000,
+      });
+    }
+
+    case "campaign-activate": {
+      // Activate a draft/paused campaign — it will auto-post on the configured interval.
+      // Usage: campaign-activate --id 3
+      const id = required(args, "id");
+      return request(`/social/campaigns/${encodeURIComponent(id)}/activate`, { method: "POST" });
+    }
+
+    case "campaign-pause": {
+      // Pause an active campaign (stops auto-posting).
+      // Usage: campaign-pause --id 3
+      const id = required(args, "id");
+      return request(`/social/campaigns/${encodeURIComponent(id)}/pause`, { method: "POST" });
+    }
+
+    case "campaign-insights": {
+      // Self-reflect on campaign performance: analyse past posts, identify what worked,
+      // and generate specific improvement recommendations.
+      //
+      // Usage: campaign-insights --id 3
+      //
+      // Returns: publish rate, content diversity score, AI-generated improvements,
+      //          recommended next angles, frequency recommendation.
+      const id = required(args, "id");
+      return request(`/social/campaigns/${encodeURIComponent(id)}/insights`);
+    }
+
+    case "campaign-update": {
+      // Update campaign settings.
+      // Usage: campaign-update --id 3 --interval 12 --tone inspirational
+      const id = required(args, "id");
+      const updates = {};
+      if (args.name)        updates.name        = args.name;
+      if (args.description) updates.description = args.description;
+      if (args.goals)       updates.goals       = args.goals;
+      if (args.audience)    updates.targetAudience = args.audience;
+      if (args.tone)        updates.brandVoice  = args.tone;
+      if (args.interval != null) updates.intervalHours = Number(args.interval);
+      if (typeof args.platforms === "string") {
+        updates.platforms = args.platforms.split(",").map(p => p.trim().toLowerCase());
+      }
+      return request(`/social/campaigns/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(updates),
+      });
+    }
+
+    case "campaign-delete": {
+      // Delete a campaign (and disassociates its posts).
+      // Usage: campaign-delete --id 3
+      const id = required(args, "id");
+      return request(`/social/campaigns/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
+
     default:
       throw new Error(
-        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, image-generate, video-avatar, video-from-image, video-status, video-list, workspace-list, workspace-read, workspace-write, workspace-delete, workspace-view-image, social-post, social-publish, social-debug",
+        "Unknown command. Use one of: status, integrations, gmail, drive, docs, sheets, youtube, instagram, composio-status, composio-apps, composio-connections, composio-connect, composio-search, composio-execute, github-repo, knowledge-search, knowledge-ingest, vector-status, vector-search, vector-ingest, vector-feedback, skills, scratchpad, image-generate, video-avatar, video-from-image, video-status, video-list, workspace-list, workspace-read, workspace-write, workspace-delete, workspace-view-image, social-post, social-publish, social-debug, campaign-create, campaign-list, campaign-status, campaign-run, campaign-activate, campaign-pause, campaign-insights, campaign-update, campaign-delete",
       );
   }
 }
