@@ -814,7 +814,7 @@ router.get("/social/debug", async (_req, res) => {
       gemini: !!process.env.GEMINI_API_KEY,
       openai: !!process.env.OPENAI_API_KEY,
       primaryImageModel: "google/flash-image-2.5 (Bitdeer)",
-      fallbackImageModel: "gemini-2.0-flash-preview-image-generation",
+      fallbackImageModels: ["gemini-3.1-flash-image", "gemini-2.5-flash-image"],
     };
 
     res.json({ posts, composioStatus, imageGenConfig, toolMap: COMPOSIO_TOOL_MAP });
