@@ -22,6 +22,7 @@ import { z } from "zod";
 import { db, hasDatabase, socialScheduledPostsTable, socialReferenceImagesTable } from "@workspace/db";
 import { eq, desc, and, lte } from "drizzle-orm";
 import { saveToPicturesWorkspace } from "../lib/social-ai";
+import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
 
 const router = Router();
 
@@ -679,16 +680,15 @@ router.post("/social/publish/:id", async (req, res) => {
         post.contentType === "reel"  ? "REELS"  :
         post.contentType === "story" ? "STORIES" : undefined;
 
-      // The IG business user id is required by the Graph API on every call;
-      // Composio no longer auto-injects it. Resolve it from the env, the
-      // in-process cache set by /api/integrations/instagram/discover-user-id,
-      // or the most recent step-1 response.
-      const cachedIgUserId = String(
-        (globalThis as { __novaIgUserId?: string }).__novaIgUserId || process.env.INSTAGRAM_IG_USER_ID || "",
-      ).trim();
-      if (!cachedIgUserId) {
-        const msg = "Instagram publishing is paused: INSTAGRAM_IG_USER_ID is not set. " +
-          "Visit /api/integrations/instagram/discover-user-id or set the env var in DigitalOcean.";
+      // The IG business user id is required by the Graph API on every call.
+      // Resolve it from env → cache → INSTAGRAM_GET_USER_INFO via Composio.
+      let cachedIgUserId: string;
+      try {
+        cachedIgUserId = await resolveIgUserId(port);
+      } catch (e) {
+        const msg = "Instagram publishing is paused: could not discover the Instagram business user id. " +
+          (e instanceof Error ? e.message : String(e)) +
+          " — also ensure Instagram is connected via Settings → Integrations → Composio.";
         await db!.update(socialScheduledPostsTable)
           .set({ status: "failed", errorMessage: msg })
           .where(eq(socialScheduledPostsTable.id, id));
@@ -722,7 +722,7 @@ router.post("/social/publish/:id", async (req, res) => {
         || (step1Data as any)?.ig_user_id
         || cachedIgUserId;
       if (step1IgUserId && step1IgUserId !== cachedIgUserId) {
-        (globalThis as { __novaIgUserId?: string }).__novaIgUserId = step1IgUserId;
+        noteIgUserId(step1IgUserId);
       }
 
       if (!step1.ok || !creationId) {

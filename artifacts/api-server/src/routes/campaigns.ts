@@ -33,6 +33,7 @@ import {
   saveToPicturesWorkspace,
   type CampaignStrategy,
 } from "../lib/social-ai";
+import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
 
 const router = Router();
 
@@ -233,15 +234,17 @@ async function publishToComposio(
 
   if (platform === "instagram") {
     // Instagram requires the IG business user id on every Graph API call.
-    const igUserId = String(
-      (globalThis as { __novaIgUserId?: string }).__novaIgUserId || process.env.INSTAGRAM_IG_USER_ID || "",
-    ).trim();
-    if (!igUserId) {
+    // env → cache → INSTAGRAM_GET_USER_INFO via Composio.
+    let igUserId: string;
+    try {
+      igUserId = await resolveIgUserId(port);
+    } catch (e) {
       return {
         ok: false,
         error:
-          "Instagram publishing is paused: INSTAGRAM_IG_USER_ID is not set. " +
-          "Visit /api/integrations/instagram/discover-user-id or set the env var in DigitalOcean.",
+          "Instagram publishing is paused: could not discover the Instagram business user id. " +
+          (e instanceof Error ? e.message : String(e)) +
+          " — also ensure Instagram is connected via Settings → Integrations → Composio.",
       };
     }
     // Step 1: create container
@@ -257,7 +260,7 @@ async function publishToComposio(
       || (d1 as any)?.ig_user_id
       || igUserId;
     if (step1IgUserId && step1IgUserId !== igUserId) {
-      (globalThis as { __novaIgUserId?: string }).__novaIgUserId = step1IgUserId;
+      noteIgUserId(step1IgUserId);
     }
     const creationId = (d1 as any)?.data?.id || (d1 as any)?.result?.id || (d1 as any)?.id || (d1 as any)?.creation_id;
     if (!step1.ok || !creationId) {

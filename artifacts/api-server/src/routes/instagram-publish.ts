@@ -14,6 +14,7 @@ import {
   workspaceFilesTable,
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
+import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
 
 const router = Router();
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -53,24 +54,10 @@ function record(value: unknown): JsonRecord | null {
     : null;
 }
 
-// Instagram's Graph API requires the IG Business User ID on every media and
-// publish call. The Composio toolkit no longer injects it for
-// INSTAGRAM_CREATE_POST, so we have to look it up ourselves. We check the
-// env var first, then fall back to a cache file written by the discovery
-// endpoint, then to the most recent value embedded in any step-1 response.
-function readIgUserId(): string {
-  const env = String(process.env.INSTAGRAM_IG_USER_ID || "").trim();
-  if (env) return env;
-  // Process-level cache set by /api/integrations/instagram/discover-user-id
-  const cached = (globalThis as { __novaIgUserId?: string }).__novaIgUserId;
-  return typeof cached === "string" ? cached.trim() : "";
-}
-
-function rememberIgUserId(value: string): void {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return;
-  (globalThis as { __novaIgUserId?: string }).__novaIgUserId = trimmed;
-}
+// The IG business user id resolution lives in lib/instagram.ts. It checks
+// the env var, the in-process cache, and finally calls
+// INSTAGRAM_GET_USER_INFO through Composio (which uses the OAuth connection
+// we already have) to discover the id on demand.
 
 function publicBaseUrl(req: Request): string {
   const configured = String(process.env.PUBLIC_BASE_URL || "").trim().replace(/\/$/, "");
@@ -358,21 +345,22 @@ async function publishInstagram(
     };
   }
 
-  // Resolve the Instagram business user id. Composio no longer auto-injects
-  // it on INSTAGRAM_CREATE_POST, and the Meta Graph API requires it. We accept
-  // it from the env, the in-process cache (set by the discover endpoint), or
-  // any step-1 response that happens to include it.
-  const knownIgUserId = readIgUserId();
-  if (!knownIgUserId) {
+  // Resolve the Instagram business user id. env → cache → INSTAGRAM_GET_USER_INFO
+  // through Composio. The discover path uses the OAuth connection we already
+  // have, so no separate Meta access token is required.
+  let knownIgUserId: string;
+  try {
+    knownIgUserId = await resolveIgUserId(port);
+  } catch (e) {
     return {
       ok: false,
       step: 1,
       toolSlug: "INSTAGRAM_CREATE_MEDIA_CONTAINER",
       data: null,
       error:
-        "Instagram publishing is paused: INSTAGRAM_IG_USER_ID is not set. " +
-        "Visit Settings → Integrations → Instagram and click “Discover IG User ID” " +
-        "or set the env var in DigitalOcean and redeploy.",
+        "Instagram publishing is paused: could not discover the Instagram business user id. " +
+        (e instanceof Error ? e.message : String(e)) +
+        " — also ensure Instagram is connected via Settings → Integrations → Composio.",
     };
   }
 
@@ -391,7 +379,7 @@ async function publishInstagram(
   // Some Composio wrappers echo the IG business user id back on the container
   // response. If a new value appears, prefer it (the env value is a fallback).
   const step1IgUserId = findIdentifier(step1.data, ["ig_user_id", "igUserId", "ig_userId"]);
-  if (step1IgUserId && step1IgUserId !== knownIgUserId) rememberIgUserId(step1IgUserId);
+  if (step1IgUserId && step1IgUserId !== knownIgUserId) noteIgUserId(step1IgUserId);
   const creationId = findIdentifier(
     step1.data,
     ["creation_id", "creationId", "container_id", "containerId", "id"],
