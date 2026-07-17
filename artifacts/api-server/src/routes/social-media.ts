@@ -141,10 +141,10 @@ async function geminiImage(
   }
 
   // Try current model names in order — Gemini experimental models change frequently.
+  // Nano Banana 2 is the current default; the legacy model is the fallback.
   const GEMINI_IMAGE_MODELS = [
-    "gemini-2.0-flash-preview-image-generation",
-    "gemini-2.5-flash-preview-image-generation",
-    "imagen-3.0-generate-002",
+    "gemini-3.1-flash-image",
+    "gemini-2.5-flash-image",
   ];
 
   let lastErr: Error = new Error("All Gemini image models unavailable");
@@ -679,10 +679,28 @@ router.post("/social/publish/:id", async (req, res) => {
         post.contentType === "reel"  ? "REELS"  :
         post.contentType === "story" ? "STORIES" : undefined;
 
+      // The IG business user id is required by the Graph API on every call;
+      // Composio no longer auto-injects it. Resolve it from the env, the
+      // in-process cache set by /api/integrations/instagram/discover-user-id,
+      // or the most recent step-1 response.
+      const cachedIgUserId = String(
+        (globalThis as { __novaIgUserId?: string }).__novaIgUserId || process.env.INSTAGRAM_IG_USER_ID || "",
+      ).trim();
+      if (!cachedIgUserId) {
+        const msg = "Instagram publishing is paused: INSTAGRAM_IG_USER_ID is not set. " +
+          "Visit /api/integrations/instagram/discover-user-id or set the env var in DigitalOcean.";
+        await db!.update(socialScheduledPostsTable)
+          .set({ status: "failed", errorMessage: msg })
+          .where(eq(socialScheduledPostsTable.id, id));
+        res.status(422).json({ ok: false, error: msg });
+        return;
+      }
+
       const step1Args: Record<string, unknown> = {
         ...baseArgs,
         content_type: igContentType,
         ...(igMediaType ? { media_type: igMediaType } : {}),
+        ig_user_id: cachedIgUserId,
       };
 
       const step1 = await composioExecute(port, toolSlug, step1Args);
@@ -696,6 +714,16 @@ router.post("/social/publish/:id", async (req, res) => {
         (step1Data as any)?.id ||
         (step1Data as any)?.creation_id ||
         (step1Data as any)?.data?.creation_id;
+
+      // Some wrappers also echo the IG business user id back on the container
+      // response. If we get a new one, prefer it for the publish step.
+      const step1IgUserId = (step1Data as any)?.data?.ig_user_id
+        || (step1Data as any)?.result?.ig_user_id
+        || (step1Data as any)?.ig_user_id
+        || cachedIgUserId;
+      if (step1IgUserId && step1IgUserId !== cachedIgUserId) {
+        (globalThis as { __novaIgUserId?: string }).__novaIgUserId = step1IgUserId;
+      }
 
       if (!step1.ok || !creationId) {
         const msg = `Instagram container creation failed (step 1): ${JSON.stringify(step1Data).slice(0, 600)}`;
@@ -711,6 +739,7 @@ router.post("/social/publish/:id", async (req, res) => {
       // Step 2: publish the container via INSTAGRAM_CREATE_POST
       const step2 = await composioExecute(port, "INSTAGRAM_CREATE_POST", {
         creation_id: String(creationId),
+        ig_user_id: step1IgUserId,
       });
 
       const success = step2.ok;

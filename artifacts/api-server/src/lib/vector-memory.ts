@@ -651,7 +651,14 @@ export async function recordVectorMemoryOutcome(ids: number[], successful: boole
 }
 
 // ── Background fill: embed all rows that have embedding IS NULL ───────────────
-let fillJob: { running: boolean; filled: number; errors: number; total: number; startedAt: string } | null = null;
+let fillJob: {
+  running: boolean;
+  filled: number;
+  errors: number;
+  total: number;
+  startedAt: string;
+  lastError?: string;
+} | null = null;
 
 export function getFillJobStatus() { return fillJob; }
 
@@ -669,6 +676,7 @@ export async function fillMissingEmbeddings(): Promise<void> {
   fillJob = { running: true, filled: 0, errors: 0, total: items.length, startedAt: new Date().toISOString() };
 
   // Run sequentially at ~2/sec to stay within Gemini rate limits
+  let lastError = "";
   for (const item of items) {
     if (!fillJob.running) break; // allow external cancellation
     try {
@@ -678,12 +686,22 @@ export async function fillMissingEmbeddings(): Promise<void> {
         UPDATE vector_memories SET embedding = ${literal}::vector WHERE id = ${item.id} AND embedding IS NULL
       `);
       fillJob.filled++;
-    } catch {
+    } catch (e) {
       fillJob.errors++;
+      lastError = e instanceof Error ? e.message : String(e);
+      // Stop early after 10 consecutive errors to avoid hammering a broken
+      // provider for 30 minutes. The operator can re-trigger via
+      // POST /api/vector-memory/embed-missing once the underlying issue is fixed.
+      if (fillJob.errors >= 10 && fillJob.filled === 0) {
+        fillJob.running = false;
+        (fillJob as { lastError?: string }).lastError = lastError;
+        break;
+      }
     }
     await new Promise((res) => setTimeout(res, 150)); // 150ms between calls ≈ 6/sec
   }
   fillJob.running = false;
+  if (lastError) (fillJob as { lastError?: string }).lastError = lastError;
 }
 
 export async function vectorMemoryStatus(): Promise<Record<string, unknown>> {

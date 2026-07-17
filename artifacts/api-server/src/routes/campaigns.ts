@@ -61,12 +61,27 @@ const CAPTION_LIMITS: Record<string, number> = {
   instagram: 2200, tiktok: 2200, twitter: 280, facebook: 63206, linkedin: 3000, youtube: 5000,
 };
 
+// Composio tool slugs verified against Composio v3 API (2026-07-16).
+// Instagram posting is a TWO-STEP process:
+//   1. Create media container → INSTAGRAM_CREATE_MEDIA_CONTAINER
+//        content_type: "photo" | "video" | "reel" | "carousel_item"
+//        media_type:   "REELS" | "STORIES" (omit for photos)
+//        image_url, caption, ig_user_id (required by Graph API)
+//   2. Publish container      → INSTAGRAM_CREATE_POST  (creation_id from step 1)
+//        creation_id, ig_user_id
 const COMPOSIO_TOOL_MAP: Record<string, Record<string, string>> = {
-  instagram: { post: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER", portrait: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER", landscape: "INSTAGRAM_CREATE_PHOTO_MEDIA_CONTAINER", reel: "INSTAGRAM_CREATE_REELS_MEDIA_CONTAINER", story: "INSTAGRAM_CREATE_STORIES_MEDIA_CONTAINER" },
+  instagram: {
+    post:      "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    portrait:  "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    landscape: "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    reel:      "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+    story:     "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+  },
   twitter:   { post: "TWITTER_CREATION_OF_A_POST", square: "TWITTER_CREATION_OF_A_POST" },
   facebook:  { post: "FACEBOOK_POST_MESSAGE", story: "FACEBOOK_POST_MESSAGE" },
   linkedin:  { post: "LINKEDIN_CREATE_LINKED_IN_POST", square: "LINKEDIN_CREATE_LINKED_IN_POST" },
   tiktok:    { video: "TIKTOK_UPLOAD_VIDEO_TO_TIKTOK" },
+  youtube:   { shorts: "YOUTUBE_VIDEOS_INSERT", thumbnail: "YOUTUBE_THUMBNAILS_SET" },
 };
 
 // ── Validation schemas ────────────────────────────────────────────────────────
@@ -204,7 +219,7 @@ async function publishToComposio(
   contentType: string,
   caption: string,
   imageUrl: string,
-): Promise<{ ok: boolean; error?: string; result?: unknown }> {
+): Promise<{ ok: boolean; error?: string; result?: unknown; creationId?: string; mediaId?: string }> {
   const toolSlug = COMPOSIO_TOOL_MAP[platform]?.[contentType] ?? "";
   if (!toolSlug) {
     return { ok: false, error: `No Composio tool for ${platform}/${contentType}` };
@@ -217,19 +232,48 @@ async function publishToComposio(
   };
 
   if (platform === "instagram") {
+    // Instagram requires the IG business user id on every Graph API call.
+    const igUserId = String(
+      (globalThis as { __novaIgUserId?: string }).__novaIgUserId || process.env.INSTAGRAM_IG_USER_ID || "",
+    ).trim();
+    if (!igUserId) {
+      return {
+        ok: false,
+        error:
+          "Instagram publishing is paused: INSTAGRAM_IG_USER_ID is not set. " +
+          "Visit /api/integrations/instagram/discover-user-id or set the env var in DigitalOcean.",
+      };
+    }
     // Step 1: create container
     const step1 = await composioExecute(port, toolSlug, {
       ...baseArgs,
-      media_type: contentType === "reel" ? "REELS" : contentType === "story" ? "STORIES" : "IMAGE",
+      content_type: contentType === "reel" ? "reel" : "photo",
+      media_type: contentType === "reel" ? "REELS" : contentType === "story" ? "STORIES" : undefined,
+      ig_user_id: igUserId,
     });
-    const d1 = step1.data as Record<string, unknown>;
+    const d1 = step1.data as Record<string, unknown> | null;
+    const step1IgUserId = (d1 as any)?.data?.ig_user_id
+      || (d1 as any)?.result?.ig_user_id
+      || (d1 as any)?.ig_user_id
+      || igUserId;
+    if (step1IgUserId && step1IgUserId !== igUserId) {
+      (globalThis as { __novaIgUserId?: string }).__novaIgUserId = step1IgUserId;
+    }
     const creationId = (d1 as any)?.data?.id || (d1 as any)?.result?.id || (d1 as any)?.id || (d1 as any)?.creation_id;
     if (!step1.ok || !creationId) {
-      return { ok: false, error: `Instagram container creation failed: ${JSON.stringify(d1).slice(0, 400)}`, result: d1 };
+      return { ok: false, error: `Instagram container creation failed: ${JSON.stringify(d1).slice(0, 600)}`, result: d1 };
     }
     // Step 2: publish
-    const step2 = await composioExecute(port, "INSTAGRAM_PUBLISH_MEDIA_CONTAINER", { creation_id: String(creationId) });
-    return { ok: step2.ok, result: step2.data, error: step2.ok ? undefined : `Publish step failed: ${JSON.stringify(step2.data).slice(0, 300)}` };
+    const step2 = await composioExecute(port, "INSTAGRAM_CREATE_POST", {
+      creation_id: String(creationId),
+      ig_user_id: step1IgUserId,
+    });
+    const d2 = step2.data as Record<string, unknown> | null;
+    const mediaId = (d2 as any)?.data?.id || (d2 as any)?.result?.id || (d2 as any)?.id || (d2 as any)?.media_id;
+    if (!step2.ok || !mediaId) {
+      return { ok: false, error: `Publish step failed: ${JSON.stringify(d2).slice(0, 400)}`, result: d2, creationId };
+    }
+    return { ok: true, result: d2, creationId, mediaId };
   }
 
   const result = await composioExecute(port, toolSlug, baseArgs);

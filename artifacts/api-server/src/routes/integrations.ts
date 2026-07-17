@@ -210,4 +210,59 @@ router.get("/integrations/instagram/media", async (req, res) => {
   }
 });
 
+// Discover the Instagram business user id from the stored Meta Graph access
+// token. The IG business user id (a 17-19 digit number) is required by the
+// Instagram Graph API for every media container and publish call. Without it,
+// INSTAGRAM_CREATE_POST returns "Following fields are missing: {'ig_user_id'}".
+//
+// We look it up by asking the Graph API for the connected Facebook Pages and
+// reading the linked instagram_business_account.id from the first page that
+// has one. The endpoint persists the result to the integration creds bag and
+// returns it so the operator can confirm it before redeploying.
+router.get("/integrations/instagram/discover-user-id", async (_req, res) => {
+  try {
+    const c = await getCredentials("instagram");
+    if (!c.access_token) {
+      res.status(400).json({
+        error: "Instagram access token not set. Save one in Settings → Integrations first.",
+      });
+      return;
+    }
+    const pagesResp = await fetch(
+      `https://graph.facebook.com/v20.0/me/accounts?fields=id,name,instagram_business_account{id,username}&access_token=${encodeURIComponent(c.access_token)}`,
+    );
+    if (!pagesResp.ok) {
+      const body = await pagesResp.text();
+      res.status(502).json({ error: `Meta Graph API ${pagesResp.status}: ${body}` });
+      return;
+    }
+    const pagesJson = (await pagesResp.json()) as {
+      data?: { id: string; name?: string; instagram_business_account?: { id: string; username?: string } }[];
+    };
+    const candidates = (pagesJson.data ?? []).filter((p) => p.instagram_business_account?.id);
+    if (!candidates.length) {
+      res.status(404).json({
+        error: "No Facebook Page with a linked Instagram business account was found for this token. Connect an IG Business account to a Page in Meta Business Suite and retry.",
+        pagesChecked: (pagesJson.data ?? []).map((p) => ({ id: p.id, name: p.name, hasInstagram: Boolean(p.instagram_business_account) })),
+      });
+      return;
+    }
+    const pick = candidates[0]!;
+    const igUserId = pick.instagram_business_account!.id;
+    const igUsername = pick.instagram_business_account!.username ?? null;
+    // Persist to the credentials bag so the next deploy picks it up.
+    await setCredentials("instagram", { ...c, ig_user_id: igUserId });
+    res.json({
+      ok: true,
+      igUserId,
+      igUsername,
+      pageId: pick.id,
+      pageName: pick.name ?? null,
+      candidates: candidates.map((p) => ({ pageId: p.id, pageName: p.name ?? null, igUserId: p.instagram_business_account!.id, igUsername: p.instagram_business_account!.username ?? null })),
+    });
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 export default router;

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { Router, type NextFunction, type Request, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type Request,
+  type Response as ExpressResponse,
+} from "express";
 import {
   db,
   hasDatabase,
@@ -34,7 +39,7 @@ interface InstagramPublishResult {
   error?: string;
 }
 
-function dbGuard(res: Response): boolean {
+function dbGuard(res: ExpressResponse): boolean {
   if (!hasDatabase || !db) {
     res.status(503).json({ error: "database not configured" });
     return false;
@@ -46,6 +51,25 @@ function record(value: unknown): JsonRecord | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord
     : null;
+}
+
+// Instagram's Graph API requires the IG Business User ID on every media and
+// publish call. The Composio toolkit no longer injects it for
+// INSTAGRAM_CREATE_POST, so we have to look it up ourselves. We check the
+// env var first, then fall back to a cache file written by the discovery
+// endpoint, then to the most recent value embedded in any step-1 response.
+function readIgUserId(): string {
+  const env = String(process.env.INSTAGRAM_IG_USER_ID || "").trim();
+  if (env) return env;
+  // Process-level cache set by /api/integrations/instagram/discover-user-id
+  const cached = (globalThis as { __novaIgUserId?: string }).__novaIgUserId;
+  return typeof cached === "string" ? cached.trim() : "";
+}
+
+function rememberIgUserId(value: string): void {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return;
+  (globalThis as { __novaIgUserId?: string }).__novaIgUserId = trimmed;
 }
 
 function publicBaseUrl(req: Request): string {
@@ -334,6 +358,24 @@ async function publishInstagram(
     };
   }
 
+  // Resolve the Instagram business user id. Composio no longer auto-injects
+  // it on INSTAGRAM_CREATE_POST, and the Meta Graph API requires it. We accept
+  // it from the env, the in-process cache (set by the discover endpoint), or
+  // any step-1 response that happens to include it.
+  const knownIgUserId = readIgUserId();
+  if (!knownIgUserId) {
+    return {
+      ok: false,
+      step: 1,
+      toolSlug: "INSTAGRAM_CREATE_MEDIA_CONTAINER",
+      data: null,
+      error:
+        "Instagram publishing is paused: INSTAGRAM_IG_USER_ID is not set. " +
+        "Visit Settings → Integrations → Instagram and click “Discover IG User ID” " +
+        "or set the env var in DigitalOcean and redeploy.",
+    };
+  }
+
   const contentMediaArgs = isReel
     ? { video_url: videoUrl }
     : { image_url: imageUrl };
@@ -342,9 +384,14 @@ async function publishInstagram(
     ...contentMediaArgs,
     content_type: isReel ? "reel" : "photo",
     ...(isReel ? { media_type: "REELS" } : isStory ? { media_type: "STORIES" } : {}),
+    ig_user_id: knownIgUserId,
   };
 
   const step1 = await composioExecute(port, "INSTAGRAM_CREATE_MEDIA_CONTAINER", createArgs);
+  // Some Composio wrappers echo the IG business user id back on the container
+  // response. If a new value appears, prefer it (the env value is a fallback).
+  const step1IgUserId = findIdentifier(step1.data, ["ig_user_id", "igUserId", "ig_userId"]);
+  if (step1IgUserId && step1IgUserId !== knownIgUserId) rememberIgUserId(step1IgUserId);
   const creationId = findIdentifier(
     step1.data,
     ["creation_id", "creationId", "container_id", "containerId", "id"],
@@ -361,6 +408,7 @@ async function publishInstagram(
 
   const step2 = await composioExecute(port, "INSTAGRAM_CREATE_POST", {
     creation_id: creationId,
+    ig_user_id: step1IgUserId || knownIgUserId,
   });
   const mediaId = findIdentifier(
     step2.data,
@@ -429,7 +477,7 @@ router.get("/social/assets/:filename", async (req, res) => {
 
 // Mounted before the legacy social-media router. Instagram requests are handled
 // here; other platforms continue to the existing route with next().
-router.post("/social/publish/:id", async (req: Request, res: Response, next: NextFunction) => {
+router.post("/social/publish/:id", async (req: Request, res: ExpressResponse, next: NextFunction) => {
   if (!dbGuard(res)) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {

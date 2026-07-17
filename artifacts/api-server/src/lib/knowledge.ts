@@ -13,14 +13,22 @@ const GEMINI_EMBED_DIMS  = 1536; // must match vector(1536) column
 async function embedWithOpenAI(input: string): Promise<number[]> {
   const key = process.env.OPENAI_API_KEY ?? "";
   if (!key) throw new Error("OPENAI_API_KEY not set");
-  const r = await fetch(`${OPENAI_BASE}/embeddings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model: OPENAI_EMBED_MODEL, input }),
-  });
-  if (!r.ok) throw new Error(`openai embed ${r.status}: ${await r.text()}`);
-  const j = (await r.json()) as { data: { embedding: number[] }[] };
-  return j.data[0]!.embedding;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  timer.unref?.();
+  try {
+    const r = await fetch(`${OPENAI_BASE}/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: OPENAI_EMBED_MODEL, input }),
+      signal: controller.signal,
+    });
+    if (!r.ok) throw new Error(`openai embed ${r.status}: ${await r.text()}`);
+    const j = (await r.json()) as { data: { embedding: number[] }[] };
+    return j.data[0]!.embedding;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function embedWithGemini(input: string): Promise<number[]> {
@@ -32,42 +40,83 @@ async function embedWithGemini(input: string): Promise<number[]> {
     outputDimensionality: GEMINI_EMBED_DIMS,
   });
 
-  // Retry with exponential backoff on 429 / 503 / network errors.
-  const MAX_ATTEMPTS = 5;
-  let delay = 500; // ms
+  // Retry budget is intentionally tight so a single embed call stays well
+  // under the DigitalOcean App Platform 30s request timeout. The previous
+  // 5-attempt / 8s exponential schedule routinely blew that budget and
+  // caused the LB to 502 every knowledge/ingest + vector-memory/embed-missing
+  // call. With 3 attempts and a 2.5s ceiling the worst-case latency is ~6s.
+  const MAX_ATTEMPTS = 3;
+  const PER_ATTEMPT_TIMEOUT_MS = 8_000;
+  let delay = 400; // ms
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PER_ATTEMPT_TIMEOUT_MS);
+    timer.unref?.();
+    let r: Response;
+    try {
+      r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      const reason = e instanceof Error ? e.message : String(e);
+      if (attempt === MAX_ATTEMPTS) throw new Error(`gemini embed network error after ${attempt} attempts: ${reason}`);
+      const waitMs = delay;
+      await new Promise((res) => setTimeout(res, waitMs));
+      delay *= 2;
+      continue;
+    }
+    clearTimeout(timer);
     if (r.ok) {
       const j = (await r.json()) as { embedding: { values: number[] } };
       return j.embedding.values;
     }
-    const retryable = r.status === 429 || r.status === 503 || r.status === 500;
+    const retryable = r.status === 429 || r.status === 503 || r.status === 500 || r.status === 504;
     if (!retryable || attempt === MAX_ATTEMPTS) {
-      throw new Error(`gemini embed ${r.status}: ${await r.text()}`);
+      const text = await r.text().catch(() => "");
+      throw new Error(`gemini embed ${r.status}: ${text.slice(0, 500)}`);
     }
-    // Respect Retry-After header if present, else use exponential backoff.
     const retryAfter = r.headers.get("Retry-After");
-    const waitMs = retryAfter ? Number(retryAfter) * 1000 : delay;
+    const waitMs = retryAfter ? Math.min(Number(retryAfter) * 1000, 2_500) : delay;
     await new Promise((res) => setTimeout(res, waitMs));
-    delay *= 2; // exponential
+    delay *= 2;
   }
   throw new Error("gemini embed: exceeded max attempts");
 }
 
 // Embed a single string (1536-dim).
-// Priority: Gemini (working key) → OpenAI fallback (if no Gemini key).
-// Uses server-side keys so the browser never sees them.
+// Priority: Gemini → OpenAI fallback (if Gemini fails for any reason).
+// Both keys live server-side, so the browser never sees them.
+//
+// Failover is critical because every embed call is on the request path of:
+//   - /api/vector-memory/ingest     (user-driven)
+//   - /api/vector-memory/search     (user-driven)
+//   - /api/knowledge/ingest         (user-driven)
+//   - fillMissingEmbeddings()       (background job)
+// When Gemini is slow or rate-limited, falling back to OpenAI keeps the
+// pipeline alive instead of silently writing rows without an embedding.
 export async function embed(input: string): Promise<number[]> {
   const gemini = process.env.GEMINI_API_KEY ?? "";
+  const openai = process.env.OPENAI_API_KEY ?? "";
   if (gemini) {
-    return embedWithGemini(input);
+    try {
+      return await embedWithGemini(input);
+    } catch (geminiErr) {
+      if (!openai) throw geminiErr;
+      // Surface a soft warning in the logs so the operator can fix Gemini.
+      console.warn(
+        "[embed] Gemini embed failed, falling back to OpenAI:",
+        geminiErr instanceof Error ? geminiErr.message : String(geminiErr),
+      );
+    }
   }
-  // Fallback: OpenAI when no Gemini key is configured.
-  return embedWithOpenAI(input);
+  if (openai) {
+    return embedWithOpenAI(input);
+  }
+  throw new Error("No embedding provider configured. Set GEMINI_API_KEY and/or OPENAI_API_KEY.");
 }
 
 // Split long text into overlapping chunks suitable for embedding.

@@ -65,9 +65,8 @@ export async function geminiImage(
   }
 
   const GEMINI_IMAGE_MODELS = [
-    "gemini-2.0-flash-preview-image-generation",
-    "gemini-2.5-flash-preview-image-generation",
-    "imagen-3.0-generate-002",
+    "gemini-3.1-flash-image",
+    "gemini-2.5-flash-image",
   ];
 
   let lastErr: Error = new Error("All Gemini image models unavailable");
