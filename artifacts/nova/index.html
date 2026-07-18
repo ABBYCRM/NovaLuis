@@ -1980,9 +1980,9 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
       <p class="ws-muted ws-tiny" style="margin:4px 0 10px;">Plug in API tokens for each service. Stored on the server (never shown back — only a “set / not set” status). Leave a field blank to keep its current value; type a single space and save to clear it.</p>
 
       <div class="intg-svc">
-        <div class="intg-head">NOVA API Token <span class="intg-status" id="intg-st-nova-token">…</span></div>
-        <p class="ws-tiny ws-muted" style="margin:4px 0 6px;">Token set on the <code>nova-luis</code> api-server as <code>NOVA_API_TOKEN</code>. Paste the same value here so the browser can call <code>/api/workspaces/*</code> and <code>/api/media/*</code> on your behalf. The value never leaves your browser; the server only checks it on each request.</p>
-        <input class="form-input intg-in" id="intg-nova-token" type="password" autocomplete="off" placeholder="NOVA_API_TOKEN (set NOVA_API_TOKEN on the server first)">
+        <div class="intg-head">NovaLuis Workspace Token <span class="intg-status" id="intg-st-novaluis-workspace-token">…</span></div>
+        <p class="ws-tiny ws-muted" style="margin:4px 0 6px;">This is a separate credential from your <strong>OpenAI</strong>, <strong>Anthropic</strong>, or <strong>other LLM</strong> key. It gates calls to <code>/api/workspaces/*</code> and <code>/api/media/*</code> only. Set <code>NOVA_API_TOKEN</code> on the <code>nova-luis</code> api-server, then paste the same value here so the browser can authenticate the request. The value never leaves your browser; the server only checks it on each request.</p>
+        <input class="form-input intg-in" id="intg-novaluis-workspace-token" type="password" autocomplete="off" placeholder="NOVA_API_TOKEN from the api-server (separate from LLM keys)">
       </div>
 
       <div class="intg-svc">
@@ -2544,8 +2544,10 @@ function smFetch2(path, opts) {
   // NOVA_API_TOKEN is a browser-local credential (the server doesn't
   // echo it back), so it lives in localStorage under bob-settings.novaApiToken
   // — the same key the installAuthHeader shim reads. The save handler below
-  // treats it specially instead of POSTing to /api/integrations/nova-token.
-  var LOCAL_FIELDS = { 'nova-token': 'novaApiToken' };
+  // treats it specially instead of POSTing to /api/integrations/.
+  // The "svc" key here is the DOM id of the input (id="intg-<svc>") and
+  // the value is the localStorage field name on the bob-settings object.
+  var LOCAL_FIELDS = { 'novaluis-workspace-token': 'novaApiToken' };
 
   function setStatus(svc, fields) {
     var el = document.getElementById('intg-st-' + svc);
