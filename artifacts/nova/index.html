@@ -3382,10 +3382,46 @@ function renderScheduledList(posts) {
 
     var thumb = document.createElement('div');
     thumb.className = 'sm-post-thumb';
-    if (p.image_url && !p.image_url.startsWith('data:')) {
+    // Three cases for image_url:
+    //   1. data: URL  → convert to a Blob URL so <img> can render it
+    //   2. http(s) URL → use directly (Instagram CDN or our workspace asset)
+    //   3. missing or unknown scheme → fall back to the platform emoji
+    if (p.image_url) {
       var img = document.createElement('img');
-      img.src = p.image_url; img.style.cssText = 'width:52px;height:52px;border-radius:7px;object-fit:cover;';
-      thumb.appendChild(img);
+      img.style.cssText = 'width:52px;height:52px;border-radius:7px;object-fit:cover;';
+      if (p.image_url.startsWith('data:')) {
+        // data:[<mime>];base64,<payload> — decode to a Blob so the browser
+        // can render it without tripping over base64 size limits in <img src>.
+        // Revoke the object URL on the next paint to avoid leaks.
+        try {
+          var m = p.image_url.match(/^data:([^;]+);base64,(.+)$/s);
+          if (m) {
+            var bytes = atob(m[2]);
+            var buf = new Uint8Array(bytes.length);
+            for (var i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+            var blob = new Blob([buf], { type: m[1] || 'image/png' });
+            var objUrl = URL.createObjectURL(blob);
+            img.src = objUrl;
+            img.onload = function () { setTimeout(function () { URL.revokeObjectURL(objUrl); }, 1000); };
+            thumb.appendChild(img);
+          } else {
+            img.src = p.image_url;
+            thumb.appendChild(img);
+          }
+        } catch (_) {
+          // Malformed data URL — fall through to emoji.
+          thumb.textContent = { instagram:'📸', tiktok:'🎵', twitter:'𝕏', facebook:'f', linkedin:'in', youtube:'▶' }[p.platform] || '📱';
+        }
+      } else {
+        img.src = p.image_url;
+        img.onerror = function () {
+          // Replace broken thumbnail with platform emoji on load failure
+          // (CORS, 404, expired CDN URL, etc.).
+          img.remove();
+          thumb.textContent = { instagram:'📸', tiktok:'🎵', twitter:'𝕏', facebook:'f', linkedin:'in', youtube:'▶' }[p.platform] || '📱';
+        };
+        thumb.appendChild(img);
+      }
     } else {
       thumb.textContent = { instagram:'📸', tiktok:'🎵', twitter:'𝕏', facebook:'f', linkedin:'in', youtube:'▶' }[p.platform] || '📱';
     }
