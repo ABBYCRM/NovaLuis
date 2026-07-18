@@ -57,24 +57,33 @@ router.get("/workspaces", async (_req, res) => {
 });
 
 // ── GET /workspaces/:ws/files ────────────────────────────────────────────────
+// `?meta=1` returns metadata only (no `content` field). This keeps the
+// Pictures workspace — where files are images and the client loads them
+// via /raw — from shipping multi-megabyte JSON responses on every
+// panel open. Other workspaces that need the content (Calendar events,
+// Maps saved places, Notes previews) omit the param.
 router.get("/workspaces/:ws/files", async (req, res) => {
   const ws = req.params.ws.toLowerCase();
   if (!validWs(ws)) { res.status(400).json({ error: "invalid workspace" }); return; }
   if (!dbGuard(res)) return;
+  const metaOnly = req.query.meta === "1" || req.query.meta === "true";
   try {
     const rows = await db!
       .select()
       .from(workspaceFilesTable)
       .where(eq(workspaceFilesTable.workspace, ws))
       .orderBy(workspaceFilesTable.updatedAt);
-    const files = rows.map(r => ({
-      filename: r.filename,
-      content: r.content,
-      contentType: r.contentType,
-      size: Buffer.byteLength(r.content, "utf8"),
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
+    const files = rows.map(r => {
+      const base = {
+        filename: r.filename,
+        contentType: r.contentType,
+        size: Buffer.byteLength(r.content, "utf8"),
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      };
+      if (metaOnly) return base;
+      return { ...base, content: r.content };
+    });
     res.json({ workspace: ws, files });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : String(e) });

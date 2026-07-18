@@ -4567,7 +4567,12 @@ document.addEventListener('keydown', function (e) {
     wsList.innerHTML = '';
     wsEmpty.hidden = true;
     try {
-      var r = await smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files');
+      // The Pictures workspace displays images via the /raw route and
+      // doesn't need the base64 content in the listing response. Asking
+      // for `?meta=1` keeps the JSON small even when the workspace has
+      // hundreds of image files.
+      var metaQs = (WS_MODES[currentWs] === 'imageGrid') ? '?meta=1' : '';
+      var r = await smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files' + metaQs);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       var d = await r.json();
       var files = d.files || [];
@@ -4837,9 +4842,11 @@ document.addEventListener('keydown', function (e) {
         });
         cell.appendChild(pill);
       });
-      cell.addEventListener('click', function () {
-        openNewEventDialog({ date: dateKey });
-      });
+      (function (dateKeyForCell) {
+        cell.addEventListener('click', function () {
+          openNewEventDialog({ date: dateKeyForCell });
+        });
+      })(dateKey);
       grid.appendChild(cell);
     }
     wsList.appendChild(grid);
