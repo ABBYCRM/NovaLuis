@@ -31,6 +31,7 @@ import {
   researchCampaignStrategy,
   pickVariationAngle,
   saveToPicturesWorkspace,
+  buildImagePrompt,
   type CampaignStrategy,
 } from "../lib/social-ai";
 import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
@@ -176,14 +177,15 @@ Return ONLY valid JSON:
   const hashtags = captionData.hashtags ?? "";
 
   // Generate image with the visual style from strategy
-  const imagePrompt = `Professional ${platform} ${contentType} social media image for a campaign post.
+  const imagePrompt = buildImagePrompt(
+    `Professional ${platform} ${contentType} social media image for a campaign post.
 Campaign: ${campaign.name}
 Subject: ${campaign.description}
 This post's angle: ${variationAngle}
 Visual style: ${visualStyle}
 Mood: ${campaign.brandVoice}
-Format: ${spec.aspectRatio} for ${platform}.
-Do NOT include text overlays or watermarks.`;
+Format: ${spec.aspectRatio} for ${platform}.`
+  );
 
   let imageUrl = "";
   let imageSource = "";

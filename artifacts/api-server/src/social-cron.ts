@@ -12,7 +12,7 @@
 import { db, hasDatabase, socialScheduledPostsTable } from "@workspace/db";
 import { and, eq, lte } from "drizzle-orm";
 import { logger } from "./lib/logger";
-import { generateCaption, generateImage, pickVariationAngle, saveToPicturesWorkspace } from "./lib/social-ai";
+import { generateCaption, generateImage, pickVariationAngle, saveToPicturesWorkspace, buildImagePrompt } from "./lib/social-ai";
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -66,9 +66,10 @@ Return ONLY valid JSON: {"caption": "...", "hashtags": "#tag1 #tag2 ..."}`;
     const hashtags = parsed.hashtags ?? "";
 
     // Regenerate image too
-    const imagePrompt = `Professional ${platform} ${contentType} social media image.
-Subject: ${description}. Angle: ${variationAngle}. Tone: ${tone}.
-Do NOT include text overlays or watermarks.`;
+    const imagePrompt = buildImagePrompt(
+      `Professional ${platform} ${contentType} social media image.
+Subject: ${description}. Angle: ${variationAngle}. Tone: ${tone}.`
+    );
 
     let imageUrl = "";
     try {
