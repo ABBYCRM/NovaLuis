@@ -1302,6 +1302,23 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 @keyframes thinkPulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .cube3d-c { animation-duration: 6s; } }
 
+/* Thinking indicator row: 3D cube + pulsing label, sits inside an assistant
+   message body while the response is streaming. The send handler shows
+   this on every send and removes it when the first token arrives. */
+.thinking-indicator {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px 0;
+}
+.thinking-indicator .cube3d { width: 16px; height: 16px; perspective: 70px; }
+.thinking-indicator .cube3d-c { animation-duration: 1.6s; }
+.thinking-indicator .cube3d-f { border-radius: 3px; box-shadow: 0 0 6px -1px var(--glow); }
+.thinking-indicator .cube3d-f:nth-child(1) { transform: translateZ(8px); }
+.thinking-indicator .cube3d-f:nth-child(2) { transform: rotateY(180deg) translateZ(8px); }
+.thinking-indicator .cube3d-f:nth-child(3) { transform: rotateY(90deg) translateZ(8px); }
+.thinking-indicator .cube3d-f:nth-child(4) { transform: rotateY(-90deg) translateZ(8px); }
+.thinking-indicator .cube3d-f:nth-child(5) { transform: rotateX(90deg) translateZ(8px); }
+.thinking-indicator .cube3d-f:nth-child(6) { transform: rotateX(-90deg) translateZ(8px); }
+
 /* Blinking cursor */
 .cursor {
   display: inline-block; width: 2px; height: 1em;
@@ -5555,7 +5572,49 @@ document.addEventListener('keydown', function (e) {
     row.appendChild(body);
     chatInner.appendChild(row);
     chatInner.scrollTop = chatInner.scrollHeight;
-    return { row: row, bubble: bubble };
+    return { row: row, bubble: bubble, body: body };
+  }
+
+  // ── Thinking indicator (3D cube + "Thinking…" label) ───────────────────
+  // The CSS for .cube3d / .cube3d-c / .cube3d-f / .think-label was already
+  // in index.html (orphaned from when bob.js injected a similar indicator)
+  // but no JS ever built the markup or wired the show/hide. We add that
+  // here so every assistant turn shows a real rotating 3D cube while the
+  // model is working, and removes it as soon as the first token arrives.
+  function buildThinkingIndicator() {
+    var row = document.createElement('div');
+    row.className = 'thinking-indicator';
+
+    var cube = document.createElement('div');
+    cube.className = 'cube3d';
+    var cubeContainer = document.createElement('div');
+    cubeContainer.className = 'cube3d-c';
+    // Six faces — 3D box, painted with the spark (orange) color.
+    for (var i = 0; i < 6; i++) {
+      var face = document.createElement('div');
+      face.className = 'cube3d-f';
+      cubeContainer.appendChild(face);
+    }
+    cube.appendChild(cubeContainer);
+    row.appendChild(cube);
+
+    var label = document.createElement('span');
+    label.className = 'think-label';
+    label.textContent = 'Thinking\u2026';
+    row.appendChild(label);
+
+    return row;
+  }
+
+  function attachThinkingIndicator(bodyEl) {
+    if (!bodyEl) return null;
+    var indicator = buildThinkingIndicator();
+    bodyEl.appendChild(indicator);
+    return indicator;
+  }
+
+  function removeThinkingIndicator(indicator) {
+    if (indicator && indicator.parentNode) indicator.parentNode.removeChild(indicator);
   }
 
   // Wipe whatever is in chat-inner (e.g. a stale empty-state or bob.js
@@ -5617,6 +5676,9 @@ document.addEventListener('keydown', function (e) {
 
     // Empty assistant bubble that will be filled as tokens stream in
     var assistantEls = renderMessage('assistant', '');
+    // Show the rotating 3D cube + "Thinking…" label while the model is working.
+    // Removed the moment the first content token arrives.
+    var thinkingIndicator = attachThinkingIndicator(assistantEls.body);
     var fullText = '';
 
     setBusy(true);
@@ -5659,6 +5721,10 @@ document.addEventListener('keydown', function (e) {
                 var json = JSON.parse(payload);
                 var delta = json.choices && json.choices[0] && json.choices[0].delta && json.choices[0].delta.content;
                 if (typeof delta === 'string') {
+                  if (thinkingIndicator) {
+                    removeThinkingIndicator(thinkingIndicator);
+                    thinkingIndicator = null;
+                  }
                   fullText += delta;
                   assistantEls.bubble.textContent = fullText;
                   chatInner.scrollTop = chatInner.scrollHeight;
@@ -5693,6 +5759,14 @@ document.addEventListener('keydown', function (e) {
         assistantEls.bubble.textContent = '⚠ ' + (e && e.message ? e.message : String(e));
       }
     } finally {
+      // Make sure the thinking indicator is gone — covers the !res.ok,
+      // empty-response, error, and AbortError paths that all return before
+      // the first SSE delta arrives. Without this, a stopped or failed
+      // request would leave a permanent "Thinking…" cube in the bubble.
+      if (thinkingIndicator) {
+        removeThinkingIndicator(thinkingIndicator);
+        thinkingIndicator = null;
+      }
       inFlight = null;
       setBusy(false);
     }
