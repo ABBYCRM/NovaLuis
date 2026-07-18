@@ -93,6 +93,25 @@ app.use(
 );
 app.use("/api", router);
 
+// Global error handler — every API error returns JSON, not Express's
+// default HTML error page. This makes the actual cause visible in the
+// Settings → Integrations "Save failed" toast and in curl, instead of
+// hiding it behind "<pre>Internal Server Error</pre>". Without this
+// the operator has no way to tell the difference between "DB is down",
+// "schema not migrated", "value too long", and "DB write conflict".
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Duplicate the request logger's signature so the operator can grep
+  // these in the DO runtime log stream the same way as every other
+  // error. We deliberately include the stack when not in production.
+  logger.error({ err, path: _req.path, method: _req.method }, "api error");
+  if (res.headersSent) return;
+  const message = err instanceof Error ? err.message : String(err);
+  res.status(500).json({
+    error: message,
+    kind: err instanceof Error ? err.name : "unknown",
+  });
+});
+
 // In production (Railway etc), serve the Nova UI as static files.
 // NOVA_STATIC_DIR can override the location.
 if (process.env["NODE_ENV"] === "production") {

@@ -6,6 +6,7 @@ import {
   normalizeComposioCredentialFields,
 } from "../lib/composio";
 import { getGoogleAccessToken, googleGet } from "../lib/google";
+import { logger } from "../lib/logger";
 
 const router = Router();
 
@@ -46,7 +47,20 @@ router.post("/integrations/:service", async (req, res) => {
     service === "composio"
       ? normalizeComposioCredentialFields(parsed.data.fields)
       : parsed.data.fields;
-  await setCredentials(service, fields);
+  try {
+    await setCredentials(service, fields);
+  } catch (e) {
+    // Surface the actual DB error to the operator. Without this, the user
+    // sees "Save failed: google http 500" in the UI and the cause is opaque
+    // (DB unreachable, schema not migrated, constraint violation, …).
+    logger.error({ err: e, service, fields: Object.keys(fields) }, "integrations save failed");
+    res.status(500).json({
+      error: e instanceof Error ? e.message : String(e),
+      kind: e instanceof Error ? e.name : "unknown",
+      service,
+    });
+    return;
+  }
   if (service === "composio") clearComposioSessionCache();
   res.json({ ok: true, service, fields: maskFields(await getCredentials(service)) });
 });

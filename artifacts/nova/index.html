@@ -1987,8 +1987,9 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 
       <div class="intg-svc">
         <div class="intg-head">Google — Gmail · Sheets · Docs · Drive <span class="intg-status" id="intg-st-google">…</span></div>
-        <input class="form-input intg-in" id="intg-google-client_id" type="text" autocomplete="off" placeholder="OAuth client_id">
-        <input class="form-input intg-in" id="intg-google-client_secret" type="password" autocomplete="off" placeholder="OAuth client_secret">
+        <p class="ws-tiny ws-muted" style="margin:0 0 6px;">For production, set <code>GOOGLE_OAUTH_CLIENT_ID</code> and <code>GOOGLE_OAUTH_CLIENT_SECRET</code> as env vars on the api-server (durable, shared by every browser). The <code>refresh_token</code> here is per-user and must be pasted below.</p>
+        <input class="form-input intg-in" id="intg-google-client_id" type="text" autocomplete="off" placeholder="OAuth client_id (or set GOOGLE_OAUTH_CLIENT_ID on the api-server)">
+        <input class="form-input intg-in" id="intg-google-client_secret" type="password" autocomplete="off" placeholder="OAuth client_secret (or set GOOGLE_OAUTH_CLIENT_SECRET on the api-server)">
         <input class="form-input intg-in" id="intg-google-refresh_token" type="password" autocomplete="off" placeholder="OAuth refresh_token (recommended — auto-refreshes)">
         <input class="form-input intg-in" id="intg-google-access_token" type="password" autocomplete="off" placeholder="…or a short-lived access_token">
       </div>
@@ -2640,7 +2641,18 @@ function smFetch2(path, opts) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fields: payload })
           });
-          if (!r.ok) throw new Error(svc + ' http ' + r.status);
+          if (!r.ok) {
+            // Try to surface the server's actual error message instead of
+            // the generic "google http 500" that hid DB schema issues
+            // from the operator for weeks.
+            var detail = svc + ' http ' + r.status;
+            try {
+              var body = await r.json();
+              if (body && body.error) detail += ': ' + body.error;
+              if (body && body.kind) detail += ' (' + body.kind + ')';
+            } catch (_) { /* body wasn't JSON, fall back to status */ }
+            throw new Error(detail);
+          }
         }
       }
       // Clear the inputs so secrets don't linger in the DOM, then refresh status.
