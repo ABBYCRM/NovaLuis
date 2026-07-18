@@ -299,7 +299,12 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 .ws-list.ws-list-grid .ws-item:hover { border-color: var(--accent); }
 .ws-list.ws-list-grid .ws-thumb-wrap {
   width: 100%;
+  /* Belt-and-braces: aspect-ratio alone sometimes gets zeroed out
+     when a parent is a flex item with auto cross-size, so set an
+     explicit min-height as a fallback. Both rules together guarantee
+     a square thumbnail on every viewport including narrow mobile. */
   aspect-ratio: 1 / 1;
+  min-height: 140px;
   background: #000;
   display: flex;
   align-items: center;
