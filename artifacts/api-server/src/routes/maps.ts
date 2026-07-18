@@ -90,12 +90,14 @@ function extractPlaces(raw: unknown): PlaceHit[] {
 async function runMapsTool(
   apiKey: string,
   toolSlug: string,
-  args: Record<string, unknown>,
+  argsAndSignal: Record<string, unknown> & { signal?: AbortSignal },
 ): Promise<unknown> {
+  const { signal, ...args } = argsAndSignal;
   const url = `/tools/execute/${encodeURIComponent(toolSlug)}`;
   return composioRequest<unknown>(apiKey, url, {
     method: "POST",
     body: JSON.stringify({ arguments: args }),
+    ...(signal ? { signal } : {}),
   });
 }
 
@@ -147,22 +149,17 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
   }
   // Hard 1.4s deadline. The DigitalOcean App Platform edge timeout is
   // ~1.7s, so we have to set the deadline below that or the edge will
-  // 504 us before we can populate the cache. We use Promise.race
-  // because composioRequest has its own 60s internal timeout that
-  // ignores any external signal we pass.
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => reject(new Error("linked-check timeout")), 1_400);
-  });
+  // 504 us before we can populate the cache. composioRequest now
+  // honors external signals, so the AbortController actually cancels
+  // the underlying fetch.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1_400);
   try {
-    const data = await Promise.race([
-      composioRequest<unknown>(
-        apiKey,
-        "/connected_accounts?toolkit_slug=google_maps",
-        { method: "GET" },
-      ),
-      timeoutPromise,
-    ]);
+    const data = await composioRequest<unknown>(
+      apiKey,
+      "/connected_accounts?toolkit_slug=google_maps",
+      { method: "GET", signal: controller.signal },
+    );
     const arr = Array.isArray(data) ? data : extractArray(data, ["items", "accounts", "results"]);
     if (arr && arr.length > 0) {
       linkedCacheSet({ ok: true });
@@ -176,7 +173,7 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
     linkedCacheSet({ ok: false, reason });
     return { ok: false, reason };
   } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
+    clearTimeout(timer);
   }
 }
 
@@ -223,19 +220,10 @@ router.get("/maps/search", async (req: Request, res: Response) => {
   for (const slug of slugs) {
     if (attempts >= MAX_TOOL_ATTEMPTS) break;
     attempts += 1;
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 600);
     try {
-      // Per-slug hard deadline via Promise.race (composioRequest overrides
-      // any external signal we pass, so we cannot rely on AbortController
-      // alone). First success with non-empty results wins; 200+empty is
-      // treated as a no-op and we try the next slug.
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error("tool-call timeout")), 600);
-      });
-      const raw = await Promise.race([
-        runMapsTool(session.apiKey, slug, args),
-        timeoutPromise,
-      ]);
+      const raw = await runMapsTool(session.apiKey, slug, { ...args, signal: controller.signal });
       const results = extractPlaces(raw);
       if (results.length > 0) {
         res.json({ ok: true, toolSlug: slug, query: q, results });
@@ -259,7 +247,7 @@ router.get("/maps/search", async (req: Request, res: Response) => {
       }
       logger.warn({ toolSlug: slug, err: e instanceof Error ? e.message : String(e) }, "[maps] tool call failed, trying next");
     } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
+      clearTimeout(timer);
     }
   }
 

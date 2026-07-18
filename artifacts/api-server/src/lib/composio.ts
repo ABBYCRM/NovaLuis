@@ -130,6 +130,15 @@ async function requestWithAuth<T>(
   const timeout = setTimeout(() => controller.abort(), 60_000);
   timeout.unref?.();
 
+  // Merge any external signal (e.g. a per-route deadline) with the
+  // internal 60s timeout. Either signal aborts the fetch.
+  const externalSignal = init.signal;
+  const onExternalAbort = (): void => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+
   try {
     const response = await fetch(`${COMPOSIO_BASE}${path}`, {
       ...init,
@@ -170,6 +179,7 @@ async function requestWithAuth<T>(
     );
   } finally {
     clearTimeout(timeout);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
 }
 
