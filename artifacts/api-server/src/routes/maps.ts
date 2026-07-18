@@ -145,17 +145,24 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
   if (cached !== null) {
     return cached.ok ? { ok: true } : { ok: false, reason: cached.reason ?? "not linked" };
   }
-  // 4s budget is enough for Composio on a warm connection but small enough
-  // that we still return 409 well inside the DO edge timeout if the
-  // account check itself hangs.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 4_000);
+  // Hard 1.4s deadline. The DigitalOcean App Platform edge timeout is
+  // ~1.7s, so we have to set the deadline below that or the edge will
+  // 504 us before we can populate the cache. We use Promise.race
+  // because composioRequest has its own 60s internal timeout that
+  // ignores any external signal we pass.
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error("linked-check timeout")), 1_400);
+  });
   try {
-    const data = await composioRequest<unknown>(
-      apiKey,
-      "/connected_accounts?toolkit_slug=google_maps",
-      { method: "GET", signal: controller.signal },
-    );
+    const data = await Promise.race([
+      composioRequest<unknown>(
+        apiKey,
+        "/connected_accounts?toolkit_slug=google_maps",
+        { method: "GET" },
+      ),
+      timeoutPromise,
+    ]);
     const arr = Array.isArray(data) ? data : extractArray(data, ["items", "accounts", "results"]);
     if (arr && arr.length > 0) {
       linkedCacheSet({ ok: true });
@@ -169,7 +176,7 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
     linkedCacheSet({ ok: false, reason });
     return { ok: false, reason };
   } finally {
-    clearTimeout(timer);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 }
 
@@ -212,22 +219,23 @@ router.get("/maps/search", async (req: Request, res: Response) => {
 
   let lastErr: unknown = null;
   let attempts = 0;
-  const MAX_TOOL_ATTEMPTS = 3; // 3 slugs × ~500ms = ~1.5s, safely under the 1.7s DO edge
+  const MAX_TOOL_ATTEMPTS = 2; // 2 slugs × ~600ms = ~1.2s, safely under the 1.7s DO edge
   for (const slug of slugs) {
     if (attempts >= MAX_TOOL_ATTEMPTS) break;
     attempts += 1;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     try {
-      // Per-slug 1.2s budget so a hung Composio call cannot burn the
-      // whole request budget. First success with non-empty results wins;
-      // 200+empty is treated as a no-op and we try the next slug.
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1_200);
-      let raw: unknown;
-      try {
-        raw = await runMapsTool(session.apiKey, slug, args);
-      } finally {
-        clearTimeout(timer);
-      }
+      // Per-slug hard deadline via Promise.race (composioRequest overrides
+      // any external signal we pass, so we cannot rely on AbortController
+      // alone). First success with non-empty results wins; 200+empty is
+      // treated as a no-op and we try the next slug.
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error("tool-call timeout")), 600);
+      });
+      const raw = await Promise.race([
+        runMapsTool(session.apiKey, slug, args),
+        timeoutPromise,
+      ]);
       const results = extractPlaces(raw);
       if (results.length > 0) {
         res.json({ ok: true, toolSlug: slug, query: q, results });
@@ -250,6 +258,8 @@ router.get("/maps/search", async (req: Request, res: Response) => {
         }
       }
       logger.warn({ toolSlug: slug, err: e instanceof Error ? e.message : String(e) }, "[maps] tool call failed, trying next");
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
   }
 
