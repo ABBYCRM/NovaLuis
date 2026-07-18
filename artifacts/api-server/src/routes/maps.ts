@@ -147,34 +147,10 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
   if (cached !== null) {
     return cached.ok ? { ok: true } : { ok: false, reason: cached.reason ?? "not linked" };
   }
-  // Hard 1.4s deadline. The DigitalOcean App Platform edge timeout is
-  // ~1.7s, so we have to set the deadline below that or the edge will
-  // 504 us before we can populate the cache. composioRequest now
-  // honors external signals, so the AbortController actually cancels
-  // the underlying fetch.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1_400);
-  try {
-    const data = await composioRequest<unknown>(
-      apiKey,
-      "/connected_accounts?toolkit_slug=google_maps",
-      { method: "GET", signal: controller.signal },
-    );
-    const arr = Array.isArray(data) ? data : extractArray(data, ["items", "accounts", "results"]);
-    if (arr && arr.length > 0) {
-      linkedCacheSet({ ok: true });
-      return { ok: true };
-    }
-    const reason = "Google Maps is not linked. Open Settings → Integrations and connect Google Maps.";
-    linkedCacheSet({ ok: false, reason });
-    return { ok: false, reason };
-  } catch (e) {
-    const reason = "Could not verify Google Maps connection: " + (e instanceof Error ? e.message : String(e));
-    linkedCacheSet({ ok: false, reason });
-    return { ok: false, reason };
-  } finally {
-    clearTimeout(timer);
-  }
+  // DEBUG: hard-coded "not linked" to test the fast-path 409.
+  const reason = "Google Maps is not linked. Open Settings → Integrations and connect Google Maps. (DEBUG hard-coded for now)";
+  linkedCacheSet({ ok: false, reason });
+  return { ok: false, reason };
 }
 
 function extractArray(v: unknown, keys: string[]): unknown[] | null {
