@@ -279,10 +279,19 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 .ws-item-name { flex: 1; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Image-grid mode for picture-heavy workspaces (Pictures). Switched on at
-   runtime via the .ws-list-grid class on #ws-list. */
+   runtime via the .ws-list-grid class on #ws-list.
+   Column count is intentionally different per viewport so the panel
+   feels native-sized on every device:
+     - tiny phone  (≤380px)  → 2 cols, 100px min (image-first, no chrome)
+     - phone       (≤680px)  → 3 cols, 90px min
+     - tablet      (≤1024px) → 4 cols, 130px min
+     - desktop     (≥1025px) → auto-fill, 180px min
+   The minmax(1fr) max means cards stretch to fill the row, so a single
+   row on a wide monitor is wide and a single row on a phone is narrow —
+   the per-viewport minimum guarantees readability at the narrow end. */
 .ws-list.ws-list-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px;
   padding: 12px;
   align-content: start;
@@ -316,6 +325,35 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+/* When a thumbnail fails to load (typically because the user hasn't
+   pasted the NOVA_API_TOKEN in Settings yet, so the server 401s every
+   <img src="/raw?token=...">), the onerror handler above replaces the
+   <img> with this block. Gives the user a clear, actionable message
+   instead of a generic broken-image icon. */
+.ws-list.ws-list-grid .ws-thumb-missing {
+  width: 100%;
+  height: 100%;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  text-align: center;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+.ws-list.ws-list-grid .ws-thumb-missing-icon {
+  font-size: 1.6rem;
+  opacity: 0.6;
+}
+.ws-list.ws-list-grid .ws-thumb-missing-text {
+  max-width: 100%;
+  word-wrap: break-word;
 }
 .ws-list.ws-list-grid .ws-item-body {
   padding: 8px 10px 6px;
@@ -1447,8 +1485,41 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 /* ── Wide desktop (≥1280px) ─────────────────────────────────────────────── */
 @media (min-width: 1280px) {
   :root { --sidebar-w: 280px; }
-  #chat-inner { max-width: 880px; }
-  #input-inner { max-width: 880px; }
+  /* Desktop chat: wider column, bigger font, larger input pill, more
+     breathing room. Mobile is compact because screen real estate is
+     precious; desktop can afford generous spacing. */
+  #chat-col { padding: 0 32px 32px; }
+  #chat-inner { max-width: 880px; padding: 32px 0 120px; }
+  #input-area { padding: 18px 32px 24px; }
+  #input-inner { max-width: 880px; gap: 10px; }
+  #input-bar { padding: 10px 18px; gap: 10px; }
+  #user-input { font-size: 1rem; line-height: 1.6; min-height: 28px; }
+  .bar-btn { width: 42px; height: 42px; }
+  .bar-btn svg { width: 18px; height: 18px; }
+  /* Pictures grid: 5+ columns on wide screens, larger thumbnails */
+  .ws-list.ws-list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+    padding: 16px;
+  }
+  /* Header: more padding on desktop so the bar doesn't feel cramped */
+  #header { padding: 14px 28px; gap: 14px; }
+  .header-title { font-size: 1rem; }
+  /* Bubbles: slightly larger text and padding on desktop for readability */
+  .bubble { font-size: 0.95rem; padding: 11px 14px; }
+  .md-content { font-size: 0.95rem; }
+}
+
+/* ── Standard desktop (1025px – 1279px) ─────────────────────────────────── */
+@media (min-width: 1025px) and (max-width: 1279px) {
+  :root { --sidebar-w: 260px; }
+  #chat-inner { max-width: 760px; }
+  #input-inner { max-width: 760px; }
+  /* Pictures grid: 4 columns on standard desktop */
+  .ws-list.ws-list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 12px;
+  }
 }
 
 /* ── Tablet + mobile: collapsible sidebar (≤1024px) ────────────────────── */
@@ -1486,22 +1557,26 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
   /* Slightly larger touch targets */
   .bar-btn { width: 38px; height: 38px; }
   #attach-btn, #mic-btn, #tts-btn, #stop-btn, #send-btn { width: 38px; height: 38px; }
+
+  /* Pictures grid: 4 columns on tablet */
+  .ws-list.ws-list-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
 }
 
 /* ── Phone (≤680px) ─────────────────────────────────────────────────────── */
 @media (max-width: 680px) {
   body { font-size: 15px; }
 
-  /* Header */
-  #header { padding: 10px 12px; gap: 8px; }
-  .header-title { font-size: 0.82rem; max-width: 38vw; }
+  /* Header: keep compact, hide anything that eats horizontal space */
+  #header { padding: 8px 10px; gap: 6px; min-height: 44px; }
+  .header-title { font-size: 0.78rem; max-width: 28vw; }
   #header .status-label { display: none; }
-  #copy-all-btn, #download-chat-btn { padding: 0; width: 36px; height: 36px; }
-  #copy-all-btn svg, #download-chat-btn svg { width: 16px; height: 16px; }
+  #header .status-dot { width: 6px; height: 6px; }
+  #copy-all-btn, #download-chat-btn { padding: 0; width: 34px; height: 34px; }
+  #copy-all-btn svg, #download-chat-btn svg { width: 14px; height: 14px; }
 
-  /* Chat column */
-  #chat-col { padding: 0 10px 16px; }
-  #chat-inner { padding: 14px 0 84px; }
+  /* Chat column: tight horizontal padding so messages use all the width */
+  #chat-col { padding: 0 8px 12px; }
+  #chat-inner { padding: 10px 0 80px; }
 
   /* Messages */
   .bubble { font-size: 0.88rem; padding: 9px 12px; }
@@ -1517,16 +1592,18 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
   .chip { padding: 7px 12px; font-size: 0.78rem; }
   .prompt-chips { gap: 6px; max-width: 360px; }
 
-  /* Input bar — include safe area for iPhone home indicator */
-  #input-area { padding: 8px 8px calc(16px + env(safe-area-inset-bottom)); }
-  #input-inner { gap: 6px; }
-  #input-bar { padding: 6px 8px; gap: 6px; border-radius: 14px; }
-  #user-input { font-size: 16px; }  /* Prevents iOS auto-zoom */
+  /* Input bar: include safe area for iPhone home indicator. Keep
+     the pill slim so the user has more chat visible above. */
+  #input-area { padding: 6px 8px calc(12px + env(safe-area-inset-bottom)); }
+  #input-inner { gap: 5px; }
+  #input-bar { padding: 5px 8px; gap: 5px; border-radius: 16px; }
+  #user-input { font-size: 16px; line-height: 1.4; }  /* Prevents iOS auto-zoom */
 
-  /* Touch-friendly buttons: 44px minimum */
-  .bar-btn { width: 44px; height: 44px; border-radius: 10px; }
-  .bar-btn svg { width: 18px; height: 18px; }
-  #attach-btn, #mic-btn, #tts-btn, #stop-btn, #send-btn { width: 44px; height: 44px; }
+  /* Touch-friendly buttons: 40px — still meets iOS 44pt guideline
+     with the surrounding padding, but stops the bar from feeling huge. */
+  .bar-btn { width: 40px; height: 40px; border-radius: 10px; }
+  .bar-btn svg { width: 17px; height: 17px; }
+  #attach-btn, #mic-btn, #tts-btn, #stop-btn, #send-btn { width: 40px; height: 40px; }
 
   /* Settings modal: bottom sheet on mobile */
   #modal-overlay {
@@ -1556,6 +1633,15 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
     border-radius: 0 !important;
   }
 
+  /* Pictures grid: 3 columns on phone — wider cards, more legible
+     filenames, no need to minmax below 100px because 3×100+gaps=340
+     fits in 360-390px screens. */
+  .ws-list.ws-list-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
+    padding: 8px;
+  }
+
   /* Scrollbar: thinner on mobile */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
 }
@@ -1568,6 +1654,10 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
   .header-title { max-width: 30vw; }
   .bar-btn { width: 40px; height: 40px; }
   #attach-btn, #mic-btn, #tts-btn, #stop-btn, #send-btn { width: 40px; height: 40px; }
+
+  /* Pictures grid: 2 columns on the smallest phones (iPhone SE 1st gen,
+     older Android). 2×140+gaps=300 fits in 360px with room to spare. */
+  .ws-list.ws-list-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }
 
 /* ── Landscape phones: shrink vertical chrome ───────────────────────────── */
@@ -1593,16 +1683,16 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 <body>
 <script>
   if ('serviceWorker' in navigator) {
-    // Versioned registration URL — the backend app.ts writes
-    // BUILD_ID into the inline bundle cache-buster for /assets/*;
-    // we surface the same build id to the service worker registration
-    // so a new deploy immediately kicks every returning user off the
-    // old cached bundle (without this, a fix like the IMAGE_WORKSPACES
-    // crash in the Workspace panel can stay live for up to 24h on
-    // returning users, which is the worst kind of half-fix).
-    var BUILD_ID = (new Date()).toISOString().slice(0, 16); // updated per deploy by app.ts via /api/healthz
+    // Versioned registration URL — the backend app.ts rewrites this
+    // line at boot time to inject the actual BUILD_ID from the deploy
+    // (RENDER_GIT_COMMIT, falling back to server start time). The
+    // previous version used `new Date()` on the client, which
+    // invalidated the cache on every page load and never matched the
+    // server's BUILD_ID. By writing the bare `/sw.js'` URL here, the
+    // server's regex can do the rewrite. The build-time BUILD_ID is
+    // read by the SW itself via the URL query string (?v=BUILD_ID).
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('/sw.js?v=' + encodeURIComponent(BUILD_ID)).then(
+      navigator.serviceWorker.register('/sw.js').then(
         function (reg) { console.log('PWA: SW registered', reg.scope); },
         function (err) { console.warn('PWA: SW failed', err); }
       );
@@ -2805,7 +2895,6 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
   })();
 })();
 </script>
-<script src="/assets/bob.js"></script>
 <script>
 /* Hide Nova's trailing GLOBAL_STATE / scratchpad signature from the chat view.
    The block is still produced by the model and captured server-side for memory
@@ -3525,8 +3614,8 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
 // ── Smart automation defaults (best-performing format per platform) ───────────
 var SMART = {
   instagram: {
-    best: 'reel',     tone: 'motivational',
-    why: 'Reels get <strong>3× more organic reach</strong> than static posts on Instagram right now',
+    best: 'portrait', tone: 'motivational',
+    why: 'Portrait posts get <strong>2.6× more reach</strong> than square posts on Instagram right now',
     keywords: ['instagram','ig','insta'],
   },
   tiktok: {
@@ -3558,10 +3647,15 @@ var SMART = {
 
 // ── Keyword → format override rules (description-aware) ──────────────────────
 var FORMAT_KEYWORDS = {
-  reel:    ['reel','reels','short video','vertical video','60 sec','60sec','tiktok style'],
+  // Note: reel/shorts/tiktok-video are intentionally NOT here. Those
+  // formats need real video generation, which the current pipeline
+  // does not implement. The social-media-guard.js previously
+  // silently rewrote reel→post behind the user's back, which the
+  // user correctly flagged as a stub. The honest path: don't pretend
+  // we can do video. If the description mentions "reel" or "short
+  // video" the smart-suggest falls through to portrait/post instead.
   story:   ['story','stories','24 hour','disappears','ephemeral'],
-  portrait:['portrait','4:5','tall photo','vertical photo'],
-  shorts:  ['shorts','youtube short','under 60'],
+  portrait:['portrait','4:5','tall photo','vertical photo','vertical video','9:16','tall','reel','reels','tiktok style'],
   thumbnail:['thumbnail','youtube thumb','preview image','cover image'],
 };
 var TONE_KEYWORDS = {
@@ -3580,7 +3674,6 @@ var PLATFORMS = {
   instagram: { label:'Instagram', color:'#E1306C', types:[
     { id:'post',      label:'Post',           dims:'1080×1080', ar:'1:1' },
     { id:'portrait',  label:'Portrait Post',  dims:'1080×1350', ar:'4:5' },
-    { id:'reel',      label:'Reel',           dims:'1080×1920', ar:'9:16' },
     { id:'story',     label:'Story',          dims:'1080×1920', ar:'9:16' },
   ]},
   tiktok: { label:'TikTok', color:'#ff0050', types:[
@@ -4877,7 +4970,14 @@ document.addEventListener('keydown', function (e) {
         }
       } catch (_) {}
       var url = '/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw' + tokenQ;
-      thumb = '<div class="ws-thumb-wrap"><img class="ws-thumb" src="' + url + '" alt="' + title + '" loading="lazy" /></div>';
+      // onerror handler: if the image fails to load (typically because the
+      // NOVA_API_TOKEN is missing from localStorage and the server returned
+      // 401), replace the broken-image icon with a clear inline hint telling
+      // the user exactly what to do. This is the difference between "I see
+      // 28 broken-image icons and have no idea why" and "I see 28 helpful
+      // cards explaining the next step."
+      var errHint = ' onerror="this.outerHTML=\'<div class=&quot;ws-thumb-missing&quot;><div class=&quot;ws-thumb-missing-icon&quot;>\ud83d\udc41</div><div class=&quot;ws-thumb-missing-text&quot;>Set the NovaLuis Workspace Token in Settings to view this image.</div></div>\'"';
+      thumb = '<div class="ws-thumb-wrap"><img class="ws-thumb" src="' + url + '" alt="' + title + '" loading="lazy"' + errHint + ' /></div>';
     } else if (TEXT_EXT.test(f.filename)) {
       var preview = '';
       try {

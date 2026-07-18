@@ -37,6 +37,13 @@ router.use(composioRouter);
 router.use(githubRouter);
 router.use(knowledgeRouter);
 router.use(vectorMemoryRouter);
+// Workspaces and media are mounted at root, but the auth gate is registered
+// per-route (see requireApiAuthCall below) so it scopes only to the
+// /api/workspaces/* and /api/media/* paths. The previous
+// `router.use(requireApiAuth)` at the top of those sub-routers leaked
+// the gate into every other API route on the parent, causing chat,
+// maps, and every other endpoint to 401. See workspaces.ts / media.ts
+// for the per-route fix.
 router.use(workspacesRouter);
 router.use(mediaRouter);
 // The hardened Instagram publisher is mounted directly in app.ts before this

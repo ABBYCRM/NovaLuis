@@ -136,16 +136,13 @@ if (process.env["NODE_ENV"] === "production") {
     const renderIndexHtml = (): string => {
       if (indexHtmlCache != null) return indexHtmlCache;
       const raw = fs.readFileSync(indexHtml, "utf8");
-      // Keep the handwritten production HTML intact while loading a small guard
-      // after its inline Social Media script. The guard removes image-only Reel
-      // selection until a real video URL pipeline exists.
-      const withSocialGuard = raw.includes("/assets/social-media-guard.js")
-        ? raw
-        : raw.replace(
-            /<\/body>/i,
-            '<script src="/assets/social-media-guard.js"></script>\n</body>',
-          );
-      indexHtmlCache = withSocialGuard.replace(
+      // The 2026-07-18 Reel removal: the social-media-guard.js stub used
+      // to silently rewrite reel→post behind the user's back. It was a
+      // stub the user explicitly flagged. The UI now no longer offers
+      // "reel" as a content-type option (see PLATFORMS in index.html),
+      // so the guard is no longer needed and is no longer injected.
+      // The Reel option can come back when a real video pipeline ships.
+      indexHtmlCache = raw.replace(
         /(\/assets\/[A-Za-z0-9_\-./]+\.(?:js|css|png|jpe?g|svg|webp|gif|woff2?|ico))/g,
         `$1?v=${BUILD_ID}`,
       );

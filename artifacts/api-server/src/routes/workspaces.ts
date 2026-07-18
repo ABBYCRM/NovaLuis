@@ -25,10 +25,14 @@ import { requireApiAuth } from "../lib/api-auth";
 
 const router = Router();
 
-// All workspace routes require the NOVA_API_TOKEN. /raw is included so image
-// thumbnails served to <img> tags go through the same gate; the browser
-// proxy or service worker can attach x-nova-token to the request.
-router.use(requireApiAuth);
+// IMPORTANT: apply requireApiAuth PER-ROUTE, not via `router.use(...)` at the
+// top. Express sub-routers mounted at the parent root (no path prefix) leak
+// `router.use()` middleware into EVERY sibling sub-router, which previously
+// caused every /api/* call (chat, maps, capabilities, …) to 401 with "invalid
+// or missing API token" instead of only the workspace routes. The per-route
+// form below scopes the gate to just /api/workspaces/*. /raw is included so
+// image thumbnails served to <img> tags go through the same gate; the browser
+// shim or service worker attaches x-nova-token (or ?token= for <img>).
 
 // Valid workspace slugs – must match the client-side workspace list in
 // `artifacts/nova/index.html`. The validWs() regex below is the actual gate;
@@ -47,7 +51,7 @@ function dbGuard(res: import("express").Response): boolean {
 }
 
 // ── GET /workspaces ──────────────────────────────────────────────────────────
-router.get("/workspaces", async (_req, res) => {
+router.get("/workspaces", requireApiAuth, async (_req, res) => {
   if (!dbGuard(res)) return;
   try {
     const rows = await db!
@@ -69,7 +73,7 @@ router.get("/workspaces", async (_req, res) => {
 // via /raw — from shipping multi-megabyte JSON responses on every
 // panel open. Other workspaces that need the content (Calendar events,
 // Maps saved places, Notes previews) omit the param.
-router.get("/workspaces/:ws/files", async (req, res) => {
+router.get("/workspaces/:ws/files", requireApiAuth, async (req: import("express").Request<{ ws: string }>, res: import("express").Response) => {
   const ws = req.params.ws.toLowerCase();
   if (!validWs(ws)) { res.status(400).json({ error: "invalid workspace" }); return; }
   if (!dbGuard(res)) return;
@@ -98,7 +102,7 @@ router.get("/workspaces/:ws/files", async (req, res) => {
 });
 
 // ── GET /workspaces/:ws/files/:filename ──────────────────────────────────────
-router.get("/workspaces/:ws/files/:filename", async (req, res) => {
+router.get("/workspaces/:ws/files/:filename", requireApiAuth, async (req: import("express").Request<{ ws: string; filename: string }>, res: import("express").Response) => {
   const ws = req.params.ws.toLowerCase();
   const filename = req.params.filename;
   if (!validWs(ws) || !filename) { res.status(400).json({ error: "invalid params" }); return; }
@@ -141,7 +145,7 @@ const upsertSchema = z.object({
 // This is the route the Pictures workspace grid uses to render image
 // thumbnails. Authenticated by the NOVA_API_TOKEN middleware at the top of
 // this file; the browser fetch shim attaches the token via x-nova-token.
-router.get("/workspaces/:ws/files/:filename/raw", async (req, res) => {
+router.get("/workspaces/:ws/files/:filename/raw", requireApiAuth, async (req: import("express").Request<{ ws: string; filename: string }>, res: import("express").Response) => {
   const ws = req.params.ws.toLowerCase();
   const filename = req.params.filename;
   if (!validWs(ws) || !filename) { res.status(400).json({ error: "invalid params" }); return; }
@@ -179,7 +183,7 @@ router.get("/workspaces/:ws/files/:filename/raw", async (req, res) => {
 });
 
 // ── POST /workspaces/:ws/files ───────────────────────────────────────────────
-router.post("/workspaces/:ws/files", async (req, res) => {
+router.post("/workspaces/:ws/files", requireApiAuth, async (req: import("express").Request<{ ws: string }>, res: import("express").Response) => {
   const ws = req.params.ws.toLowerCase();
   if (!validWs(ws)) { res.status(400).json({ error: "invalid workspace" }); return; }
   const parsed = upsertSchema.safeParse(req.body);
@@ -209,7 +213,7 @@ router.post("/workspaces/:ws/files", async (req, res) => {
 });
 
 // ── DELETE /workspaces/:ws/files/:filename ───────────────────────────────────
-router.delete("/workspaces/:ws/files/:filename", async (req, res) => {
+router.delete("/workspaces/:ws/files/:filename", requireApiAuth, async (req: import("express").Request<{ ws: string; filename: string }>, res: import("express").Response) => {
   const ws = req.params.ws.toLowerCase();
   const filename = req.params.filename;
   if (!validWs(ws) || !filename) { res.status(400).json({ error: "invalid params" }); return; }

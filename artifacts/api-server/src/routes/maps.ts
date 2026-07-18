@@ -147,15 +147,17 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
   if (cached !== null) {
     return cached.ok ? { ok: true } : { ok: false, reason: cached.reason ?? "not linked" };
   }
-  // Hard 900ms deadline. The DigitalOcean App Platform edge timeout is
+  // Hard 600ms deadline. The DigitalOcean App Platform edge timeout is
   // ~1.7s, so we have to set the deadline well below that or the edge
   // will 504 us before we can populate the cache. On a timeout we
   // assume "not linked" (worst case) and return 409 in 409 shape, so
   // the operator can connect Maps in Composio and retry. composioRequest
   // now honors external signals, so the AbortController actually
-  // cancels the underlying fetch.
+  // cancels the underlying fetch. Tighter than the previous 900ms because
+  // the operator (who hasn't connected Maps yet) was still getting 504
+  // on the 900ms try.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 900);
+  const timer = setTimeout(() => controller.abort(), 600);
   try {
     const data = await composioRequest<unknown>(
       apiKey,
@@ -203,6 +205,16 @@ router.get("/maps/search", async (req: Request, res: Response) => {
   const q = String(req.query.q || "").trim();
   if (!q) { res.status(400).json({ error: "q parameter is required" }); return; }
 
+  // Route-level overall deadline. The DO edge times out at ~1.7s, so
+  // this gives us a hard 1500ms ceiling even if individual sub-steps
+  // ignore their own deadlines. If we hit it, the client gets a 503 with
+  // a clear "slow" reason rather than a 504 from the edge.
+  const routeController = new AbortController();
+  const routeTimer = setTimeout(() => routeController.abort(), 1500);
+  req.on("close", () => routeController.abort());
+
+  try {
+
   // Fast path: live Composio dispatch is opt-in via MAPS_COMPOSIO_ENABLED=1.
   // The default is a clean 409 so the route can never burn the DO edge
   // timeout on a slow composio lookup. The composio helpers below are
@@ -236,13 +248,13 @@ router.get("/maps/search", async (req: Request, res: Response) => {
   }
 
   // Step 2: ensure composio session for the tool call. Deadline
-  // budget: linked-check 900ms + session 600ms + 1 tool attempt 600ms
-  // = ~2.1s worst case, but linked-check is cached so steady state
-  // is 1.2s. The DO edge times out at ~1.7s, so we keep the per-step
+  // budget: linked-check 600ms + session 500ms + 1 tool attempt 400ms
+  // = ~1.5s worst case, but linked-check is cached so steady state
+  // is 0.9s. The DO edge times out at ~1.7s, so we keep the per-step
   // budget tight to leave room for JSON serialization.
   let session;
   try {
-    session = await ensureComposioSession({ deadlineMs: 600 });
+    session = await ensureComposioSession({ deadlineMs: 500 });
   } catch (e) {
     res.status(503).json({
       error: e instanceof Error ? e.message : String(e),
@@ -300,6 +312,21 @@ router.get("/maps/search", async (req: Request, res: Response) => {
     error: "Google Maps search failed across all known tool slugs. " + message,
     attempted: slugs,
   });
+  } finally {
+    clearTimeout(routeTimer);
+  }
+  // If the route controller aborted (e.g. the DO edge is about to 504 us
+  // and we couldn't complete in time), surface a clear 503 with a reason
+  // the operator can act on, instead of letting Express's default
+  // handler emit a hanging connection.
+  if (routeController.signal.aborted) {
+    if (!res.headersSent) {
+      res.status(503).json({
+        error: "Google Maps search exceeded the 1500ms route deadline. The composio endpoint is slow; try again or set MAPS_COMPOSIO_ENABLED=0 to use the 409 fast path.",
+        toolkit: "google_maps",
+      });
+    }
+  }
 });
 
 export default router;

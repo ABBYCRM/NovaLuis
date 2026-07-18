@@ -241,13 +241,14 @@ DESCRIPTION: "${description.slice(0, 500)}"
 CURRENT PLATFORM: ${currentPlatform || "none"}
 
 Platform options: instagram, tiktok, twitter, facebook, linkedin, youtube
-Content types per platform — instagram: post|portrait|reel|story, tiktok: video, twitter: post|square, facebook: post|story, linkedin: post|square, youtube: shorts|thumbnail
+Content types per platform — instagram: post|portrait|story, tiktok: video, twitter: post|square, facebook: post|story, linkedin: post|square, youtube: shorts|thumbnail
+Note: video-only formats (tiktok:video, youtube:shorts) are still accepted for backwards compat but the current pipeline only generates still images for them. instagram does NOT offer a "reel" content type any more — the UI no longer exposes it because real video generation isn't implemented.
 Tone options: motivational, sarcastic, optimistic, funny, professional, bold, inspirational, educational
 
 Consider: content type (video/image/text), target audience, current algorithm priorities, engagement patterns, virality potential.
 
 Return ONLY valid JSON (no markdown):
-{"platform":"instagram","contentType":"reel","tone":"funny","intervalHours":24,"reasoning":"one sentence max","postingTip":"one specific tactical tip"}`;
+{"platform":"instagram","contentType":"portrait","tone":"funny","intervalHours":24,"reasoning":"one sentence max","postingTip":"one specific tactical tip"}`;
 
   try {
     const ac = new AbortController();
@@ -276,7 +277,7 @@ Return ONLY valid JSON (no markdown):
     const rec = JSON.parse(rawText);
     res.json({
       platform:     rec.platform     || currentPlatform || "instagram",
-      contentType:  rec.contentType  || "reel",
+      contentType:  rec.contentType  || "portrait",
       tone:         rec.tone         || "motivational",
       intervalHours: Number(rec.intervalHours) || null,
       reasoning:    rec.reasoning    || "",
@@ -529,7 +530,7 @@ router.post("/social/publish/:id", async (req, res) => {
     // "story posted as square with a black bar" bug — the model returned a
     // 1:1 image when we asked for 9:16. Warn-and-continue; we don't block
     // the publish, we just surface the warning so the UI can show it.
-    if (hasPublicImageForCheck(post.imageUrl) && post.platform === "instagram" && post.contentType !== "reel") {
+    if (hasPublicImageForCheck(post.imageUrl) && post.platform === "instagram" && post.contentType !== "video") {
       try {
         const expected = expectedAspectFor(post.contentType);
         const buf = await fetchImageBuffer(post.imageUrl);
@@ -565,6 +566,9 @@ router.post("/social/publish/:id", async (req, res) => {
       // Step 1: create media container via INSTAGRAM_CREATE_MEDIA_CONTAINER
       // content_type enum: "photo" | "video" | "reel" | "carousel_item"
       // media_type string: "REELS" | "STORIES" (omit for regular photos)
+      // Note: "reel" was removed from the UI options in 2026-07-18
+      // (no real video pipeline), but the route still accepts it for
+      // backwards compat with any pre-existing scheduled posts.
       const igContentType =
         post.contentType === "reel"  ? "reel"  :
         post.contentType === "story" ? "photo" : "photo";

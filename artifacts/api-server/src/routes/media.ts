@@ -24,7 +24,12 @@ import { requireApiAuth } from "../lib/api-auth";
 
 const router = Router();
 
-router.use(requireApiAuth);
+// IMPORTANT: apply requireApiAuth PER-ROUTE, not via `router.use(...)` at the
+// top. See the matching comment in routes/index.ts and routes/workspaces.ts
+// for the full explanation of why this matters: a top-level
+// `router.use(requireApiAuth)` leaks into every sibling sub-router when the
+// sub-router is mounted at "/" on the parent, which previously caused every
+// /api/* call to 401.
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const GEMINI_KEY = () => process.env.GEMINI_API_KEY ?? "";
@@ -82,7 +87,7 @@ async function a2eFetch(
 }
 
 // ── GET /media/images/:id — serve a cached generated image ──────────────────
-router.get("/media/images/:id", (req, res) => {
+router.get("/media/images/:id", requireApiAuth, (req: import("express").Request<{ id: string }>, res: import("express").Response) => {
   const img = imageCache.get(req.params.id);
   if (!img) { res.status(404).json({ error: "image not found or expired" }); return; }
   res.setHeader("Content-Type", img.mimeType);
@@ -101,7 +106,7 @@ const imageGenSchema = z.object({
   aspectRatio: z.enum(["1:1", "16:9", "9:16", "4:3", "3:4"]).default("1:1"),
 });
 
-router.post("/media/image/generate", async (req, res) => {
+router.post("/media/image/generate", requireApiAuth, async (req, res) => {
   const key = GEMINI_KEY();
   if (!key) { res.status(503).json({ error: "GEMINI_API_KEY not configured" }); return; }
 
@@ -196,7 +201,7 @@ const avatarVideoSchema = z.object({
   background: z.string().optional(),
 });
 
-router.post("/media/video/avatar", async (req, res) => {
+router.post("/media/video/avatar", requireApiAuth, async (req, res) => {
   if (!A2E_KEY()) { res.status(503).json({ error: "A2E_AI_API_KEY not configured" }); return; }
   const parsed = avatarVideoSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -221,7 +226,7 @@ const img2vidSchema = z.object({
   duration: z.number().int().min(2).max(30).default(5),
 });
 
-router.post("/media/video/image-to-video", async (req, res) => {
+router.post("/media/video/image-to-video", requireApiAuth, async (req, res) => {
   if (!A2E_KEY()) { res.status(503).json({ error: "A2E_AI_API_KEY not configured" }); return; }
   const parsed = img2vidSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -240,7 +245,7 @@ router.post("/media/video/image-to-video", async (req, res) => {
 });
 
 // ── GET /media/video/status/:id ───────────────────────────────────────────────
-router.get("/media/video/status/:id", async (req, res) => {
+router.get("/media/video/status/:id", requireApiAuth, async (req: import("express").Request<{ id: string }>, res: import("express").Response) => {
   if (!A2E_KEY()) { res.status(503).json({ error: "A2E_AI_API_KEY not configured" }); return; }
   try {
     const result = await a2eFetch(`/api/v1/userImage2Video/${encodeURIComponent(req.params.id)}`);
@@ -251,7 +256,7 @@ router.get("/media/video/status/:id", async (req, res) => {
 });
 
 // ── GET /media/video/list ────────────────────────────────────────────────────
-router.get("/media/video/list", async (_req, res) => {
+router.get("/media/video/list", requireApiAuth, async (_req, res) => {
   if (!A2E_KEY()) { res.status(503).json({ error: "A2E_AI_API_KEY not configured" }); return; }
   try {
     const result = await a2eFetch("/api/v1/userImage2Video/allRecords");
