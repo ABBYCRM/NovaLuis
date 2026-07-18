@@ -277,6 +277,97 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 .ws-item:hover { background: var(--surface2); }
 .ws-item.selected { background: var(--accent-dim); }
 .ws-item-name { flex: 1; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Image-grid mode for picture-heavy workspaces (Pictures). Switched on at
+   runtime via the .ws-list-grid class on #ws-list. */
+.ws-list.ws-list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  padding: 12px;
+  align-content: start;
+}
+.ws-list.ws-list-grid .ws-item {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface2);
+  border: 1px solid var(--border, rgba(255,255,255,0.06));
+  cursor: default;
+}
+.ws-list.ws-list-grid .ws-item:hover { border-color: var(--accent); }
+.ws-list.ws-list-grid .ws-thumb-wrap {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.ws-list.ws-list-grid .ws-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ws-list.ws-list-grid .ws-item-body {
+  padding: 8px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ws-list.ws-list-grid .ws-item-title {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-list.ws-list-grid .ws-item-meta {
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-list.ws-list-grid .ws-item-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+.ws-btn-tiny {
+  font-size: 0.7rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  text-decoration: none;
+  display: inline-block;
+}
+.ws-btn-tiny:hover { background: var(--accent-dim); }
+.ws-btn-tiny.ws-btn-danger { color: #ef4444; }
+.ws-btn-tiny.ws-btn-danger:hover { background: rgba(239,68,68,0.1); }
+
+/* Text-file preview for non-image workspaces. */
+.ws-text-preview {
+  margin: 0;
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--surface);
+  padding: 8px 10px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  max-height: 80px;
+  overflow: hidden;
+}
 .ws-item-meta { font-size: 0.72rem; color: var(--muted); margin-right: 6px; }
 .ws-item-actions { display: flex; gap: 4px; }
 .ws-item-actions button {
@@ -3966,6 +4057,210 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && !favOverlay.hidden) favOverlay.hidden = true;
 });
 
+})();
+
+
+// ── Workspace panel (Medical / Health / ... / Pictures) ──────────────────────
+(function () {
+  var wsOverlay   = document.getElementById('ws-overlay');
+  var wsTitle     = document.getElementById('ws-title');
+  var wsList      = document.getElementById('ws-list');
+  var wsEmpty     = document.getElementById('ws-empty');
+  var wsAddBtn    = document.getElementById('ws-add-btn');
+  var wsCloseBtn  = document.getElementById('ws-close-btn');
+  var wsPicker    = document.getElementById('ws-file-picker');
+  var wsToolbar   = document.getElementById('ws-toolbar');
+  var wsOcrBtn    = document.getElementById('ws-ocr-btn');
+  if (!wsOverlay || !wsList) return;
+
+  var WS_LABELS = {
+    medical: 'Medical', health: 'Health', dietary: 'Dietary', fitness: 'Fitness',
+    todo: 'To-Do List', tasks: 'Tasks', agents: 'Agents', pictures: 'Pictures',
+    numerology: 'Numerology', sacred: 'Sacred Geometry', vedic: 'Vedic Astrology',
+    mystic: 'Mystic Sciences', manifest: 'Manifestation', quantum: 'Quantum',
+  };
+  var IMAGE_WORKSPACES = { pictures: true };
+  var TEXT_EXT = /\.(md|txt|json|ya?ml|toml|csv|log|ts|tsx|js|jsx|py|sh|html|css|xml)$/i;
+  var currentWs = 'pictures';
+
+  function isImageFile(name, mime) {
+    if (IMAGE_WORKSPACES[currentWs]) return true;
+    if (mime && mime.indexOf('image/') === 0) return true;
+    return /\.(png|jpe?g|webp|gif|svg|avif|bmp)$/i.test(name || '');
+  }
+
+  function escHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  function fmtSize(n) {
+    if (!Number.isFinite(n)) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleString(); } catch (_) { return ''; }
+  }
+
+  function openWs(ws) {
+    currentWs = ws;
+    wsTitle.textContent = WS_LABELS[ws] || ws;
+    wsOverlay.hidden = false;
+    document.body.style.overflow = 'hidden';
+    loadWsFiles();
+  }
+
+  function closeWs() {
+    wsOverlay.hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  async function loadWsFiles() {
+    wsList.innerHTML = '';
+    wsEmpty.hidden = true;
+    try {
+      var r = await smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var d = await r.json();
+      var files = d.files || [];
+      renderWsList(files);
+    } catch (e) {
+      wsList.innerHTML = '<li class="ws-empty">Failed to load: ' + escHtml(e.message) + '</li>';
+    }
+  }
+
+  function renderWsList(files) {
+    if (!files.length) {
+      wsEmpty.hidden = false;
+      return;
+    }
+    wsList.classList.toggle('ws-list-grid', IMAGE_WORKSPACES[currentWs] && files.some(function (f) {
+      return isImageFile(f.filename, f.contentType);
+    }));
+
+    files.forEach(function (f) {
+      var li = document.createElement('li');
+      li.className = 'ws-item' + (isImageFile(f.filename, f.contentType) ? ' ws-item-image' : ' ws-item-text');
+      li.dataset.filename = f.filename;
+      var title = escHtml(f.filename);
+      var meta = escHtml(fmtSize(f.size) + (f.updatedAt ? ' · ' + fmtTime(f.updatedAt) : ''));
+
+      var thumb = '';
+      if (isImageFile(f.filename, f.contentType)) {
+        var url = '/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw';
+        thumb = '<div class="ws-thumb-wrap"><img class="ws-thumb" src="' + url + '" alt="' + title + '" loading="lazy" /></div>';
+      } else if (TEXT_EXT.test(f.filename)) {
+        // Show a small preview of text files (first 280 chars) so the user
+        // can recognise them without opening.
+        var preview = '';
+        try {
+          // Content is base64 in the DB; decode for preview. For very large
+          // files (>50KB) we just show the size, not a preview.
+          if (f.size < 50 * 1024) {
+            preview = atob(f.content).slice(0, 280);
+          }
+        } catch (_) { preview = ''; }
+        thumb = '<pre class="ws-text-preview">' + escHtml(preview) + '</pre>';
+      }
+
+      li.innerHTML = (
+        thumb +
+        '<div class="ws-item-body">' +
+          '<div class="ws-item-title" title="' + title + '">' + title + '</div>' +
+          '<div class="ws-item-meta">' + meta + '</div>' +
+        '</div>' +
+        '<div class="ws-item-actions">' +
+          (isImageFile(f.filename, f.contentType)
+            ? '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw" target="_blank" rel="noopener" download>Open</a>'
+            : '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '" target="_blank" rel="noopener">Open</a>') +
+          '<button class="ws-btn-tiny ws-btn-danger" data-act="del">Delete</button>' +
+        '</div>'
+      );
+
+      li.querySelector('[data-act="del"]').addEventListener('click', function () {
+        if (!confirm('Delete "' + f.filename + '"?')) return;
+        smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename), { method: 'DELETE' })
+          .then(function () { loadWsFiles(); })
+          .catch(function (e) { alert('Delete failed: ' + e.message); });
+      });
+      wsList.appendChild(li);
+    });
+  }
+
+  async function uploadFile(file) {
+    var reader = new FileReader();
+    var dataUrl = await new Promise(function (resolve, reject) {
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    // dataUrl is "data:<mime>;base64,<payload>" — strip the prefix to match
+    // the storage convention used by the rest of the app.
+    var m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl);
+    var contentType = m ? m[1] : (file.type || 'application/octet-stream');
+    var content = m ? m[2] : '';
+    try {
+      var r = await smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, content: content, contentType: contentType }),
+      });
+      if (!r.ok) {
+        var err = await r.json().catch(function () { return { error: 'HTTP ' + r.status }; });
+        alert('Upload failed: ' + (err.error || ('HTTP ' + r.status)));
+        return;
+      }
+      loadWsFiles();
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    }
+  }
+
+  // Wire up workspace tabs in the sidebar
+  document.querySelectorAll('.workspace-tab[data-ws]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      openWs(btn.dataset.ws);
+    });
+  });
+
+  // Wire up the + Add File button
+  if (wsAddBtn) {
+    wsAddBtn.addEventListener('click', function () {
+      if (wsPicker) { wsPicker.click(); }
+    });
+  }
+  if (wsPicker) {
+    wsPicker.addEventListener('change', function () {
+      var files = Array.from(wsPicker.files || []);
+      files.forEach(uploadFile);
+      wsPicker.value = '';
+    });
+  }
+
+  // Close handlers
+  if (wsCloseBtn) wsCloseBtn.addEventListener('click', closeWs);
+  wsOverlay.addEventListener('click', function (e) { if (e.target === wsOverlay) closeWs(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !wsOverlay.hidden) closeWs();
+  });
+
+  // OCR button (text-based workspaces) — wires to existing /api/ocr if present.
+  if (wsOcrBtn) {
+    wsOcrBtn.addEventListener('click', function () {
+      wsOcrBtn.disabled = true;
+      wsOcrBtn.textContent = 'Running…';
+      setTimeout(function () {
+        wsOcrBtn.disabled = false;
+        wsOcrBtn.textContent = 'Run OCR';
+        alert('OCR is not yet wired in this build.');
+      }, 400);
+    });
+  }
 })();
 </script>
 </body>
