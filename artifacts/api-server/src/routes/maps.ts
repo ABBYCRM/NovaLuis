@@ -190,6 +190,7 @@ function extractArray(v: unknown, keys: string[]): unknown[] | null {
 router.get("/maps/search", async (req: Request, res: Response) => {
   const q = String(req.query.q || "").trim();
   if (!q) { res.status(400).json({ error: "q parameter is required" }); return; }
+  res.status(409).json({ error: "DEBUG: hard-coded 409 to confirm route is reachable", q }); return;
 
   // Step 1: linked-account check FIRST. This call uses the project API
   // key directly — no composio session required — so it can complete
