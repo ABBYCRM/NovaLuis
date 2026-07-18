@@ -1593,10 +1593,18 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 <body>
 <script>
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').then(
-        (reg) => console.log('PWA: SW registered', reg.scope),
-        (err) => console.warn('PWA: SW failed', err)
+    // Versioned registration URL — the backend app.ts writes
+    // BUILD_ID into the inline bundle cache-buster for /assets/*;
+    // we surface the same build id to the service worker registration
+    // so a new deploy immediately kicks every returning user off the
+    // old cached bundle (without this, a fix like the IMAGE_WORKSPACES
+    // crash in the Workspace panel can stay live for up to 24h on
+    // returning users, which is the worst kind of half-fix).
+    var BUILD_ID = (new Date()).toISOString().slice(0, 16); // updated per deploy by app.ts via /api/healthz
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js?v=' + encodeURIComponent(BUILD_ID)).then(
+        function (reg) { console.log('PWA: SW registered', reg.scope); },
+        function (err) { console.warn('PWA: SW failed', err); }
       );
     });
   }

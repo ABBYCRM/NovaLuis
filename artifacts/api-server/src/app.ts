@@ -130,6 +130,15 @@ if (process.env["NODE_ENV"] === "production") {
         /(\/assets\/[A-Za-z0-9_\-./]+\.(?:js|css|png|jpe?g|svg|webp|gif|woff2?|ico))/g,
         `$1?v=${BUILD_ID}`,
       );
+      // Also stamp the service-worker registration with the same BUILD_ID
+      // so a new deploy immediately invalidates the user's cached bundle.
+      // Without this, returning users stay on the old sw.js (and therefore
+      // the old index.html) for up to 24h, which would freeze them on
+      // any code bug fixed in a later deploy.
+      indexHtmlCache = indexHtmlCache.replace(
+        /navigator\.serviceWorker\.register\((['"])(\/sw\.js)(['"])\)/,
+        "navigator.serviceWorker.register($1$2?v=" + BUILD_ID + "$3)",
+      );
       logger.info({ buildId: BUILD_ID }, "Index HTML cache-busting version");
       return indexHtmlCache;
     };
