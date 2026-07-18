@@ -191,22 +191,34 @@ router.get("/maps/search", async (req: Request, res: Response) => {
   const q = String(req.query.q || "").trim();
   if (!q) { res.status(400).json({ error: "q parameter is required" }); return; }
 
+  // Step 1: linked-account check FIRST. This call uses the project API
+  // key directly — no composio session required — so it can complete
+  // independently of session-resolution latency. The DO edge times out
+  // at ~1.7s; doing this first lets us return 409 in <1s when the
+  // toolkit isn't linked, instead of burning the whole budget on
+  // session creation + linked-check + tool call.
+  const apiKey = process.env.COMPOSIO_API_KEY ?? "";
+  if (!apiKey) {
+    res.status(503).json({
+      error: "Composio is not configured. Set COMPOSIO_API_KEY in the api-server env.",
+    });
+    return;
+  }
+  const linked = await ensureGoogleMapsLinked(apiKey);
+  if (linked.ok === false) {
+    res.status(409).json({ error: linked.reason, toolkit: "google_maps" });
+    return;
+  }
+
+  // Step 2: ensure composio session for the tool call.
   let session;
   try {
-    // Tight deadline — the DO App Platform edge times out at ~1.7s and we
-    // need a few hundred ms after this for the linked-check + tool call.
     session = await ensureComposioSession({ deadlineMs: 1_400 });
   } catch (e) {
     res.status(503).json({
       error: e instanceof Error ? e.message : String(e),
       hint: "Composio is not configured. Set COMPOSIO_API_KEY in the api-server env.",
     });
-    return;
-  }
-
-  const linked = await ensureGoogleMapsLinked(session.apiKey);
-  if (linked.ok === false) {
-    res.status(409).json({ error: linked.reason, toolkit: "google_maps" });
     return;
   }
 
