@@ -2252,11 +2252,20 @@ function smFetch2(path, opts) {
   // Tap the dimmed backdrop to close.
   overlay.addEventListener('click', close);
   // Tap any sidebar item on mobile to close after navigation.
+  // Tap any LEAF sidebar item on mobile to close after navigation. The
+  // list is restricted to actions that should actually leave the sidebar
+  // (workspace-tab open, settings / social-media panel, etc.) so the
+  // ws-toggle collapse button — which only re-renders the inner list —
+  // does not collapse the sidebar itself.
   sidebar.addEventListener('click', function (e) {
     const t = e.target;
-    if (t && t.closest && t.closest('button, a, .workspace-tab, [data-ws]')) {
-      // Only auto-close on the small viewport where the sidebar is fixed.
-      if (window.matchMedia && window.matchMedia('(max-width: 1024px)').matches) {
+    if (!t || !t.closest) return;
+    if (window.matchMedia && window.matchMedia('(max-width: 1024px)').matches) {
+      if (
+        t.closest('.workspace-tab') ||
+        t.closest('[data-sidebar-nav]') ||
+        (t.closest('button') && t.closest('button') === e.currentTarget)
+      ) {
         // Defer so the click handler still fires before the panel closes.
         setTimeout(close, 50);
       }
