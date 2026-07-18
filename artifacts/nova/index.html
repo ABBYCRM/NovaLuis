@@ -4524,7 +4524,10 @@ document.addEventListener('keydown', function (e) {
   calCursor.setDate(1);
 
   function isImageFile(name, mime) {
-    if (IMAGE_WORKSPACES[currentWs]) return true;
+    // Workspaces whose render mode is imageGrid (e.g. "pictures") treat
+    // every file as an image, even if the upload is non-image (the
+    // Pictures workspace expects to display thumbnails for everything).
+    if (WS_MODES[currentWs] === 'imageGrid') return true;
     if (mime && mime.indexOf('image/') === 0) return true;
     return /\.(png|jpe?g|webp|gif|svg|avif|bmp)$/i.test(name || '');
   }
