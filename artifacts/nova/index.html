@@ -2405,7 +2405,27 @@ function smFetch2(path, opts) {
   var saveBtnEl = document.getElementById('save-settings-btn');
   function populate() { field.value = realKey(read().openaiKey); }
   populate();
-  if (settingsBtnEl) settingsBtnEl.addEventListener('click', function () { setTimeout(populate, 0); });
+  if (settingsBtnEl) settingsBtnEl.addEventListener('click', function () {
+    // The settings button needs to actually open the modal. The modal is
+    // `#modal-overlay` and requires the `open` class to be visible. The
+    // TTS-key populate runs as a side-effect when the modal is open so
+    // the field is hydrated by the time the user sees it.
+    setTimeout(populate, 0);
+    var modal = document.getElementById('modal-overlay');
+    if (modal) modal.classList.add('open');
+  });
+  // Wire the close button + click-on-overlay to dismiss. Without this the
+  // modal opens but the user has no way out (the X button is a real <button>
+  // in the DOM but had no handler).
+  var closeBtnEl = document.getElementById('modal-close');
+  if (closeBtnEl) closeBtnEl.addEventListener('click', function () {
+    var modal = document.getElementById('modal-overlay');
+    if (modal) modal.classList.remove('open');
+  });
+  var modalOverlayEl = document.getElementById('modal-overlay');
+  if (modalOverlayEl) modalOverlayEl.addEventListener('click', function (ev) {
+    if (ev.target === modalOverlayEl) modalOverlayEl.classList.remove('open');
+  });
   if (saveBtnEl) saveBtnEl.addEventListener('click', function () {
     var entered = field.value.trim();
     setTimeout(function () {
