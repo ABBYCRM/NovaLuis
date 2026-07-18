@@ -422,12 +422,13 @@ async function resolveProjectApiKeyFromOrgKey(
   return derivedProjectCredential;
 }
 
-async function sessionExists(apiKey: string, sessionId: string): Promise<boolean> {
+async function sessionExists(apiKey: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
   if (!sessionId) return false;
   try {
     await composioRequest<unknown>(
       apiKey,
       `/tool_router/session/${encodeURIComponent(sessionId)}`,
+      signal ? { signal } : {},
     );
     return true;
   } catch (error) {
@@ -446,9 +447,10 @@ async function ensureSessionForProjectKey(
   config: ComposioConfig,
   credentialSource: "project" | "organization",
   resolvedProjectId?: string,
+  signal?: AbortSignal,
 ): Promise<ComposioSession> {
   const candidate = processSessionId || config.storedSessionId;
-  if (candidate && (await sessionExists(apiKey, candidate))) {
+  if (candidate && (await sessionExists(apiKey, candidate, signal))) {
     processSessionId = candidate;
     return {
       sessionId: candidate,
@@ -465,6 +467,7 @@ async function ensureSessionForProjectKey(
     {
       method: "POST",
       body: JSON.stringify({ user_id: config.userId }),
+      ...(signal ? { signal } : {}),
     },
   );
 
@@ -492,7 +495,7 @@ async function ensureSessionForProjectKey(
   };
 }
 
-export async function ensureComposioSession(): Promise<ComposioSession> {
+export async function ensureComposioSession(opts: { deadlineMs?: number } = {}): Promise<ComposioSession> {
   const config = await getComposioConfig();
   if (!config.configured) {
     throw new ComposioApiError(
@@ -500,53 +503,64 @@ export async function ensureComposioSession(): Promise<ComposioSession> {
       503,
     );
   }
-
-  let lastAuthError: unknown = null;
-  for (const apiKey of config.projectApiKeys) {
-    try {
-      return await ensureSessionForProjectKey(apiKey, config, "project");
-    } catch (error) {
-      if (
-        error instanceof ComposioApiError &&
-        (error.status === 401 || error.status === 403)
-      ) {
-        lastAuthError = error;
-        processSessionId = "";
-        continue;
+  // Bound the whole session-resolution flow so a slow Composio can never
+  // eat the request budget. The DO App Platform edge times out at ~1.7s;
+  // routes that need composio should pass a deadlineMs below that.
+  const deadlineMs = opts.deadlineMs ?? 15_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deadlineMs);
+  try {
+    let lastAuthError: unknown = null;
+    for (const apiKey of config.projectApiKeys) {
+      try {
+        // The internal requestWithAuth now honors external signals.
+        return await ensureSessionForProjectKey(apiKey, config, "project", undefined, controller.signal);
+      } catch (error) {
+        if (
+          error instanceof ComposioApiError &&
+          (error.status === 401 || error.status === 403)
+        ) {
+          lastAuthError = error;
+          processSessionId = "";
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
-  }
 
-  for (const orgApiKey of config.orgApiKeys) {
-    try {
-      const resolved = await resolveProjectApiKeyFromOrgKey(
-        orgApiKey,
-        config.projectId,
-        config.projectName,
-      );
-      return await ensureSessionForProjectKey(
-        resolved.apiKey,
-        config,
-        "organization",
-        resolved.projectId,
-      );
-    } catch (error) {
-      if (
-        error instanceof ComposioApiError &&
-        (error.status === 401 || error.status === 403)
-      ) {
-        lastAuthError = error;
-        processSessionId = "";
-        derivedProjectCredential = null;
-        continue;
+    for (const orgApiKey of config.orgApiKeys) {
+      try {
+        const resolved = await resolveProjectApiKeyFromOrgKey(
+          orgApiKey,
+          config.projectId,
+          config.projectName,
+        );
+        return await ensureSessionForProjectKey(
+          resolved.apiKey,
+          config,
+          "organization",
+          resolved.projectId,
+          controller.signal,
+        );
+      } catch (error) {
+        if (
+          error instanceof ComposioApiError &&
+          (error.status === 401 || error.status === 403)
+        ) {
+          lastAuthError = error;
+          processSessionId = "";
+          derivedProjectCredential = null;
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
-  }
 
-  if (lastAuthError instanceof Error) throw lastAuthError;
-  throw new ComposioApiError("No usable Composio credential was found", 503);
+    if (lastAuthError instanceof Error) throw lastAuthError;
+    throw new ComposioApiError("No usable Composio credential was found", 503);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function clearComposioSessionCache(): void {

@@ -193,7 +193,9 @@ router.get("/maps/search", async (req: Request, res: Response) => {
 
   let session;
   try {
-    session = await ensureComposioSession();
+    // Tight deadline — the DO App Platform edge times out at ~1.7s and we
+    // need a few hundred ms after this for the linked-check + tool call.
+    session = await ensureComposioSession({ deadlineMs: 1_400 });
   } catch (e) {
     res.status(503).json({
       error: e instanceof Error ? e.message : String(e),
