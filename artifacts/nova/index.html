@@ -5439,6 +5439,292 @@ document.addEventListener('keydown', function (e) {
   });
 })();
 </script>
+
+<!-- ── Chat send handler ──────────────────────────────────────────────────────
+     CRITICAL FIX: bob.js previously owned the send button. After bob.js was
+     stubbed out (PR #33) and then deleted (commit 5d5de37), the click and
+     Enter-key handlers on the send button were never re-implemented. The
+     "Feature 1" handler above only handles attachment injection — there was
+     no actual POST to /api/v1/chat/completions anywhere in index.html. This
+     caused the user-reported "thinks and stops" bug: clicking send did
+     nothing, no message bubble appeared, no API call was made.
+
+     This script restores the send-handler without depending on bob.js. It:
+       1. Reads text from #user-input
+       2. Appends a user message bubble to #chat-inner
+       3. POSTs to /api/v1/chat/completions (the same-origin server proxy
+          which injects the OPENAI/Bitdeer key)
+       4. Streams the assistant response into a new bubble
+       5. Wires the Stop button to abort the in-flight request
+       6. Resizes the textarea on input
+       7. Persists the message history to localStorage
+-->
+<script>
+(function () {
+  'use strict';
+
+  var LS_CHATS   = 'bob-chats';
+  var LS_CURRENT = 'bob-current-chat-id';
+  var LS_SETTINGS = 'bob-settings';
+
+  // Bail out if the DOM the send handler needs isn't on the page.
+  var userInput = document.getElementById('user-input');
+  var sendBtn   = document.getElementById('send-btn');
+  var stopBtn   = document.getElementById('stop-btn');
+  var chatInner = document.getElementById('chat-inner');
+  if (!userInput || !sendBtn || !chatInner) {
+    console.warn('[chat] missing #user-input / #send-btn / #chat-inner; send handler not installed');
+    return;
+  }
+
+  function getSettings() {
+    try { return JSON.parse(localStorage.getItem(LS_SETTINGS) || '{}'); } catch (_) { return {}; }
+  }
+  function getApiKey() {
+    var s = getSettings();
+    var k = s.apiKey || '';
+    return (k && k !== 'proxy' && k.indexOf('{env:') === -1) ? k : 'proxy';
+  }
+  function getBaseUrl() {
+    var s = getSettings();
+    return s.baseUrl || '/api/v1';
+  }
+  function getModel() {
+    var s = getSettings();
+    return s.model || 'gpt-4o';
+  }
+  function getSystemPrompt() {
+    var s = getSettings();
+    return s.systemPrompt || '';
+  }
+
+  // ── Persistence ──────────────────────────────────────────────────────────
+  function loadCurrentChat() {
+    var id = localStorage.getItem(LS_CURRENT);
+    if (!id) return null;
+    try {
+      var all = JSON.parse(localStorage.getItem(LS_CHATS) || '[]');
+      for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    } catch (_) {}
+    return null;
+  }
+  function saveCurrentChat(chat) {
+    if (!chat) return;
+    try {
+      var all = JSON.parse(localStorage.getItem(LS_CHATS) || '[]');
+      var idx = -1;
+      for (var i = 0; i < all.length; i++) if (all[i].id === chat.id) { idx = i; break; }
+      if (idx === -1) all.unshift(chat);
+      else all[idx] = chat;
+      // Keep at most 50 chats in storage
+      all = all.slice(0, 50);
+      localStorage.setItem(LS_CHATS, JSON.stringify(all));
+      localStorage.setItem(LS_CURRENT, chat.id);
+    } catch (_) {}
+  }
+  function ensureChat() {
+    var c = loadCurrentChat();
+    if (c) return c;
+    c = {
+      id: 'chat-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+      title: 'New chat',
+      createdAt: Date.now(),
+      messages: [],
+    };
+    saveCurrentChat(c);
+    return c;
+  }
+
+  // ── Render: re-hydrate the chat-inner from saved messages on first load ─
+  function renderMessage(role, content) {
+    var row = document.createElement('div');
+    row.className = 'msg-row ' + (role === 'user' ? 'msg-user' : 'msg-assistant');
+    var avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? 'You' : 'AI';
+    var body = document.createElement('div');
+    body.className = 'msg-body';
+    var bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (role === 'user' ? 'bubble-user' : 'bubble-assistant');
+    bubble.textContent = content;
+    body.appendChild(bubble);
+    row.appendChild(avatar);
+    row.appendChild(body);
+    chatInner.appendChild(row);
+    chatInner.scrollTop = chatInner.scrollHeight;
+    return { row: row, bubble: bubble };
+  }
+
+  // Wipe whatever is in chat-inner (e.g. a stale empty-state or bob.js
+  // leftover) and re-hydrate from localStorage. Without this the user
+  // would never see their saved history on reload.
+  function hydrateFromStorage() {
+    var chat = loadCurrentChat();
+    if (!chat || !Array.isArray(chat.messages) || chat.messages.length === 0) return;
+    chatInner.innerHTML = '';
+    for (var i = 0; i < chat.messages.length; i++) {
+      var m = chat.messages[i];
+      if (!m || typeof m.content !== 'string') continue;
+      renderMessage(m.role === 'user' ? 'user' : 'assistant', m.content);
+    }
+  }
+  hydrateFromStorage();
+
+  // ── Build the OpenAI-compatible chat-completions body ────────────────────
+  function buildBody(messages, stream) {
+    var sys = getSystemPrompt();
+    var chatMsgs = [];
+    if (sys) chatMsgs.push({ role: 'system', content: sys });
+    for (var i = 0; i < messages.length; i++) {
+      chatMsgs.push({ role: messages[i].role, content: messages[i].content });
+    }
+    return {
+      model: getModel(),
+      messages: chatMsgs,
+      stream: stream,
+      max_tokens: 8192,
+    };
+  }
+
+  // ── Streaming + non-streaming send ───────────────────────────────────────
+  var inFlight = null; // AbortController for the current request
+
+  function setBusy(busy) {
+    if (sendBtn) sendBtn.disabled = busy;
+    if (stopBtn) stopBtn.style.display = busy ? 'flex' : 'none';
+    if (sendBtn) sendBtn.style.display = busy ? 'none' : 'flex';
+  }
+
+  async function send() {
+    var text = (userInput.value || '').trim();
+    if (!text) return;
+
+    // Append the user bubble immediately so the user sees their message
+    // while the request is in flight.
+    var chat = ensureChat();
+    chat.messages.push({ role: 'user', content: text, at: Date.now() });
+    // Auto-title from the first user message
+    if (chat.title === 'New chat' && chat.messages.filter(function (m) { return m.role === 'user'; }).length === 1) {
+      chat.title = text.slice(0, 60);
+    }
+    saveCurrentChat(chat);
+    renderMessage('user', text);
+    userInput.value = '';
+    userInput.style.height = 'auto';
+
+    // Empty assistant bubble that will be filled as tokens stream in
+    var assistantEls = renderMessage('assistant', '');
+    var fullText = '';
+
+    setBusy(true);
+    var controller = new AbortController();
+    inFlight = controller;
+
+    try {
+      var body = buildBody(chat.messages, true);
+      var res = await fetch(getBaseUrl() + '/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + getApiKey(),
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        var errText = await res.text().catch(function () { return ''; });
+        assistantEls.bubble.textContent = '⚠ ' + (res.status + ' ' + errText).slice(0, 300);
+      } else {
+        // Read the SSE stream
+        var reader = res.body && res.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        if (reader) {
+          for (;;) {
+            var chunk = await reader.read();
+            if (chunk.done) break;
+            buf += decoder.decode(chunk.value, { stream: true });
+            var parts = buf.split('\n');
+            buf = parts.pop() || '';
+            for (var i = 0; i < parts.length; i++) {
+              var line = parts[i].trim();
+              if (!line.startsWith('data:')) continue;
+              var payload = line.slice(5).trim();
+              if (!payload || payload === '[DONE]') continue;
+              try {
+                var json = JSON.parse(payload);
+                var delta = json.choices && json.choices[0] && json.choices[0].delta && json.choices[0].delta.content;
+                if (typeof delta === 'string') {
+                  fullText += delta;
+                  assistantEls.bubble.textContent = fullText;
+                  chatInner.scrollTop = chatInner.scrollHeight;
+                }
+              } catch (_) { /* partial JSON across chunks — keep buffering */ }
+            }
+          }
+        }
+        if (!fullText) {
+          // Non-streaming fallback (shouldn't happen with stream:true but be safe)
+          var j = await res.json().catch(function () { return null; });
+          if (j && j.choices && j.choices[0] && j.choices[0].message) {
+            fullText = j.choices[0].message.content || '';
+            assistantEls.bubble.textContent = fullText;
+          } else {
+            assistantEls.bubble.textContent = '⚠ Empty response from the server';
+          }
+        }
+        chat.messages.push({ role: 'assistant', content: fullText, at: Date.now() });
+        saveCurrentChat(chat);
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        if (!fullText) {
+          assistantEls.bubble.textContent = '⏹ Stopped.';
+        } else {
+          assistantEls.bubble.textContent = fullText + '\n\n⏹ [stopped]';
+          chat.messages.push({ role: 'assistant', content: fullText + '\n\n⏹ [stopped]', at: Date.now() });
+          saveCurrentChat(chat);
+        }
+      } else {
+        assistantEls.bubble.textContent = '⚠ ' + (e && e.message ? e.message : String(e));
+      }
+    } finally {
+      inFlight = null;
+      setBusy(false);
+    }
+  }
+
+  // ── Wire up the buttons and the Enter key ────────────────────────────────
+  sendBtn.addEventListener('click', function (e) {
+    e.preventDefault();
+    send();
+  });
+  userInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  });
+  if (stopBtn) {
+    stopBtn.style.display = 'none';
+    stopBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (inFlight) inFlight.abort();
+    });
+  }
+
+  // Auto-grow the textarea
+  function autoGrow() {
+    userInput.style.height = 'auto';
+    userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
+  }
+  userInput.addEventListener('input', autoGrow);
+  autoGrow();
+
+  console.log('[chat] send handler installed (model=' + getModel() + ', baseUrl=' + getBaseUrl() + ')');
+})();
+</script>
 </body>
 </html>
 
