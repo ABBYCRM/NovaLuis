@@ -2214,7 +2214,11 @@ function smFetch2(path, opts) {
 (function setupMobileSidebar() {
   const sidebar = document.getElementById('sidebar');
   const hamburger = document.getElementById('hamburger');
-  if (!sidebar || !hamburger) return;
+  if (!sidebar || !hamburger) {
+    console.warn('[mobile-sidebar] missing sidebar or hamburger element');
+    return;
+  }
+  console.log('[mobile-sidebar] wired hamburger');
   // Build the backdrop overlay if it doesn't exist.
   let overlay = document.getElementById('sidebar-overlay');
   if (!overlay) {
