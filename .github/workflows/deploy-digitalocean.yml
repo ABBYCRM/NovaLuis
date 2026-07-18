@@ -41,7 +41,14 @@ jobs:
         run: pnpm install --frozen-lockfile --shamefully-hoist
 
       - name: Typecheck API server
-        run: pnpm --filter @workspace/api-server typecheck
+        # Use the root-level `typecheck` script which first runs
+        # `tsc --build` to compile project references (@workspace/db,
+        # @workspace/api-zod) and then runs the per-workspace typecheck.
+        # Without the project-reference build, the api-server's tsc
+        # fails with TS6305 ("output file ... has not been built from
+        # source file") which cascades into TS7006 implicit-any errors
+        # on parameters whose types come from the referenced projects.
+        run: pnpm run typecheck
 
       - name: Build API server
         run: pnpm --filter @workspace/api-server build
