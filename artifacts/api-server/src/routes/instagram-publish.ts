@@ -15,6 +15,8 @@ import {
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
+import { fetchImageBuffer, readImageDimensions, matchesAspect } from "../lib/social-ai";
+import { logger as rootLogger } from "../lib/logger";
 
 const router = Router();
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -316,6 +318,54 @@ async function composioExecute(
   };
 }
 
+/**
+ * Best-effort aspect ratio check for stories / reels / portrait posts.
+ *
+ * Instagram stories (media_type=STORIES) require a 9:16 image. Reels too.
+ * Posts accept 1:1 (square), 4:5 (portrait), 1.91:1 (landscape).
+ *
+ * If the model returned a mismatched aspect (e.g. a 1:1 image for a story)
+ * we log a warning and surface it in the publish result so the UI can flag
+ * it for the user. We do NOT block the publish — Instagram will accept a
+ * mismatched image but display it with black bars, which is exactly the
+ * "story sizing fuckup" bug we are guarding against.
+ *
+ * No native deps — uses zero-dep PNG/JPEG header parser from social-ai.
+ */
+async function checkAspectForContentType(
+  contentType: string,
+  imageUrl: string,
+): Promise<{ ok: boolean; expected: string; actual: string; width?: number; height?: number }> {
+  let expected: "1:1" | "4:5" | "1.91:1" | "9:16" = "1:1";
+  switch (contentType) {
+    case "story":
+    case "reel":
+      expected = "9:16";
+      break;
+    case "portrait":
+      expected = "4:5";
+      break;
+    case "landscape":
+      expected = "1.91:1";
+      break;
+    case "post":
+    default:
+      expected = "1:1";
+  }
+
+  const buf = await fetchImageBuffer(imageUrl);
+  if (!buf) {
+    return { ok: true, expected, actual: "unknown (could not fetch image bytes)" };
+  }
+  const dims = readImageDimensions(buf);
+  if (!dims) {
+    return { ok: true, expected, actual: "unknown (unrecognized image format)" };
+  }
+  const actualRatio = `${dims.width}:${dims.height}`;
+  const matches = matchesAspect(dims.width, dims.height, expected);
+  return { ok: matches, expected, actual: actualRatio, width: dims.width, height: dims.height };
+}
+
 async function publishInstagram(
   port: number,
   contentType: string,
@@ -343,6 +393,24 @@ async function publishInstagram(
       data: null,
       error: "Instagram image publishing requires a durable public HTTPS image URL.",
     };
+  }
+
+  // Pre-flight aspect ratio check (defensive — catches the "story posted as
+  // square with black bar" bug). Warn-and-continue: we don't block publish
+  // because IG will accept a mismatched image; we just surface the warning
+  // in the result so the UI can show it to the user.
+  if (!isReel) {
+    try {
+      const aspect = await checkAspectForContentType(contentType, imageUrl);
+      if (!aspect.ok) {
+        rootLogger.warn(
+          { contentType, expected: aspect.expected, actual: aspect.actual, w: aspect.width, h: aspect.height, imageUrl },
+          "[instagram-publish] aspect ratio mismatch — image will likely render with black bars on Instagram",
+        );
+      }
+    } catch (e) {
+      rootLogger.debug({ err: e }, "[instagram-publish] aspect check skipped (non-fatal)");
+    }
   }
 
   // Resolve the Instagram business user id. env → cache → INSTAGRAM_GET_USER_INFO

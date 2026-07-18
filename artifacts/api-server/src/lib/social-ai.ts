@@ -14,6 +14,41 @@ import { db, hasDatabase, workspaceFilesTable } from "@workspace/db";
 
 // ── Image generation ──────────────────────────────────────────────────────────
 
+/**
+ * Shared negative prompt appended to every social image generation call.
+ *
+ * Why this exists: the Bitdeer google/flash-image-2.5 and Gemini image models
+ * frequently try to "help" by baking captions/headlines/logos into the image
+ * itself, especially for story / portrait formats. That leaves a black
+ * banner at the bottom of the rendered output which Instagram then displays
+ * as a hard black bar — the exact bug we saw on 2026-07-17.
+ *
+ * We force three things:
+ *   1. NO rendered text, captions, logos, watermarks, headlines, or callouts.
+ *   2. NO black bars, dark bands, or empty "headline safe zones".
+ *   3. Full-bleed composition — subject and background fill the entire frame
+ *      edge-to-edge with no negative space reserved for a caption strip.
+ *
+ * Headlines and CTAs are added by Instagram's own editor (stickers) or by
+ * the separate caption field — they are NEVER the image generator's job.
+ */
+export const NO_TEXT_NO_BAR_SUFFIX =
+  "\n\nHARD CONSTRAINTS (must follow exactly):\n" +
+  "- The image must be FULL-BLEED — the subject and background fill the entire frame edge-to-edge. No empty space at the top, bottom, or sides.\n" +
+  "- Do NOT render any text anywhere in the image — no headlines, no captions, no subtitles, no logos, no watermarks, no hashtags, no callouts, no labels, no UI chrome.\n" +
+  "- Do NOT leave a black bar, dark band, or any flat solid-color strip anywhere in the image (not at the top, not at the bottom, not on the sides). The whole frame must contain visible scene content.\n" +
+  "- Do NOT reserve any 'headline safe zone' or 'caption space' — Instagram adds text on top via stickers and the platform's own UI; the image itself stays clean.\n" +
+  "- If a viewer sees the image alone, it should look like a finished photograph or illustration with no text baked in.";
+
+/**
+ * Build the final image prompt by appending the shared negative constraints.
+ * Use this everywhere a story/portrait/social image is generated so the same
+ * rules apply across all generators.
+ */
+export function buildImagePrompt(base: string): string {
+  return base.trimEnd() + NO_TEXT_NO_BAR_SUFFIX;
+}
+
 export async function bitdeerImage(
   prompt: string,
   size: string,
@@ -183,6 +218,105 @@ export async function saveToPicturesWorkspace(
   } catch {
     return { saved: false };
   }
+}
+
+// ── Image dimension validation (zero-dep PNG/JPEG header parser) ──────────────
+
+/**
+ * Read width + height from a PNG or JPEG buffer. No native deps — pure Node.
+ *
+ * PNG: 8-byte signature, then IHDR chunk with width/height at offset 16/20.
+ * JPEG: scan for SOFn marker (0xFFC0–0xFFCF except C4/C8/CC). Height at +5, width at +7.
+ *
+ * Returns null if the format is unsupported or header is malformed.
+ */
+export function readImageDimensions(buf: Buffer): { width: number; height: number; format: "png" | "jpeg" } | null {
+  if (buf.length < 24) return null;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+    buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+  ) {
+    // IHDR chunk: 4-byte length, 4-byte type ("IHDR"), then 4-byte width, 4-byte height
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    if (width > 0 && height > 0 && width < 100_000 && height < 100_000) {
+      return { width, height, format: "png" };
+    }
+    return null;
+  }
+  // JPEG: starts with FF D8
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let offset = 2;
+    while (offset < buf.length - 9) {
+      if (buf[offset] !== 0xff) return null;
+      // Skip fill bytes
+      while (offset < buf.length && buf[offset] === 0xff) offset++;
+      if (offset >= buf.length) return null;
+      const marker = buf[offset];
+      offset++;
+      // SOI/EOI/standalone markers have no length
+      if (marker === 0xd8 || marker === 0xd9) continue;
+      // Read segment length
+      if (offset + 1 >= buf.length) return null;
+      const segLen = buf.readUInt16BE(offset);
+      // SOFn markers (start of frame, n=0..15 except 4,8,12 which are DHT/JPG/ DAC)
+      if (
+        marker >= 0xc0 && marker <= 0xcf &&
+        marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+      ) {
+        // SOFn: length(2) precision(1) height(2) width(2) ...
+        if (offset + 7 > buf.length) return null;
+        const height = buf.readUInt16BE(offset + 3);
+        const width = buf.readUInt16BE(offset + 5);
+        if (width > 0 && height > 0 && width < 100_000 && height < 100_000) {
+          return { width, height, format: "jpeg" };
+        }
+        return null;
+      }
+      offset += segLen;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch an image URL (or decode a data: URL) into a Buffer, returning the
+ * raw bytes for dimension inspection. 15s timeout. Returns null on failure.
+ */
+export async function fetchImageBuffer(url: string): Promise<Buffer | null> {
+  try {
+    if (url.startsWith("data:")) {
+      const m = url.match(/^data:[^;]+;base64,(.+)$/s);
+      if (!m) return null;
+      return Buffer.from(m[1]!, "base64");
+    }
+    if (!url.startsWith("http")) return null;
+    const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) return null;
+    return Buffer.from(await r.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+export type StoryAspect = "1:1" | "4:5" | "1.91:1" | "9:16" | "16:9" | "3:4" | "4:3";
+
+/** Approximate "matches this aspect ratio" — allow 5% drift. */
+export function matchesAspect(w: number, h: number, target: StoryAspect): boolean {
+  const actual = w / h;
+  let expected: number;
+  switch (target) {
+    case "1:1":    expected = 1;        break;
+    case "4:5":    expected = 4 / 5;    break;
+    case "1.91:1": expected = 1.91;     break;
+    case "9:16":   expected = 9 / 16;   break;
+    case "16:9":   expected = 16 / 9;   break;
+    case "3:4":    expected = 3 / 4;    break;
+    case "4:3":    expected = 4 / 3;    break;
+    default:       expected = 1;
+  }
+  return Math.abs(actual - expected) / expected < 0.05;
 }
 
 // ── Caption generation ────────────────────────────────────────────────────────

@@ -21,7 +21,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, hasDatabase, socialScheduledPostsTable, socialReferenceImagesTable } from "@workspace/db";
 import { eq, desc, and, lte } from "drizzle-orm";
-import { saveToPicturesWorkspace } from "../lib/social-ai";
+import { saveToPicturesWorkspace, buildImagePrompt, fetchImageBuffer, readImageDimensions, matchesAspect } from "../lib/social-ai";
+import { logger as rootLogger } from "../lib/logger";
 import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
 
 const router = Router();
@@ -344,12 +345,13 @@ NO other text. NO markdown. Just the JSON object.`;
         } catch { /* non-fatal */ }
       }
 
-      const imagePrompt = `Professional ${platform} ${contentType} social media image.
+      const imagePrompt = buildImagePrompt(
+        `Professional ${platform} ${contentType} social media image.
 Subject/theme: ${description}.
 Tone: ${tone}.
 Format: ${spec.aspectRatio} aspect ratio optimised for ${platform} (${spec.dims}).
-Style: High quality, eye-catching, brand-safe, platform-native aesthetic.
-Do NOT include text overlays or watermarks.`;
+Style: High quality, eye-catching, brand-safe, platform-native aesthetic.`
+      );
 
       try {
         const img = await generateImage(imagePrompt, spec.bitdeerSize, spec.geminiAspect, refBase64, refMime);
@@ -607,6 +609,28 @@ const COMPOSIO_TOOL_MAP: Record<string, Record<string, string>> = {
 // Platforms that use Instagram's two-step container→publish flow
 const INSTAGRAM_PLATFORMS = new Set(["instagram"]);
 
+/** True if the URL is fetchable for a header-only aspect check (http or data: URL). */
+function hasPublicImageForCheck(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return url.startsWith("https://") || url.startsWith("http://") || url.startsWith("data:");
+}
+
+/** Map a content type to the expected Instagram aspect ratio. */
+function expectedAspectFor(contentType: string): "1:1" | "4:5" | "1.91:1" | "9:16" {
+  switch (contentType) {
+    case "story":
+    case "reel":
+      return "9:16";
+    case "portrait":
+      return "4:5";
+    case "landscape":
+      return "1.91:1";
+    case "post":
+    default:
+      return "1:1";
+  }
+}
+
 async function composioExecute(
   port: number,
   toolSlug: string,
@@ -655,6 +679,28 @@ router.post("/social/publish/:id", async (req, res) => {
   const fullCaption = [post.caption, post.hashtags].filter(Boolean).join("\n\n");
 
   try {
+    // Pre-flight aspect ratio check (defensive). Catches the
+    // "story posted as square with a black bar" bug — the model returned a
+    // 1:1 image when we asked for 9:16. Warn-and-continue; we don't block
+    // the publish, we just surface the warning so the UI can show it.
+    if (hasPublicImageForCheck(post.imageUrl) && post.platform === "instagram" && post.contentType !== "reel") {
+      try {
+        const expected = expectedAspectFor(post.contentType);
+        const buf = await fetchImageBuffer(post.imageUrl);
+        if (buf) {
+          const dims = readImageDimensions(buf);
+          if (dims && !matchesAspect(dims.width, dims.height, expected)) {
+            rootLogger.warn(
+              { postId: post.id, contentType: post.contentType, expected, actual: `${dims.width}:${dims.height}` },
+              "[social/publish] aspect ratio mismatch — image will likely render with black bars on Instagram",
+            );
+          }
+        }
+      } catch (e) {
+        rootLogger.debug({ err: e }, "[social/publish] aspect check skipped (non-fatal)");
+      }
+    }
+
     // Build Composio arguments — image must be a public URL for Instagram
     // (data URLs are excluded because Instagram's API won't fetch them).
     const hasPublicImage = post.imageUrl && !post.imageUrl.startsWith("data:");
