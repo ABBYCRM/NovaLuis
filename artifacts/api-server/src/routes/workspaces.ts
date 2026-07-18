@@ -119,6 +119,49 @@ const upsertSchema = z.object({
   contentType: z.string().max(100).default("text/plain"),
 });
 
+// ── GET /workspaces/:ws/files/:filename/raw — serve raw bytes ────────────────
+// Returns the file content as raw bytes with the correct Content-Type, so
+// the browser can use it directly in <img src="..."> without parsing JSON.
+// This is the route the Pictures workspace grid uses to render image
+// thumbnails. Authentication is delegated to the global requireWtAuth gate
+// in routes/index.ts, same as the JSON variant above.
+router.get("/workspaces/:ws/files/:filename/raw", async (req, res) => {
+  const ws = req.params.ws.toLowerCase();
+  const filename = req.params.filename;
+  if (!validWs(ws) || !filename) { res.status(400).json({ error: "invalid params" }); return; }
+  if (!dbGuard(res)) return;
+  try {
+    const rows = await db!
+      .select()
+      .from(workspaceFilesTable)
+      .where(
+        and(
+          eq(workspaceFilesTable.workspace, ws),
+          eq(workspaceFilesTable.filename, filename),
+        ),
+      )
+      .limit(1);
+    if (!rows.length) { res.status(404).json({ error: "file not found" }); return; }
+    const r = rows[0]!;
+    // content is stored as base64 in the DB (no data: prefix). Decode and
+    // serve as the actual binary the browser expects.
+    let raw: Buffer;
+    try {
+      raw = Buffer.from(r.content, "base64");
+    } catch {
+      // Fallback for plain-text workspaces (e.g. .md files) — serve as UTF-8.
+      raw = Buffer.from(r.content, "utf8");
+    }
+    res.setHeader("Content-Type", r.contentType || "application/octet-stream");
+    res.setHeader("Content-Length", String(raw.length));
+    // Aggressive browser cache: workspace files are immutable per filename.
+    res.setHeader("Cache-Control", "private, max-age=86400, immutable");
+    res.status(200).end(raw);
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 // ── POST /workspaces/:ws/files ───────────────────────────────────────────────
 router.post("/workspaces/:ws/files", async (req, res) => {
   const ws = req.params.ws.toLowerCase();
