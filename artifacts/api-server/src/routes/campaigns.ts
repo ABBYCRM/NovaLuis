@@ -24,7 +24,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db, hasDatabase, socialCampaignsTable, socialReferenceImagesTable, socialScheduledPostsTable } from "@workspace/db";
-import { eq, desc, and, isNotNull, sql } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import {
   generateImage,
   generateCaption,

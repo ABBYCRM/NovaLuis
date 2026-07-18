@@ -185,7 +185,7 @@ router.get("/integrations/youtube/search", async (req, res) => {
 
 // ── Instagram (Meta Graph access token) ───────────────────────────────────────
 
-router.get("/integrations/instagram/media", async (req, res) => {
+router.get("/integrations/instagram/media", async (_req, res) => {
   try {
     const c = await getCredentials("instagram");
     if (!c.access_token) {

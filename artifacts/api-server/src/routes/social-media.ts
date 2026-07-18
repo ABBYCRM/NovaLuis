@@ -21,7 +21,16 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, hasDatabase, socialScheduledPostsTable, socialReferenceImagesTable } from "@workspace/db";
 import { eq, desc, and, lte } from "drizzle-orm";
-import { saveToPicturesWorkspace, buildImagePrompt, fetchImageBuffer, readImageDimensions, matchesAspect, STYLE_TRANSFER_DIRECTIVE } from "../lib/social-ai";
+import {
+  saveToPicturesWorkspace,
+  buildImagePrompt,
+  fetchImageBuffer,
+  readImageDimensions,
+  matchesAspect,
+  STYLE_TRANSFER_DIRECTIVE,
+  generateImage as generateImageLib,
+  generateCaption as generateCaptionLib,
+} from "../lib/social-ai";
 import { logger as rootLogger } from "../lib/logger";
 import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
 
@@ -69,188 +78,24 @@ function dbGuard(res: import("express").Response): boolean {
   return true;
 }
 
-// ── Image generation ──────────────────────────────────────────────────────────
+// ── Image / text generation ────────────────────────────────────────────────────
+//
+// The canonical implementations live in `lib/social-ai.ts` so both the
+// social-media route and the campaign route share the same code path. The
+// lib version uses Gemini 3 Pro Image for style transfer (with Gemini 3.1
+// Flash, 2.5 Flash, and A2E as fallbacks) which is the documented promise
+// of the "Keeps AI visuals consistent" feature. Re-declaring the function
+// here would silently ship a worse model path to every Social Media request.
+const generateImage: typeof import("../lib/social-ai").generateImage = (
+  prompt,
+  bitdeerSize,
+  geminiAspect,
+  refBase64,
+  refMime,
+) => generateImageLib(prompt, bitdeerSize, geminiAspect, refBase64, refMime);
 
-/**
- * PRIMARY: Bitdeer `google/flash-image-2.5` — fast, high quality, returns public URLs.
- * Follows the OpenAI images.generate API format.
- */
-async function bitdeerImage(
-  prompt: string,
-  size: string,
-): Promise<{ url: string; source: "bitdeer" }> {
-  const key = process.env.BITDEER_API_KEY ?? "";
-  if (!key) throw new Error("BITDEER_API_KEY not set");
-
-  // Normalize to supported Bitdeer sizes
-  const validSizes = new Set(["1024x1024", "1024x1792", "1792x1024"]);
-  const safeSize = validSizes.has(size) ? size : "1024x1024";
-
-  const r = await fetch("https://api-inference.bitdeer.ai/v1/images/generations", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: "google/flash-image-2.5",
-      prompt,
-      size: safeSize,
-      n: 1,
-    }),
-  });
-
-  if (!r.ok) {
-    const err = await r.text().catch(() => "");
-    throw new Error(`Bitdeer image error ${r.status}: ${err.slice(0, 300)}`);
-  }
-
-  const d = await r.json() as {
-    data?: ({ url?: string; b64_json?: string })[];
-  };
-
-  const item = d.data?.[0];
-  if (!item) throw new Error("Bitdeer returned no image data");
-
-  if (item.url) {
-    return { url: item.url, source: "bitdeer" };
-  }
-  if (item.b64_json) {
-    // Return as data URL — client displays directly, and we store it.
-    return { url: `data:image/png;base64,${item.b64_json}`, source: "bitdeer" };
-  }
-  throw new Error("Bitdeer image: no url or b64_json in response");
-}
-
-/**
- * FALLBACK: Gemini imagen — used when Bitdeer is unavailable.
- */
-async function geminiImage(
-  prompt: string,
-  _aspectRatio: string,
-  refBase64?: string,
-  refMime?: string,
-): Promise<{ url: string; source: "gemini" }> {
-  const key = process.env.GEMINI_API_KEY ?? "";
-  if (!key) throw new Error("GEMINI_API_KEY not configured");
-
-  const parts: unknown[] = [];
-  if (refBase64) {
-    parts.push({ inlineData: { mimeType: refMime ?? "image/png", data: refBase64 } });
-    parts.push({ text: `Use the style from the reference image. ${prompt}` });
-  } else {
-    parts.push({ text: prompt });
-  }
-
-  // Try current model names in order — Gemini experimental models change frequently.
-  // Nano Banana 2 is the current default; the legacy model is the fallback.
-  const GEMINI_IMAGE_MODELS = [
-    "gemini-3.1-flash-image",
-    "gemini-2.5-flash-image",
-  ];
-
-  let lastErr: Error = new Error("All Gemini image models unavailable");
-  for (const model of GEMINI_IMAGE_MODELS) {
-    try {
-      const r = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: { responseModalities: ["IMAGE", "TEXT"], candidateCount: 1 },
-          }),
-        },
-      );
-      if (!r.ok) {
-        const errText = await r.text();
-        lastErr = new Error(`Gemini ${model} error ${r.status}: ${errText.slice(0, 200)}`);
-        continue;
-      }
-      const d = await r.json() as {
-        candidates?: { content: { parts: { inlineData?: { data?: string; mimeType?: string } }[] } }[];
-      };
-      for (const candidate of d.candidates ?? []) {
-        for (const part of candidate.content.parts) {
-          if (part.inlineData?.data) {
-            const mime = part.inlineData.mimeType ?? "image/png";
-            return { url: `data:${mime};base64,${part.inlineData.data}`, source: "gemini" };
-          }
-        }
-      }
-      lastErr = new Error(`Gemini ${model} returned no image data`);
-    } catch (e) {
-      lastErr = e instanceof Error ? e : new Error(String(e));
-    }
-  }
-  throw lastErr;
-}
-
-/**
- * Generate an image — Bitdeer primary, Gemini fallback.
- * Returns the image URL (may be a data URL if Bitdeer returns b64_json or Gemini is used).
- */
-async function generateImage(
-  prompt: string,
-  bitdeerSize: string,
-  geminiAspect: string,
-  refBase64?: string,
-  refMime?: string,
-): Promise<{ url: string; source: string }> {
-  // If there's a reference image, Gemini handles it better (it can condition on the reference).
-  if (refBase64) {
-    return geminiImage(prompt, geminiAspect, refBase64, refMime);
-  }
-  // Otherwise Bitdeer is primary.
-  try {
-    return await bitdeerImage(prompt, bitdeerSize);
-  } catch (bitdeerErr) {
-    // Fall back to Gemini
-    try {
-      return await geminiImage(prompt, geminiAspect, refBase64, refMime);
-    } catch (geminiErr) {
-      throw new Error(
-        `Image generation failed. Bitdeer: ${bitdeerErr instanceof Error ? bitdeerErr.message : bitdeerErr}. Gemini: ${geminiErr instanceof Error ? geminiErr.message : geminiErr}`,
-      );
-    }
-  }
-}
-
-// ── Text generation ───────────────────────────────────────────────────────────
-
-async function generateCaption(prompt: string): Promise<string> {
-  const openaiKey = process.env.OPENAI_API_KEY ?? "";
-  if (openaiKey) {
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        max_tokens: 800,
-      }),
-    });
-    const d = await r.json() as { choices?: { message: { content: string } }[] };
-    return d.choices?.[0]?.message?.content ?? "{}";
-  }
-  const key = process.env.GEMINI_API_KEY ?? "";
-  if (!key) throw new Error("No text generation key available (OPENAI_API_KEY or GEMINI_API_KEY)");
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "application/json" },
-      }),
-    },
-  );
-  const d = await r.json() as { candidates?: { content: { parts: { text?: string }[] } }[] };
-  return d.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text ?? "{}";
-}
+const generateCaption: typeof import("../lib/social-ai").generateCaption = (prompt) =>
+  generateCaptionLib(prompt);
 
 // ── POST /social/generate ─────────────────────────────────────────────────────
 const generateSchema = z.object({
