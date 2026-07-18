@@ -12,7 +12,7 @@
 import { db, hasDatabase, socialScheduledPostsTable } from "@workspace/db";
 import { and, eq, lte } from "drizzle-orm";
 import { logger } from "./lib/logger";
-import { generateCaption, generateImage, pickVariationAngle, saveToPicturesWorkspace, buildImagePrompt } from "./lib/social-ai";
+import { generateCaption, generateImage, pickVariationAngle, saveToPicturesWorkspace, buildImagePrompt, STYLE_TRANSFER_DIRECTIVE } from "./lib/social-ai";
 
 const POLL_INTERVAL_MS = 60_000;
 

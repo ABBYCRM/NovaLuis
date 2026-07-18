@@ -23,7 +23,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { db, hasDatabase, socialCampaignsTable, socialScheduledPostsTable } from "@workspace/db";
+import { db, hasDatabase, socialCampaignsTable, socialReferenceImagesTable, socialScheduledPostsTable } from "@workspace/db";
 import { eq, desc, and, isNotNull, sql } from "drizzle-orm";
 import {
   generateImage,
@@ -32,6 +32,7 @@ import {
   pickVariationAngle,
   saveToPicturesWorkspace,
   buildImagePrompt,
+  STYLE_TRANSFER_DIRECTIVE,
   type CampaignStrategy,
 } from "../lib/social-ai";
 import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
@@ -176,8 +177,23 @@ Return ONLY valid JSON:
   const caption = (captionData.caption ?? "").slice(0, maxChars);
   const hashtags = captionData.hashtags ?? "";
 
+  // Look up the campaign's reference image (if any) for style consistency.
+  let refBase64: string | undefined;
+  let refMime: string | undefined;
+  if (campaign.referenceImageId) {
+    try {
+      const rows = await db!
+        .select()
+        .from(socialReferenceImagesTable)
+        .where(eq(socialReferenceImagesTable.id, campaign.referenceImageId))
+        .limit(1);
+      if (rows[0]) { refBase64 = rows[0].dataBase64; refMime = rows[0].mimeType; }
+    } catch { /* non-fatal */ }
+  }
+
   // Generate image with the visual style from strategy
   const imagePrompt = buildImagePrompt(
+    (refBase64 ? `${STYLE_TRANSFER_DIRECTIVE}\n\n` : "") +
     `Professional ${platform} ${contentType} social media image for a campaign post.
 Campaign: ${campaign.name}
 Subject: ${campaign.description}
@@ -190,7 +206,7 @@ Format: ${spec.aspectRatio} for ${platform}.`
   let imageUrl = "";
   let imageSource = "";
   try {
-    const img = await generateImage(imagePrompt, spec.bitdeerSize, spec.geminiAspect);
+    const img = await generateImage(imagePrompt, spec.bitdeerSize, spec.geminiAspect, refBase64, refMime);
     imageUrl = img.url;
     imageSource = img.source;
     // Save to Pictures workspace so the user can browse all generated images
