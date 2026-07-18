@@ -799,6 +799,102 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 .sm-tone-chip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .sm-tone-chip input[type="checkbox"] { width: 14px; height: 14px; margin: 0; }
 
+/* ── Editable text-file cards (Notes, To-Do, Tasks, etc.) ───────── */
+.ws-edit-textarea {
+  width: 100%; min-height: 100px; padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem; line-height: 1.5; color: var(--text);
+  background: var(--surface); border: 1px solid var(--accent, #f97316);
+  border-radius: 6px; resize: vertical; box-sizing: border-box;
+}
+
+/* ── Calendar workspace ────────────────────────────────────── */
+.ws-list.ws-calendar-grid {
+  display: block; padding: 0 12px 12px; overflow-y: auto;
+}
+.cal-header {
+  display: flex; align-items: center; gap: 8px; padding: 10px 0;
+  position: sticky; top: 0; background: var(--surface, rgba(0,0,0,0.4));
+  z-index: 1;
+}
+.cal-title { flex: 1; font-weight: 600; font-size: 1rem; }
+.cal-nav, .cal-today, .cal-new {
+  background: var(--surface2, rgba(255,255,255,0.05));
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  color: var(--text); border-radius: 6px; padding: 4px 10px;
+  font-family: inherit; font-size: 0.85rem; cursor: pointer;
+}
+.cal-nav:hover, .cal-today:hover, .cal-new:hover { background: var(--accent-dim, rgba(249,115,22,0.15)); }
+.cal-new { background: var(--accent, #f97316); color: white; border-color: transparent; }
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+}
+.cal-dow {
+  text-align: center; font-size: 0.7rem; font-weight: 600;
+  color: var(--muted); padding: 6px 0; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.cal-day {
+  background: var(--surface2, rgba(255,255,255,0.03));
+  border: 1px solid var(--border, rgba(255,255,255,0.05));
+  border-radius: 6px; min-height: 70px; padding: 4px 6px;
+  display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+  transition: background 0.1s;
+}
+.cal-day:hover { background: var(--surface, rgba(255,255,255,0.06)); }
+.cal-day-blank { background: transparent; border-color: transparent; cursor: default; }
+.cal-day-today { border-color: var(--accent, #f97316); }
+.cal-day-num { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+.cal-day-today .cal-day-num { color: var(--accent, #f97316); }
+.cal-event {
+  font-size: 0.7rem; padding: 2px 5px; border-radius: 4px;
+  background: var(--accent-dim, rgba(249,115,22,0.2));
+  color: var(--text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
+.cal-event:hover { background: var(--accent, #f97316); color: white; }
+
+.cal-modal-bg {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999; padding: 16px;
+}
+.cal-modal {
+  background: var(--surface, #1a1a1a); border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 10px; padding: 18px; max-width: 420px; width: 100%;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.cal-modal-title { font-weight: 600; font-size: 1.05rem; }
+.cal-label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.cal-input {
+  padding: 7px 10px; border-radius: 6px;
+  background: var(--surface2, rgba(255,255,255,0.04));
+  color: var(--text); border: 1px solid var(--border, rgba(255,255,255,0.08));
+  font-family: inherit; font-size: 0.88rem; box-sizing: border-box;
+}
+.cal-textarea { resize: vertical; min-height: 60px; }
+.cal-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+
+/* ── Maps workspace ──────────────────────────────────────── */
+.ws-list.ws-maps-ui { display: block; padding: 12px; overflow-y: auto; }
+.maps-search-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.maps-search { flex: 1; }
+.maps-search-btn { padding: 9px 14px; font-weight: 600; }
+.maps-status { font-size: 0.78rem; color: var(--muted); margin: 4px 0 12px; }
+.maps-results, .maps-saved-list { display: flex; flex-direction: column; gap: 8px; }
+.maps-result-card, .maps-saved-card {
+  background: var(--surface2, rgba(255,255,255,0.04));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px; padding: 10px 12px;
+}
+.maps-result-name { font-weight: 600; font-size: 0.92rem; }
+.maps-result-addr { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+.maps-result-coords { font-size: 0.7rem; color: var(--muted); margin-top: 4px; font-family: ui-monospace, monospace; }
+.maps-result-actions { display: flex; gap: 6px; margin-top: 8px; }
+.maps-saved-header {
+  font-size: 0.78rem; color: var(--muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em; margin: 18px 0 8px;
+}
+
 /* ── Social Media panel — mobile (≤700px) ──────────────────────────────── */
 @media (max-width:700px) {
 
@@ -1648,6 +1744,30 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
         <span>Quantum</span>
       </button>
       <button class="ws-upload-btn" data-ws="quantum" title="Upload to Quantum"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+    </div>
+
+    <hr class="section-divider" style="margin: 8px 4px; opacity: 0.4;">
+
+    <div class="ws-row">
+      <button class="workspace-tab" data-ws="notes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="14 4 14 8 18 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+        <span>Notes</span>
+      </button>
+      <button class="ws-upload-btn" data-ws="notes" title="Upload to Notes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+    </div>
+    <div class="ws-row">
+      <button class="workspace-tab" data-ws="calendar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <span>Calendar</span>
+      </button>
+      <button class="ws-upload-btn" data-ws="calendar" title="Upload to Calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+    </div>
+    <div class="ws-row">
+      <button class="workspace-tab" data-ws="maps">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        <span>Maps</span>
+      </button>
+      <button class="ws-upload-btn" data-ws="maps" title="Upload to Maps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
     </div>
     </div>
   </div>
@@ -4382,10 +4502,20 @@ document.addEventListener('keydown', function (e) {
     todo: 'To-Do List', tasks: 'Tasks', agents: 'Agents', pictures: 'Pictures',
     numerology: 'Numerology', sacred: 'Sacred Geometry', vedic: 'Vedic Astrology',
     mystic: 'Mystic Sciences', manifest: 'Manifestation', quantum: 'Quantum',
+    notes: 'Notes', calendar: 'Calendar', maps: 'Maps',
   };
-  var IMAGE_WORKSPACES = { pictures: true };
+  // Per-workspace view mode. Each mode has its own renderer; the file list
+  // mode is the default (text preview list with rename / delete).
+  var WS_MODES = {
+    pictures: 'imageGrid',
+    notes:    'notesList',
+    calendar: 'calendarGrid',
+    maps:     'mapsUi',
+  };
   var TEXT_EXT = /\.(md|txt|json|ya?ml|toml|csv|log|ts|tsx|js|jsx|py|sh|html|css|xml)$/i;
   var currentWs = 'pictures';
+  var calCursor = new Date(); // Calendar month being viewed
+  calCursor.setDate(1);
 
   function isImageFile(name, mime) {
     if (IMAGE_WORKSPACES[currentWs]) return true;
@@ -4439,60 +4569,453 @@ document.addEventListener('keydown', function (e) {
   }
 
   function renderWsList(files) {
-    if (!files.length) {
+    var mode = WS_MODES[currentWs] || 'fileList';
+    // Always start clean; subclasses append their own children.
+    wsList.innerHTML = '';
+    wsList.classList.remove('ws-list-grid', 'ws-calendar-grid', 'ws-maps-ui');
+    if (!files.length && mode !== 'calendarGrid' && mode !== 'mapsUi') {
       wsEmpty.hidden = false;
       return;
     }
-    wsList.classList.toggle('ws-list-grid', IMAGE_WORKSPACES[currentWs] && files.some(function (f) {
-      return isImageFile(f.filename, f.contentType);
-    }));
+    wsEmpty.hidden = true;
+    if (mode === 'imageGrid')   return renderImageGrid(files);
+    if (mode === 'notesList')   return renderNotesList(files);
+    if (mode === 'calendarGrid') return renderCalendarGrid(files);
+    if (mode === 'mapsUi')      return renderMapsUi(files);
+    return renderFileList(files);
+  }
 
-    files.forEach(function (f) {
-      var li = document.createElement('li');
-      li.className = 'ws-item' + (isImageFile(f.filename, f.contentType) ? ' ws-item-image' : ' ws-item-text');
-      li.dataset.filename = f.filename;
-      var title = escHtml(f.filename);
-      var meta = escHtml(fmtSize(f.size) + (f.updatedAt ? ' · ' + fmtTime(f.updatedAt) : ''));
+  // Image grid for picture-heavy workspaces (Pictures).
+  function renderImageGrid(files) {
+    wsList.classList.add('ws-list-grid');
+    files.forEach(function (f) { wsList.appendChild(buildFileCard(f, true)); });
+  }
 
-      var thumb = '';
-      if (isImageFile(f.filename, f.contentType)) {
-        var url = '/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw';
-        thumb = '<div class="ws-thumb-wrap"><img class="ws-thumb" src="' + url + '" alt="' + title + '" loading="lazy" /></div>';
-      } else if (TEXT_EXT.test(f.filename)) {
-        // Show a small preview of text files (first 280 chars) so the user
-        // can recognise them without opening.
-        var preview = '';
-        try {
-          // Content is base64 in the DB; decode for preview. For very large
-          // files (>50KB) we just show the size, not a preview.
-          if (f.size < 50 * 1024) {
-            preview = atob(f.content).slice(0, 280);
-          }
-        } catch (_) { preview = ''; }
-        thumb = '<pre class="ws-text-preview">' + escHtml(preview) + '</pre>';
+  // Text-list with markdown preview for note-style workspaces (Notes,
+  // To-Do, Tasks, etc.). Each item is editable in place via a textarea
+  // that POSTs on blur.
+  function renderNotesList(files) {
+    files.forEach(function (f) { wsList.appendChild(buildFileCard(f, false)); });
+  }
+
+  // Generic file list (text preview + open + delete). Used as fallback
+  // for any workspace that hasn't been given a custom view.
+  function renderFileList(files) {
+    files.forEach(function (f) { wsList.appendChild(buildFileCard(f, false)); });
+  }
+
+  // Build a single <li> for the current workspace. The `showThumb` flag
+  // toggles between image grid and text-list card layouts. The card is
+  // editable in place: click the body to edit, blur to save, Esc to cancel.
+  function buildFileCard(f, showThumb) {
+    var li = document.createElement('li');
+    li.className = 'ws-item' + (isImageFile(f.filename, f.contentType) ? ' ws-item-image' : ' ws-item-text');
+    li.dataset.filename = f.filename;
+    var title = escHtml(f.filename);
+    var meta = escHtml(fmtSize(f.size) + (f.updatedAt ? ' · ' + fmtTime(f.updatedAt) : ''));
+
+    var thumb = '';
+    if (showThumb && isImageFile(f.filename, f.contentType)) {
+      var url = '/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw';
+      thumb = '<div class="ws-thumb-wrap"><img class="ws-thumb" src="' + url + '" alt="' + title + '" loading="lazy" /></div>';
+    } else if (TEXT_EXT.test(f.filename)) {
+      var preview = '';
+      try {
+        if (f.size < 50 * 1024) preview = atob(f.content).slice(0, 280);
+      } catch (_) { preview = ''; }
+      thumb = '<pre class="ws-text-preview" data-raw-content="' + escHtml(f.content) + '">' + escHtml(preview) + '</pre>';
+    }
+
+    li.innerHTML = (
+      thumb +
+      '<div class="ws-item-body">' +
+        '<div class="ws-item-title" title="' + title + '">' + title + '</div>' +
+        '<div class="ws-item-meta">' + meta + '</div>' +
+      '</div>' +
+      '<div class="ws-item-actions">' +
+        (isImageFile(f.filename, f.contentType)
+          ? '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw" target="_blank" rel="noopener" download>Open</a>'
+          : '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '" target="_blank" rel="noopener">Open</a>') +
+        '<button class="ws-btn-tiny" data-act="edit">Edit</button>' +
+        '<button class="ws-btn-tiny ws-btn-danger" data-act="del">Delete</button>' +
+      '</div>'
+    );
+
+    li.querySelector('[data-act="del"]').addEventListener('click', function () {
+      if (!confirm('Delete "' + f.filename + '"?')) return;
+      smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename), { method: 'DELETE' })
+        .then(function () { loadWsFiles(); })
+        .catch(function (e) { alert('Delete failed: ' + e.message); });
+    });
+    var editBtn = li.querySelector('[data-act="edit"]');
+    if (editBtn && TEXT_EXT.test(f.filename) && f.size < 200 * 1024) {
+      editBtn.addEventListener('click', function () { startEditCard(li, f); });
+    } else if (editBtn) {
+      editBtn.disabled = true;
+      editBtn.title = 'Edit only available for text files under 200KB — open in a new tab instead';
+    }
+    return li;
+  }
+
+  // Click-to-edit pattern for text-file cards. Replaces the preview <pre>
+  // with a <textarea> that POSTs the new content on blur. Esc cancels.
+  function startEditCard(li, f) {
+    var previewEl = li.querySelector('.ws-text-preview');
+    if (!previewEl) return;
+    var originalB64 = previewEl.getAttribute('data-raw-content') || '';
+    var originalText = '';
+    try { originalText = atob(originalB64); } catch (_) { originalText = ''; }
+
+    var ta = document.createElement('textarea');
+    ta.className = 'ws-edit-textarea';
+    ta.value = originalText;
+    ta.rows = Math.min(20, Math.max(4, originalText.split('\n').length + 1));
+    previewEl.replaceWith(ta);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    var saving = false;
+    var cancelled = false;
+    function finish(save) {
+      if (save && !cancelled) {
+        saving = true;
+        ta.disabled = true;
+        var b64 = btoa(unescape(encodeURIComponent(ta.value)));
+        smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: f.filename,
+            content: b64,
+            contentType: f.contentType || 'text/plain',
+          }),
+        }).then(function (r) {
+          if (r.ok) loadWsFiles();
+          else alert('Save failed: HTTP ' + r.status);
+        }).catch(function (e) { alert('Save failed: ' + e.message); });
+      } else {
+        // Cancel: rebuild the preview element from the original.
+        var fresh = document.createElement('pre');
+        fresh.className = 'ws-text-preview';
+        fresh.setAttribute('data-raw-content', originalB64);
+        fresh.textContent = originalText.slice(0, 280);
+        ta.replaceWith(fresh);
       }
+    }
+    ta.addEventListener('blur', function () { if (!saving) finish(true); });
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); cancelled = true; ta.blur(); finish(false); }
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ta.blur(); }
+    });
+  }
 
-      li.innerHTML = (
-        thumb +
-        '<div class="ws-item-body">' +
-          '<div class="ws-item-title" title="' + title + '">' + title + '</div>' +
-          '<div class="ws-item-meta">' + meta + '</div>' +
-        '</div>' +
-        '<div class="ws-item-actions">' +
-          (isImageFile(f.filename, f.contentType)
-            ? '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw" target="_blank" rel="noopener" download>Open</a>'
-            : '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '" target="_blank" rel="noopener">Open</a>') +
-          '<button class="ws-btn-tiny ws-btn-danger" data-act="del">Delete</button>' +
-        '</div>'
-      );
+  // ── Calendar workspace ────────────────────────────────────────────────────────
+  // Events are stored as JSON files in the calendar workspace. Each file's
+  // name is "{ISO date}-{slug}.json" so the list view can sort by date
+  // and the calendar can show events on the right day cells.
+  function renderCalendarGrid(_files) {
+    wsList.classList.add('ws-calendar-grid');
+    renderCalendarChrome();
+    loadCalendarEvents();
+  }
 
-      li.querySelector('[data-act="del"]').addEventListener('click', function () {
-        if (!confirm('Delete "' + f.filename + '"?')) return;
-        smFetch2('/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename), { method: 'DELETE' })
-          .then(function () { loadWsFiles(); })
-          .catch(function (e) { alert('Delete failed: ' + e.message); });
+  function renderCalendarChrome() {
+    wsList.innerHTML = '';
+    var header = document.createElement('div');
+    header.className = 'cal-header';
+    var prev = document.createElement('button');
+    prev.className = 'cal-nav';
+    prev.textContent = '‹';
+    prev.addEventListener('click', function () {
+      calCursor.setMonth(calCursor.getMonth() - 1);
+      loadCalendarEvents();
+    });
+    var next = document.createElement('button');
+    next.className = 'cal-nav';
+    next.textContent = '›';
+    next.addEventListener('click', function () {
+      calCursor.setMonth(calCursor.getMonth() + 1);
+      loadCalendarEvents();
+    });
+    var title = document.createElement('div');
+    title.className = 'cal-title';
+    title.textContent = calCursor.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+    var today = document.createElement('button');
+    today.className = 'cal-today';
+    today.textContent = 'Today';
+    today.addEventListener('click', function () {
+      calCursor = new Date(); calCursor.setDate(1);
+      loadCalendarEvents();
+    });
+    var newBtn = document.createElement('button');
+    newBtn.className = 'cal-new';
+    newBtn.textContent = '+ Event';
+    newBtn.addEventListener('click', function () { openNewEventDialog(); });
+    header.appendChild(prev);
+    header.appendChild(title);
+    header.appendChild(next);
+    header.appendChild(today);
+    header.appendChild(newBtn);
+    wsList.appendChild(header);
+  }
+
+  function loadCalendarEvents() {
+    smFetch2('/api/workspaces/calendar/files').then(function (r) {
+      if (!r.ok) { wsList.innerHTML = '<div class="ws-empty">Failed to load events.</div>'; return; }
+      return r.json();
+    }).then(function (d) {
+      if (!d) return;
+      var events = [];
+      (d.files || []).forEach(function (f) {
+        if (!/\.json$/.test(f.filename)) return;
+        try {
+          var ev = JSON.parse(atob(f.content));
+          ev.__filename = f.filename;
+          events.push(ev);
+        } catch (_) {}
       });
-      wsList.appendChild(li);
+      renderCalendarDays(events);
+    }).catch(function (e) {
+      wsList.innerHTML = '<div class="ws-empty">Failed to load: ' + escHtml(e.message) + '</div>';
+    });
+  }
+
+  function renderCalendarDays(events) {
+    // Refresh the title (cursor may have changed).
+    var titleEl = wsList.querySelector('.cal-title');
+    if (titleEl) titleEl.textContent = calCursor.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+    // Keep the header, rebuild the grid.
+    var old = wsList.querySelector('.cal-grid');
+    if (old) old.remove();
+    var grid = document.createElement('div');
+    grid.className = 'cal-grid';
+    var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    days.forEach(function (d) {
+      var dh = document.createElement('div');
+      dh.className = 'cal-dow';
+      dh.textContent = d;
+      grid.appendChild(dh);
+    });
+    var first = new Date(calCursor.getFullYear(), calCursor.getMonth(), 1);
+    var startDow = first.getDay();
+    var daysInMonth = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 0).getDate();
+    for (var i = 0; i < startDow; i++) {
+      var blank = document.createElement('div');
+      blank.className = 'cal-day cal-day-blank';
+      grid.appendChild(blank);
+    }
+    var today = new Date();
+    for (var d = 1; d <= daysInMonth; d++) {
+      var cell = document.createElement('div');
+      cell.className = 'cal-day';
+      if (d === today.getDate() && calCursor.getMonth() === today.getMonth() && calCursor.getFullYear() === today.getFullYear()) {
+        cell.classList.add('cal-day-today');
+      }
+      var dateKey = calCursor.getFullYear() + '-' + String(calCursor.getMonth() + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      var num = document.createElement('div');
+      num.className = 'cal-day-num';
+      num.textContent = d;
+      cell.appendChild(num);
+      var dayEvents = events.filter(function (e) { return e.date === dateKey; });
+      dayEvents.forEach(function (e) {
+        var pill = document.createElement('div');
+        pill.className = 'cal-event';
+        pill.textContent = e.title || '(untitled)';
+        pill.title = (e.time ? e.time + ' · ' : '') + (e.title || '') + (e.notes ? '\n' + e.notes : '');
+        pill.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          openNewEventDialog(e);
+        });
+        cell.appendChild(pill);
+      });
+      cell.addEventListener('click', function () {
+        openNewEventDialog({ date: dateKey });
+      });
+      grid.appendChild(cell);
+    }
+    wsList.appendChild(grid);
+  }
+
+  function openNewEventDialog(existing) {
+    existing = existing || {};
+    var evDate = existing.date || (new Date()).toISOString().slice(0, 10);
+    var evTitle = existing.title || '';
+    var evTime = existing.time || '';
+    var evNotes = existing.notes || '';
+    var html = '' +
+      '<div class="cal-modal-bg" id="cal-modal">' +
+      '  <div class="cal-modal">' +
+      '    <div class="cal-modal-title">' + (existing.__filename ? 'Edit Event' : 'New Event') + '</div>' +
+      '    <label class="cal-label">Date<input class="cal-input" id="cal-date" type="date" value="' + evDate + '" /></label>' +
+      '    <label class="cal-label">Title<input class="cal-input" id="cal-title" placeholder="Meeting, reminder…" value="' + escHtml(evTitle) + '" /></label>' +
+      '    <label class="cal-label">Time (optional)<input class="cal-input" id="cal-time" type="time" value="' + evTime + '" /></label>' +
+      '    <label class="cal-label">Notes<textarea class="cal-input cal-textarea" id="cal-notes" rows="3" placeholder="Details…">' + escHtml(evNotes) + '</textarea></label>' +
+      '    <div class="cal-modal-actions">' +
+      (existing.__filename ? '<button class="ws-btn-tiny ws-btn-danger" id="cal-del">Delete</button>' : '') +
+      '      <button class="ws-btn-tiny" id="cal-cancel">Cancel</button>' +
+      '      <button class="ws-btn-tiny" id="cal-save" style="background:var(--accent);color:white;">Save</button>' +
+      '    </div>' +
+      '  </div>' +
+      '</div>';
+    var wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    document.body.appendChild(wrapper.firstChild);
+    var modal = document.getElementById('cal-modal');
+    document.getElementById('cal-cancel').onclick = function () { modal.remove(); };
+    document.getElementById('cal-save').onclick = function () {
+      var date = document.getElementById('cal-date').value;
+      var title = document.getElementById('cal-title').value.trim();
+      var time = document.getElementById('cal-time').value;
+      var notes = document.getElementById('cal-notes').value;
+      if (!date || !title) { alert('Date and title are required.'); return; }
+      var payload = { date: date, title: title, time: time, notes: notes };
+      var slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'event';
+      var filename = date + '-' + slug + (existing.__filename ? '' : '-' + Date.now().toString(36)) + '.json';
+      if (existing.__filename) filename = existing.__filename;
+      var b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+      smFetch2('/api/workspaces/calendar/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: filename, content: b64, contentType: 'application/json' }),
+      }).then(function (r) {
+        if (!r.ok) { alert('Save failed: HTTP ' + r.status); return; }
+        modal.remove();
+        loadCalendarEvents();
+      });
+    };
+    if (existing.__filename) {
+      document.getElementById('cal-del').onclick = function () {
+        if (!confirm('Delete this event?')) return;
+        smFetch2('/api/workspaces/calendar/files/' + encodeURIComponent(existing.__filename), { method: 'DELETE' })
+          .then(function (r) {
+            if (r.ok) { modal.remove(); loadCalendarEvents(); }
+            else alert('Delete failed: HTTP ' + r.status);
+          });
+      };
+    }
+  }
+
+  // ── Maps workspace (Google Maps via Composio) ────────────────────────────────────
+  // The Maps workspace is special: it doesn't store files, it shows a
+  // search box that calls the backend's /api/maps/* routes, which use
+  // Composio to talk to Google Maps. Saved places get persisted as JSON
+  // files in the maps workspace.
+  function renderMapsUi(_files) {
+    wsList.classList.add('ws-maps-ui');
+    wsList.innerHTML = '' +
+      '<div class="maps-search-row">' +
+      '  <input class="cal-input maps-search" id="maps-q" placeholder="Search places, addresses, lat,lng (e.g. Eiffel Tower, 40.7,-74.0)" />' +
+      '  <button class="ws-btn-tiny maps-search-btn" id="maps-go" style="background:var(--accent);color:white;">Search</button>' +
+      '</div>' +
+      '<div class="maps-status" id="maps-status">Type a place name, address, or coordinates to search.</div>' +
+      '<div class="maps-results" id="maps-results"></div>' +
+      '<div class="maps-saved-header">Saved places</div>' +
+      '<div class="maps-saved-list" id="maps-saved"></div>';
+    var q = document.getElementById('maps-q');
+    q.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); doMapsSearch(); }
+    });
+    document.getElementById('maps-go').onclick = doMapsSearch;
+    loadSavedPlaces();
+  }
+
+  function doMapsSearch() {
+    var qEl = document.getElementById('maps-q');
+    var statusEl = document.getElementById('maps-status');
+    var resultsEl = document.getElementById('maps-results');
+    var q = (qEl.value || '').trim();
+    if (!q) { statusEl.textContent = 'Type something to search.'; return; }
+    statusEl.textContent = 'Searching…';
+    resultsEl.innerHTML = '';
+    smFetch2('/api/maps/search?q=' + encodeURIComponent(q)).then(function (r) {
+      if (!r.ok) {
+        return r.json().catch(function () { return { error: 'HTTP ' + r.status }; }).then(function (e) {
+          statusEl.textContent = 'Search failed: ' + (e.error || ('HTTP ' + r.status));
+        });
+      }
+      return r.json();
+    }).then(function (d) {
+      if (!d) return;
+      if (d.error) { statusEl.textContent = 'Search failed: ' + d.error; return; }
+      var results = d.results || [];
+      statusEl.textContent = 'Found ' + results.length + ' result' + (results.length === 1 ? '' : 's') + ' for "' + q + '".';
+      resultsEl.innerHTML = '';
+      results.forEach(function (r) {
+        var card = document.createElement('div');
+        card.className = 'maps-result-card';
+        var name = escHtml(r.name || '(unnamed)');
+        var addr = escHtml(r.address || '');
+        var lat = r.lat != null ? Number(r.lat).toFixed(6) : '';
+        var lng = r.lng != null ? Number(r.lng).toFixed(6) : '';
+        card.innerHTML =
+          '<div class="maps-result-name">' + name + '</div>' +
+          '<div class="maps-result-addr">' + addr + '</div>' +
+          '<div class="maps-result-coords">' + lat + ', ' + lng + '</div>' +
+          '<div class="maps-result-actions">' +
+            '<a class="ws-btn-tiny" href="https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent((r.name || '') + ' ' + (r.address || '')) + '" target="_blank" rel="noopener">Open in Google Maps</a>' +
+            '<button class="ws-btn-tiny" data-lat="' + lat + '" data-lng="' + lng + '" data-name="' + escHtml(r.name || '') + '" data-addr="' + escHtml(r.address || '') + '">Save</button>' +
+          '</div>';
+        card.querySelector('button[data-lat]').onclick = function (e) {
+          var b = e.currentTarget;
+          saveMapPlace({
+            name: b.getAttribute('data-name'),
+            address: b.getAttribute('data-addr'),
+            lat: parseFloat(b.getAttribute('data-lat')),
+            lng: parseFloat(b.getAttribute('data-lng')),
+          });
+        };
+        resultsEl.appendChild(card);
+      });
+    }).catch(function (e) { statusEl.textContent = 'Search failed: ' + e.message; });
+  }
+
+  function saveMapPlace(place) {
+    var slug = (place.name || 'place').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'place';
+    var filename = place.lat.toFixed(4) + '-' + place.lng.toFixed(4) + '-' + slug + '.json';
+    var b64 = btoa(unescape(encodeURIComponent(JSON.stringify(place, null, 2))));
+    smFetch2('/api/workspaces/maps/files', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: filename, content: b64, contentType: 'application/json' }),
+    }).then(function (r) {
+      if (r.ok) loadSavedPlaces();
+      else alert('Save failed: HTTP ' + r.status);
+    });
+  }
+
+  function loadSavedPlaces() {
+    var listEl = document.getElementById('maps-saved');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="ws-empty">Loading…</div>';
+    smFetch2('/api/workspaces/maps/files').then(function (r) {
+      if (!r.ok) { listEl.innerHTML = ''; return; }
+      return r.json();
+    }).then(function (d) {
+      if (!d) return;
+      listEl.innerHTML = '';
+      var files = d.files || [];
+      if (!files.length) { listEl.innerHTML = '<div class="ws-empty" style="padding:14px;">No saved places yet.</div>'; return; }
+      files.forEach(function (f) {
+        try {
+          var place = JSON.parse(atob(f.content));
+          var card = document.createElement('div');
+          card.className = 'maps-saved-card';
+          card.innerHTML =
+            '<div class="maps-result-name">' + escHtml(place.name || '(unnamed)') + '</div>' +
+            '<div class="maps-result-addr">' + escHtml(place.address || '') + '</div>' +
+            '<div class="maps-result-coords">' + (place.lat != null ? place.lat.toFixed(6) : '') + ', ' + (place.lng != null ? place.lng.toFixed(6) : '') + '</div>' +
+            '<div class="maps-result-actions">' +
+              '<a class="ws-btn-tiny" href="https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent((place.name || '') + ' ' + (place.address || '')) + '" target="_blank" rel="noopener">Open</a>' +
+              '<button class="ws-btn-tiny ws-btn-danger">Delete</button>' +
+            '</div>';
+          card.querySelector('button.ws-btn-danger').onclick = function () {
+            if (!confirm('Delete saved place?')) return;
+            smFetch2('/api/workspaces/maps/files/' + encodeURIComponent(f.filename), { method: 'DELETE' })
+              .then(function (r) { if (r.ok) loadSavedPlaces(); });
+          };
+          listEl.appendChild(card);
+        } catch (_) {}
+      });
     });
   }
 
