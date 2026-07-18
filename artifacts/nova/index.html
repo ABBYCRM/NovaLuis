@@ -749,6 +749,56 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 .sm-spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 0.7s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
+/* ── Campaign tab styles ── */
+.sm-input {
+  width: 100%; padding: 9px 11px; border-radius: 7px;
+  background: var(--surface, rgba(255,255,255,0.04)); color: var(--text);
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  font-family: inherit; font-size: 0.88rem; box-sizing: border-box;
+}
+.sm-input:focus { outline: none; border-color: var(--accent, #f97316); }
+.sm-row { display: flex; align-items: center; }
+.sm-section-divider { height: 1px; background: var(--border, rgba(255,255,255,0.08)); margin: 18px 0; }
+.sm-status { font-size: 0.78rem; color: var(--muted); min-height: 18px; }
+.sm-status.error { color: #ef4444; }
+.sm-status.success { color: #22c55e; }
+.sm-btn-primary {
+  background: var(--accent, #f97316); color: white; border: 0; border-radius: 8px;
+  padding: 11px 14px; font-size: 0.88rem; font-weight: 600; cursor: pointer;
+  font-family: inherit;
+}
+.sm-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.sm-btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.sm-btn-secondary {
+  background: var(--surface2, rgba(255,255,255,0.05)); color: var(--text);
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; cursor: pointer;
+  font-family: inherit;
+}
+.sm-btn-secondary:hover { background: var(--accent-dim, rgba(249,115,22,0.15)); }
+.sm-btn-danger { color: #ef4444; border-color: rgba(239,68,68,0.3); }
+.sm-btn-danger:hover { background: rgba(239,68,68,0.1); }
+.sm-camp-card {
+  background: var(--surface, rgba(255,255,255,0.03));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+}
+.sm-camp-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.sm-camp-card-name { font-weight: 600; font-size: 0.92rem; }
+.sm-camp-card-desc { font-size: 0.8rem; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+.sm-camp-card-meta { font-size: 0.72rem; color: var(--muted); margin-top: 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+.sm-camp-card-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.sm-camp-status-badge {
+  font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;
+}
+.sm-camp-status-draft    { background: rgba(148,163,184,0.2); color: #94a3b8; }
+.sm-camp-status-active   { background: rgba(34,197,94,0.2); color: #22c55e; }
+.sm-camp-status-paused   { background: rgba(234,179,8,0.2); color: #eab308; }
+.sm-camp-status-ended    { background: rgba(239,68,68,0.2); color: #ef4444; }
+.sm-tone-chip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.sm-tone-chip input[type="checkbox"] { width: 14px; height: 14px; margin: 0; }
+
 /* ── Social Media panel — mobile (≤700px) ──────────────────────────────── */
 @media (max-width:700px) {
 
@@ -2913,6 +2963,7 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
         <div class="sm-tabs">
           <button class="sm-tab active" data-sm-tab="create">Create</button>
           <button class="sm-tab" data-sm-tab="scheduled">Scheduled <span id="sm-sched-count" style="opacity:0.6;font-size:0.75rem"></span></button>
+          <button class="sm-tab" data-sm-tab="campaigns">Campaigns <span id="sm-camp-count" style="opacity:0.6;font-size:0.75rem"></span></button>
         </div>
 
         <!-- CREATE PANE -->
@@ -3039,6 +3090,67 @@ Use when Robert asks about quantum mechanics, superposition, entanglement, measu
         <div class="sm-pane" id="sm-sched-pane" hidden>
           <div id="sm-sched-list">
             <div class="sm-empty">Loading scheduled posts…</div>
+          </div>
+        </div>
+
+        <!-- CAMPAIGNS PANE -->
+        <div class="sm-pane" id="sm-camp-pane" hidden>
+          <div id="sm-camp-form-wrap">
+            <div class="sm-field-label" style="margin-top:6px;">Campaign name</div>
+            <input id="sm-camp-name" class="sm-input" placeholder="e.g. Daily cartoon duck motivation" />
+
+            <div class="sm-field-label">Description <span style="font-size:0.7rem;color:var(--muted);font-weight:400;">— what the campaign posts about</span></div>
+            <textarea id="sm-camp-desc" class="sm-desc" rows="3" placeholder="e.g. Sarcastic Monday-morning motivation using my cartoon duck character. Each post should be short, punchy, and a little self-deprecating."></textarea>
+
+            <div class="sm-field-label">Brand voice</div>
+            <div id="sm-camp-voice-chips" class="sm-tone-chips">
+              <button class="sm-tone-chip active" data-voice="motivational">Motivational</button>
+              <button class="sm-tone-chip" data-voice="sarcastic">Sarcastic</button>
+              <button class="sm-tone-chip" data-voice="optimistic">Optimistic</button>
+              <button class="sm-tone-chip" data-voice="funny">Funny</button>
+              <button class="sm-tone-chip" data-voice="professional">Professional</button>
+              <button class="sm-tone-chip" data-voice="bold">Bold</button>
+              <button class="sm-tone-chip" data-voice="inspirational">Inspirational</button>
+              <button class="sm-tone-chip" data-voice="educational">Educational</button>
+            </div>
+
+            <div class="sm-field-label">Target audience <span style="font-size:0.7rem;color:var(--muted);font-weight:400;">— optional</span></div>
+            <input id="sm-camp-audience" class="sm-input" placeholder="e.g. millennial creators, 25-34, US+LatAm" />
+
+            <div class="sm-field-label">Platforms</div>
+            <div id="sm-camp-platforms" class="sm-tone-chips">
+              <label class="sm-tone-chip"><input type="checkbox" value="instagram" checked> Instagram</label>
+              <label class="sm-tone-chip"><input type="checkbox" value="tiktok"> TikTok</label>
+              <label class="sm-tone-chip"><input type="checkbox" value="twitter"> X / Twitter</label>
+              <label class="sm-tone-chip"><input type="checkbox" value="facebook"> Facebook</label>
+              <label class="sm-tone-chip"><input type="checkbox" value="linkedin"> LinkedIn</label>
+              <label class="sm-tone-chip"><input type="checkbox" value="youtube"> YouTube</label>
+            </div>
+
+            <div class="sm-field-label">Posting cadence <span style="font-size:0.7rem;color:var(--muted);font-weight:400;">— how often per platform</span></div>
+            <select id="sm-camp-interval" class="sm-input">
+              <option value="6">Every 6 hours</option>
+              <option value="12">Every 12 hours</option>
+              <option value="24" selected>Every 24 hours (daily)</option>
+              <option value="48">Every 2 days</option>
+              <option value="72">Every 3 days</option>
+              <option value="168">Weekly</option>
+            </select>
+
+            <div class="sm-row" style="margin-top:14px;display:flex;gap:8px;">
+              <button id="sm-camp-create-btn" class="sm-btn-primary" style="flex:1;">+ Create Campaign</button>
+            </div>
+            <div id="sm-camp-create-status" class="sm-status" style="margin-top:8px;"></div>
+          </div>
+
+          <div class="sm-section-divider"></div>
+
+          <div class="sm-row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div class="sm-field-label" style="margin:0;">Your campaigns</div>
+            <button id="sm-camp-refresh-btn" class="sm-btn-secondary" style="font-size:0.75rem;padding:4px 10px;">Refresh</button>
+          </div>
+          <div id="sm-camp-list">
+            <div class="sm-empty">Loading…</div>
           </div>
         </div>
 
@@ -3584,7 +3696,9 @@ document.querySelectorAll('.sm-tab').forEach(function (tab) {
     var which = tab.dataset.smTab;
     document.getElementById('sm-create-pane').hidden  = which !== 'create';
     document.getElementById('sm-sched-pane').hidden   = which !== 'scheduled';
+    document.getElementById('sm-camp-pane').hidden    = which !== 'campaigns';
     if (which === 'scheduled') loadScheduledPosts();
+    if (which === 'campaigns') loadCampaigns();
   });
 });
 
@@ -3866,6 +3980,196 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !o
 
 // Pre-populate type list so it's ready before first open
 renderTypeList();
+
+// ── Campaigns tab ───────────────────────────────────────────────────────────
+var campNameEl    = document.getElementById('sm-camp-name');
+var campDescEl    = document.getElementById('sm-camp-desc');
+var campAudienceEl= document.getElementById('sm-camp-audience');
+var campIntervalEl= document.getElementById('sm-camp-interval');
+var campCreateBtn = document.getElementById('sm-camp-create-btn');
+var campStatusEl  = document.getElementById('sm-camp-create-status');
+var campListEl    = document.getElementById('sm-camp-list');
+var campRefreshBtn= document.getElementById('sm-camp-refresh-btn');
+var campCountEl   = document.getElementById('sm-camp-count');
+var campVoiceChips= document.querySelectorAll('#sm-camp-voice-chips .sm-tone-chip');
+
+var campState = { voice: 'motivational' };
+
+campVoiceChips.forEach(function (chip) {
+  chip.addEventListener('click', function () {
+    campVoiceChips.forEach(function (c) { c.classList.remove('active'); });
+    chip.classList.add('active');
+    campState.voice = chip.dataset.voice;
+  });
+});
+
+function setCampStatus(msg, kind) {
+  campStatusEl.textContent = msg || '';
+  campStatusEl.className = 'sm-status' + (kind ? ' ' + kind : '');
+}
+
+async function createCampaign() {
+  var name = campNameEl.value.trim();
+  var desc = campDescEl.value.trim();
+  if (!name) { setCampStatus('Campaign name is required', 'error'); campNameEl.focus(); return; }
+  if (!desc) { setCampStatus('Description is required — the AI uses it to write every post', 'error'); campDescEl.focus(); return; }
+  var platforms = Array.from(document.querySelectorAll('#sm-camp-platforms input[type=checkbox]:checked'))
+    .map(function (cb) { return cb.value; });
+  if (!platforms.length) { setCampStatus('Pick at least one platform', 'error'); return; }
+
+  campCreateBtn.disabled = true;
+  setCampStatus('Researching + creating campaign…');
+
+  try {
+    var r = await smFetch('/api/social/campaigns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        description: desc,
+        goals: '',
+        targetAudience: campAudienceEl.value.trim(),
+        brandVoice: campState.voice,
+        platforms: platforms,
+        contentTypes: {}, // server fills sensible defaults per platform
+        intervalHours: parseInt(campIntervalEl.value, 10) || 24,
+        runResearch: true,
+      }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    setCampStatus('✓ Created campaign #' + d.campaign.id + ' — ' + (d.campaign.status || 'draft'), 'success');
+    campNameEl.value = '';
+    campDescEl.value = '';
+    campAudienceEl.value = '';
+    loadCampaigns();
+  } catch (e) {
+    setCampStatus('Failed: ' + e.message, 'error');
+  } finally {
+    campCreateBtn.disabled = false;
+  }
+}
+
+function fmtInterval(hours) {
+  if (!hours) return '';
+  if (hours < 24) return 'every ' + hours + 'h';
+  if (hours % 24 === 0) return 'every ' + (hours / 24) + 'd';
+  return hours + 'h';
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleDateString(); } catch (_) { return ''; }
+}
+
+function renderCampaigns(campaigns) {
+  campListEl.innerHTML = '';
+  if (!campaigns.length) {
+    campListEl.innerHTML = '<div class="sm-empty">No campaigns yet. Create your first one above.</div>';
+    if (campCountEl) campCountEl.textContent = '';
+    return;
+  }
+  if (campCountEl) campCountEl.textContent = '(' + campaigns.length + ')';
+  campaigns.forEach(function (c) {
+    var platforms = [];
+    try { platforms = JSON.parse(c.platforms || '[]'); } catch (_) {}
+    var card = document.createElement('div');
+    card.className = 'sm-camp-card';
+    card.innerHTML =
+      '<div class="sm-camp-card-head">' +
+        '<div class="sm-camp-card-name">' + escHtml(c.name) + '</div>' +
+        '<span class="sm-camp-status-badge sm-camp-status-' + escHtml(c.status || 'draft') + '">' + escHtml(c.status || 'draft') + '</span>' +
+      '</div>' +
+      '<div class="sm-camp-card-desc">' + escHtml(c.description || '') + '</div>' +
+      '<div class="sm-camp-card-meta">' +
+        '<span>📡 ' + escHtml(platforms.join(', ') || 'no platforms') + '</span>' +
+        '<span>⏱ ' + escHtml(fmtInterval(c.intervalHours)) + '</span>' +
+        '<span>🎙 ' + escHtml(c.brandVoice || 'motivational') + '</span>' +
+        (c.nextRunAt ? '<span>▶ next ' + escHtml(fmtDate(c.nextRunAt)) + '</span>' : '') +
+      '</div>' +
+      '<div class="sm-camp-card-actions">' +
+        (c.status === 'active' || c.status === 'paused'
+          ? '<button class="sm-btn-secondary" data-act="run">Run now</button>'
+          : '<button class="sm-btn-secondary" data-act="activate">Activate</button>') +
+        (c.status === 'active'
+          ? '<button class="sm-btn-secondary" data-act="pause">Pause</button>'
+          : (c.status === 'paused'
+            ? '<button class="sm-btn-secondary" data-act="resume">Resume</button>'
+            : '')) +
+        '<button class="sm-btn-secondary" data-act="edit">Edit</button>' +
+        '<button class="sm-btn-secondary sm-btn-danger" data-act="del">Delete</button>' +
+      '</div>';
+
+    card.querySelectorAll('button[data-act]').forEach(function (btn) {
+      btn.addEventListener('click', function () { campaignAction(c, btn.dataset.act); });
+    });
+    campListEl.appendChild(card);
+  });
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+  });
+}
+
+async function campaignAction(c, act) {
+  try {
+    if (act === 'del') {
+      if (!confirm('Delete campaign "' + c.name + '"? This will also delete its scheduled posts.')) return;
+      var r = await smFetch('/api/social/campaigns/' + c.id, { method: 'DELETE' });
+      if (!r.ok) { var err = await r.json().catch(function () { return {}; }); throw new Error(err.error || 'HTTP ' + r.status); }
+    } else if (act === 'activate') {
+      var r = await smFetch('/api/social/campaigns/' + c.id + '/activate', { method: 'POST' });
+      if (!r.ok) { var err = await r.json().catch(function () { return {}; }); throw new Error(err.error || 'HTTP ' + r.status); }
+    } else if (act === 'pause') {
+      var r = await smFetch('/api/social/campaigns/' + c.id + '/pause', { method: 'POST' });
+      if (!r.ok) { var err = await r.json().catch(function () { return {}; }); throw new Error(err.error || 'HTTP ' + r.status); }
+    } else if (act === 'resume') {
+      // No dedicated /resume endpoint — re-activate which flips status from paused to active.
+      var r = await smFetch('/api/social/campaigns/' + c.id + '/activate', { method: 'POST' });
+      if (!r.ok) { var err = await r.json().catch(function () { return {}; }); throw new Error(err.error || 'HTTP ' + r.status); }
+    } else if (act === 'run') {
+      setCampStatus('Triggering immediate run for "' + c.name + '"…');
+      var r = await smFetch('/api/social/campaigns/' + c.id + '/run', { method: 'POST' });
+      var d = await r.json().catch(function () { return {}; });
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      setCampStatus('✓ ' + (d.message || 'Run complete'), 'success');
+    } else if (act === 'edit') {
+      // Lightweight edit: prefill the form. For full edit we'd need a modal.
+      campNameEl.value = c.name;
+      campDescEl.value = c.description || '';
+      campAudienceEl.value = c.targetAudience || '';
+      campIntervalEl.value = String(c.intervalHours || 24);
+      campState.voice = c.brandVoice || 'motivational';
+      campVoiceChips.forEach(function (chip) {
+        chip.classList.toggle('active', chip.dataset.voice === campState.voice);
+      });
+      document.querySelectorAll('#sm-camp-platforms input[type=checkbox]').forEach(function (cb) {
+        cb.checked = (Array.isArray(JSON.parse(c.platforms || '[]')) && JSON.parse(c.platforms || '[]').indexOf(cb.value) !== -1);
+      });
+      setCampStatus('Prefilled from existing campaign. Adjust + click Create to save as a new campaign.', 'success');
+    }
+    loadCampaigns();
+  } catch (e) {
+    setCampStatus('Action failed: ' + e.message, 'error');
+  }
+}
+
+async function loadCampaigns() {
+  campListEl.innerHTML = '<div class="sm-empty">Loading…</div>';
+  try {
+    var r = await smFetch('/api/social/campaigns');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var d = await r.json();
+    renderCampaigns(d.campaigns || []);
+  } catch (e) {
+    campListEl.innerHTML = '<div class="sm-empty">Failed to load: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+if (campCreateBtn) campCreateBtn.addEventListener('click', createCampaign);
+if (campRefreshBtn) campRefreshBtn.addEventListener('click', loadCampaigns);
 
 })(); // end Social Media IIFE
 
