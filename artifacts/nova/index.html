@@ -2199,6 +2199,14 @@ INPUT → Parse Tone/Workspace → Adjust Hormone/Valence Vectors → Run Active
   if (changed) localStorage.setItem(LS_KEY, JSON.stringify(s));
 })();
 
+// Global auth-aware fetch helper. Defined at the top level so every
+// later IIFE (Favorites, Workspace, Social Media) can use the same
+// helper without redefining it. Falls back to raw fetch if the main
+// gFetch is not yet available.
+function smFetch2(path, opts) {
+  return (typeof gFetch === 'function' ? gFetch : fetch)(path, opts);
+}
+
 // API key injection — separate so a failed/empty fetch never blocks the
 // settings migration above.
 (async () => {
@@ -4307,9 +4315,7 @@ var favSearchEl  = document.getElementById('fav-search-input');
 
 var allFavs = [];
 
-function smFetch2(path, opts) {
-  return (typeof gFetch === 'function' ? gFetch : fetch)(path, opts);
-}
+// smFetch2 is defined globally above this IIFE.
 
 // ── Render ─────────────────────────────────────────────────────────────────
 function renderFavs(list) {
