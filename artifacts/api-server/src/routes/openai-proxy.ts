@@ -7,7 +7,7 @@ import {
   type ChatMessage,
 } from "../lib/scratchpad";
 import { getKnowledgeContext } from "../lib/knowledge";
-import { getModelPreference } from "./nova-config";
+import { getModelPreference, getModelTuning } from "./nova-config";
 
 const router = Router();
 
@@ -180,6 +180,43 @@ router.all("/v1/*splat", async (req, res) => {
   // Settings takes effect immediately without restarting the gateway.
   if (isChat && isInternalOpenClaw) {
     req.body.model = getModelPreference().model;
+  }
+
+  // ── Model-specific agentic tuning ─────────────────────────────────────────
+  // Look up the registered tuning for the requested model and fill in any
+  // missing fields. This guarantees every chat request reaches the upstream
+  // with the right sampler, output cap, and thinking-mode setting — even
+  // if the caller (browser, openclaw gateway, work-tree worker) didn't set
+  // them. The caller can still OVERRIDE any of these by passing them
+  // explicitly; we only fill in the gaps.
+  if (isChat) {
+    const chatBody = req.body as Record<string, unknown>;
+    const chatModel = String(chatBody.model ?? "");
+    const tuning = getModelTuning(chatModel);
+    if (tuning) {
+      // 1) Output cap — models default to a tiny cap (e.g. Moonshot uses
+      //    1024 when max_tokens is absent) which truncates long responses.
+      if (chatBody.max_tokens == null && chatBody.max_completion_tokens == null) {
+        chatBody.max_tokens = tuning.maxTokens;
+      }
+      // 2) Sampler defaults.
+      if (chatBody.temperature == null) chatBody.temperature = tuning.temperature;
+      if (chatBody.top_p == null) chatBody.top_p = tuning.topP;
+      // 3) Thinking mode — only models that support it (kimi-k2.6) need
+      //    extra_body.thinking. Models without it (gpt-4o) skip this.
+      if (tuning.thinking.type !== "disabled") {
+        const extra = (chatBody.extra_body && typeof chatBody.extra_body === "object"
+          ? chatBody.extra_body as Record<string, unknown>
+          : {});
+        if (extra.thinking == null) {
+          // keep=null means: reason, but don't return the reasoning trace
+          // in the final response (saves tokens, faster for the user).
+          // Set keep="all" if the caller wants the trace back.
+          extra.thinking = { type: tuning.thinking.type, keep: tuning.thinking.keep };
+          chatBody.extra_body = extra;
+        }
+      }
+    }
   }
 
   // Memory injection + capture setup for raw/internal inference calls.

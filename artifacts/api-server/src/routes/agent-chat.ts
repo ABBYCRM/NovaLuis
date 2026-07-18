@@ -11,6 +11,7 @@ import {
   composioRequest,
   ensureComposioSession,
 } from "../lib/composio";
+import { getModelTuning } from "./nova-config";
 
 const router = Router();
 
@@ -245,13 +246,33 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     ...messages,
   ];
 
-  const body = {
+  // Build the forwarded body and apply the model's agentic tuning (output
+  // cap, sampler, thinking mode). Same registry as openai-proxy uses so
+  // every kimi-k2.6 call in the system gets the same treatment — whether
+  // it originates from the browser chat, the work-tree worker, or any
+  // future client. Caller can override any field explicitly.
+  const body: Record<string, unknown> = {
     ...incoming,
     model: OPENCLAW_AGENT_MODEL,
     stream,
     user: `nova-chat:${conversationKey}`,
     messages: forwardedMessages,
   };
+  const tuning = getModelTuning(OPENCLAW_AGENT_MODEL);
+  if (tuning) {
+    if (body.max_tokens == null) body.max_tokens = tuning.maxTokens;
+    if (body.temperature == null) body.temperature = tuning.temperature;
+    if (body.top_p == null) body.top_p = tuning.topP;
+    if (tuning.thinking.type !== "disabled") {
+      const extra = (body.extra_body && typeof body.extra_body === "object"
+        ? body.extra_body as Record<string, unknown>
+        : {});
+      if (extra.thinking == null) {
+        extra.thinking = { type: tuning.thinking.type, keep: tuning.thinking.keep };
+        body.extra_body = extra;
+      }
+    }
+  }
 
   try {
     const upstream = await fetch(`${OPENCLAW_GATEWAY_URL}/v1/chat/completions`, {
