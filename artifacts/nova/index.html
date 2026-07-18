@@ -5520,6 +5520,9 @@ document.addEventListener('keydown', function (e) {
       all = all.slice(0, 50);
       localStorage.setItem(LS_CHATS, JSON.stringify(all));
       localStorage.setItem(LS_CURRENT, chat.id);
+      // Notify the history-sidebar script that the active chat changed
+      // so it can re-render the Recent list (new title, new previews).
+      try { window.dispatchEvent(new CustomEvent('bob:chat-updated', { detail: { id: chat.id, title: chat.title } })); } catch (_) {}
     } catch (_) {}
   }
   function ensureChat() {
@@ -5723,6 +5726,258 @@ document.addEventListener('keydown', function (e) {
   autoGrow();
 
   console.log('[chat] send handler installed (model=' + getModel() + ', baseUrl=' + getBaseUrl() + ')');
+})();
+</script>
+
+<!-- ── Chat history sidebar (New Chat + Recent list with delete) ───────────────
+     The sidebar has a New Chat button and a #history-list container, but no
+     handler ever wired them up. This script:
+       1. Wires the #new-chat-btn to start a fresh empty chat
+       2. Renders the recent-chats list into #history-list
+       3. Each history item has a hover-visible delete button (.hi-del)
+       4. Clicking an item loads that chat into the active session
+       5. Re-renders the list every time the active chat changes
+       6. Trims the list to 50 most-recent chats (oldest auto-evicted)
+
+     Storage keys (same as the send handler):
+       - bob-chats         : array of {id, title, createdAt, updatedAt, messages}
+       - bob-current-chat-id : the id of the active chat
+-->
+<script>
+(function () {
+  'use strict';
+
+  var LS_CHATS   = 'bob-chats';
+  var LS_CURRENT = 'bob-current-chat-id';
+  var MAX_CHATS  = 50;
+
+  var newChatBtn = document.getElementById('new-chat-btn');
+  var historyList = document.getElementById('history-list');
+  var userInput = document.getElementById('user-input');
+  var chatInner = document.getElementById('chat-inner');
+
+  if (!historyList) {
+    console.warn('[history] #history-list not found; history script not installed');
+    return;
+  }
+
+  // ── Storage helpers ─────────────────────────────────────────────────────
+  function loadAll() {
+    try {
+      var raw = localStorage.getItem(LS_CHATS);
+      if (!raw) return [];
+      var arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch (_) { return []; }
+  }
+  function saveAll(arr) {
+    try {
+      // Cap to MAX_CHATS to keep storage bounded
+      var trimmed = arr.slice(0, MAX_CHATS);
+      localStorage.setItem(LS_CHATS, JSON.stringify(trimmed));
+      return trimmed;
+    } catch (_) { return arr; }
+  }
+  function getCurrentId() {
+    return localStorage.getItem(LS_CURRENT) || null;
+  }
+  function setCurrentId(id) {
+    if (id) localStorage.setItem(LS_CURRENT, id);
+    else localStorage.removeItem(LS_CURRENT);
+  }
+  function getCurrent() {
+    var id = getCurrentId();
+    if (!id) return null;
+    var all = loadAll();
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    return null;
+  }
+  function makeId() {
+    return 'chat-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+  function newChat() {
+    var c = {
+      id: makeId(),
+      title: 'New chat',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [],
+    };
+    var all = loadAll();
+    all.unshift(c);
+    saveAll(all);
+    setCurrentId(c.id);
+    return c;
+  }
+  function updateCurrent(patch) {
+    var id = getCurrentId();
+    if (!id) return;
+    var all = loadAll();
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].id === id) {
+        var merged = patch;
+        if (typeof patch === 'function') merged = patch(all[i]);
+        if (merged && typeof merged === 'object') {
+          for (var k in merged) if (Object.prototype.hasOwnProperty.call(merged, k)) all[i][k] = merged[k];
+        }
+        all[i].updatedAt = Date.now();
+        saveAll(all);
+        return;
+      }
+    }
+  }
+  function deleteChat(id) {
+    var all = loadAll().filter(function (c) { return c.id !== id; });
+    saveAll(all);
+    if (getCurrentId() === id) {
+      // If we deleted the active chat, start a fresh one
+      var fresh = newChat();
+      loadChatIntoUI(fresh);
+    }
+    renderHistory();
+  }
+
+  // ── Render: history list ────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+  function renderHistory() {
+    var all = loadAll();
+    var currentId = getCurrentId();
+    // Clear everything except the first .history-label
+    var labelEl = historyList.querySelector('.history-label');
+    historyList.innerHTML = '';
+    if (labelEl) historyList.appendChild(labelEl);
+    else {
+      var lbl = document.createElement('div');
+      lbl.className = 'history-label';
+      lbl.textContent = 'Recent';
+      historyList.appendChild(lbl);
+    }
+
+    if (all.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'history-empty';
+      empty.style.cssText = 'padding:10px 10px; color:var(--muted); font-size:0.75rem; opacity:0.6;';
+      empty.textContent = 'No saved chats yet.';
+      historyList.appendChild(empty);
+      return;
+    }
+
+    all.forEach(function (c) {
+      var item = document.createElement('div');
+      item.className = 'history-item' + (c.id === currentId ? ' active' : '');
+      item.dataset.id = c.id;
+      item.title = c.title || 'Untitled chat';
+
+      // chat-bubble icon
+      var icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('class', 'hi-icon');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.setAttribute('fill', 'none');
+      icon.setAttribute('stroke', 'currentColor');
+      icon.setAttribute('stroke-width', '2');
+      icon.setAttribute('stroke-linecap', 'round');
+      icon.setAttribute('stroke-linejoin', 'round');
+      icon.innerHTML = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+
+      var label = document.createElement('span');
+      label.className = 'hi-label';
+      label.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto;';
+      label.textContent = c.title || 'Untitled chat';
+
+      var del = document.createElement('span');
+      del.className = 'hi-del';
+      del.title = 'Delete chat';
+      del.textContent = '\u00D7'; // ×
+      del.setAttribute('role', 'button');
+      del.setAttribute('aria-label', 'Delete chat');
+      del.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+        if (confirm('Delete this chat?')) deleteChat(c.id);
+      });
+
+      item.appendChild(icon);
+      item.appendChild(label);
+      item.appendChild(del);
+      item.addEventListener('click', function () {
+        if (getCurrentId() === c.id) return; // already active
+        setCurrentId(c.id);
+        loadChatIntoUI(c);
+        renderHistory();
+      });
+
+      historyList.appendChild(item);
+    });
+  }
+
+  // ── Load a chat into the chat-inner area ─────────────────────────────────
+  function loadChatIntoUI(chat) {
+    if (!chatInner) return;
+    chatInner.innerHTML = '';
+    if (chat && Array.isArray(chat.messages)) {
+      chat.messages.forEach(function (m) {
+        if (!m || typeof m.content !== 'string') return;
+        appendBubble(m.role === 'user' ? 'user' : 'assistant', m.content, false);
+      });
+    }
+  }
+
+  // Minimal bubble renderer that matches what the send handler creates.
+  // Duplicated here so the history-load path works even if the send script
+  // has not yet run (sidebar can open before the chat area is interactive).
+  function appendBubble(role, content, scroll) {
+    if (!chatInner) return;
+    var row = document.createElement('div');
+    row.className = 'msg-row ' + (role === 'user' ? 'msg-user' : 'msg-assistant');
+    var avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? 'You' : 'AI';
+    var body = document.createElement('div');
+    body.className = 'msg-body';
+    var bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (role === 'user' ? 'bubble-user' : 'bubble-assistant');
+    bubble.textContent = content;
+    body.appendChild(bubble);
+    row.appendChild(avatar);
+    row.appendChild(body);
+    chatInner.appendChild(row);
+    if (scroll !== false) chatInner.scrollTop = chatInner.scrollHeight;
+  }
+
+  // ── New Chat button ─────────────────────────────────────────────────────
+  if (newChatBtn) {
+    newChatBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var c = newChat();
+      loadChatIntoUI(c);
+      renderHistory();
+      if (userInput) userInput.focus();
+    });
+  }
+
+  // ── Initial render: if there's no current chat, start one ───────────────
+  if (!getCurrentId()) {
+    newChat();
+  }
+  renderHistory();
+  // Hydrate the chat area with the active chat's messages on page load.
+  var initial = getCurrent();
+  if (initial && chatInner && chatInner.children.length === 0) {
+    loadChatIntoUI(initial);
+  }
+
+  // ── Cross-script bridge: let the send handler notify us when a chat
+  //    changes (e.g. title auto-derived from first user message) so we can
+  //    re-render the sidebar list without duplicating storage logic. ──────
+  window.addEventListener('bob:chat-updated', function () { renderHistory(); });
+  window.addEventListener('bob:chat-created', function () { renderHistory(); });
+
+  console.log('[history] sidebar wired (' + loadAll().length + ' saved chats)');
 })();
 </script>
 </body>
