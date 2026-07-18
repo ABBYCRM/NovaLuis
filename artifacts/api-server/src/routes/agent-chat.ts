@@ -20,7 +20,18 @@ const OPENCLAW_GATEWAY_URL = (
   "http://127.0.0.1:18789"
 ).replace(/\/$/, "");
 const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
-const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "openclaw/default";
+
+// Default agent model for the main chat route. Set this to a model id that the
+// openai-proxy already knows how to route: "kimi-k2.6" (Moonshot), "gpt-4o"
+// (OpenAI), "gemini-2.5-pro" (Google), or any "org/model" string for Bitdeer.
+//
+// Why the explicit kimi-k2.6 default: the previous fallback was
+// "openclaw/default" which the openclaw gateway has no built-in resolver
+// for on a fresh deploy. Result: the main chat "thinks and stops" — starts
+// streaming, then dies silently with no model to call. Pinning to kimi-k2.6
+// here forces a real upstream model to be selected. Override with the env
+// var if you need a different default for a specific deploy.
+const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "kimi-k2.6";
 
 interface ConnectedAppIntent {
   app: string;
