@@ -4,7 +4,8 @@
  * Image generation  →  Google Gemini  (GEMINI_API_KEY)
  * Video generation  →  A2E AI         (A2E_AI_API_KEY)
  *
- * All routes sit behind requireWtAuth (peer-key / PIN cookie).
+ * All routes sit behind the requireWtAuth middleware in routes/index.ts
+ * (peer-key / PIN cookie) — see that file for the current auth state.
  *
  * Routes
  *   POST /media/image/generate          prompt → Gemini image → served URL

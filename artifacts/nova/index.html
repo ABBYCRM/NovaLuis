@@ -2207,6 +2207,51 @@ function smFetch2(path, opts) {
   return (typeof gFetch === 'function' ? gFetch : fetch)(path, opts);
 }
 
+// Mobile sidebar toggle. The #hamburger button (visible only at ≤1024px
+// width per the @media block) had no click handler — pre-existing bug that
+// left the sidebar permanently off-canvas on phones/tablets. Wire it here
+// at the top level so it works regardless of which IIFE loaded the button.
+(function setupMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const hamburger = document.getElementById('hamburger');
+  if (!sidebar || !hamburger) return;
+  // Build the backdrop overlay if it doesn't exist.
+  let overlay = document.getElementById('sidebar-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'sidebar-overlay';
+    document.body.appendChild(overlay);
+  }
+  const open = () => {
+    sidebar.classList.add('open');
+    overlay.classList.add('visible');
+    document.body.style.overflow = 'hidden';
+  };
+  const close = () => {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('visible');
+    document.body.style.overflow = '';
+  };
+  hamburger.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (sidebar.classList.contains('open')) close();
+    else open();
+  });
+  // Tap the dimmed backdrop to close.
+  overlay.addEventListener('click', close);
+  // Tap any sidebar item on mobile to close after navigation.
+  sidebar.addEventListener('click', function (e) {
+    const t = e.target;
+    if (t && t.closest && t.closest('button, a, .workspace-tab, [data-ws]')) {
+      // Only auto-close on the small viewport where the sidebar is fixed.
+      if (window.matchMedia && window.matchMedia('(max-width: 1024px)').matches) {
+        // Defer so the click handler still fires before the panel closes.
+        setTimeout(close, 50);
+      }
+    }
+  });
+})();
+
 // API key injection — separate so a failed/empty fetch never blocks the
 // settings migration above.
 (async () => {

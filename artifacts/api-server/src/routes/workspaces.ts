@@ -3,8 +3,11 @@
  *
  * Mirrors the client-side IndexedDB 'bob-workspaces' so the AI can read and
  * write workspace files via nova-services without requiring a browser session.
- * All routes require the work-tree PIN cookie or the SUPERNOVA_API_KEY bearer
- * token (set upstream in routes/index.ts via requireWtAuth).
+ * NOTE: routes in this file are NOT currently gated by auth. The previous
+ * work-tree PIN gate (requireWtAuth) was removed in commit 4b… and the
+ * helper now just calls `next()`. Anyone with network access to the
+ * container can read/write workspace files. Re-enable requireWtAuth in
+ * routes/index.ts if/when a real auth layer is in place.
  *
  * Routes
  *   GET  /workspaces                         list all workspaces with counts
@@ -21,10 +24,14 @@ import { eq, and, sql } from "drizzle-orm";
 
 const router = Router();
 
-// Valid workspace slugs – must match client-side WS_DEFS in bob.js
+// Valid workspace slugs – must match the client-side workspace list in
+// `artifacts/nova/index.html`. New workspaces (notes, calendar, maps) were
+// added by PR #34; this list is the single source of truth for which
+// workspace names the API will accept.
 const VALID_WORKSPACES = new Set([
   "medical", "health", "dietary", "fitness", "todo", "tasks", "agents",
   "pictures", "numerology", "sacred", "vedic", "mystic", "manifest", "quantum",
+  "notes", "calendar", "maps",
 ]);
 
 function validWs(ws: string): boolean {
