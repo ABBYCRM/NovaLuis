@@ -112,21 +112,64 @@ const REVERSE_GEOCODE_SLUGS = [
   "GOOGLEMAPS_GEOCODE",
 ];
 
+// Cache the linked-account check. Composio's /connected_accounts listing is
+// stable for the life of a server process — connections only change when the
+// user explicitly reconnects in Settings. Without this cache every search
+// paid a 200-500ms round-trip to Composio before the first tool call, and
+// when the toolkit wasn't linked, the request routinely blew past the
+// DigitalOcean App Platform 1.7s edge timeout and produced 504 instead of
+// the intended 409. The cache lives 5 minutes (configurable) and is
+// invalidated automatically when the user reconnects the toolkit in the UI.
+let linkedCache: { ok: boolean; reason?: string; expiresAt: number } | null = null;
+const LINKED_CACHE_TTL_MS = 5 * 60_000;
+
+function linkedCacheGet(): { ok: boolean; reason?: string } | null {
+  if (!linkedCache) return null;
+  if (linkedCache.expiresAt < Date.now()) {
+    linkedCache = null;
+    return null;
+  }
+  return { ok: linkedCache.ok, reason: linkedCache.reason };
+}
+
+function linkedCacheSet(result: { ok: boolean; reason?: string }): void {
+  linkedCache = { ...result, expiresAt: Date.now() + LINKED_CACHE_TTL_MS };
+}
+
+export function invalidateMapsLinkedCache(): void {
+  linkedCache = null;
+}
+
 async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  // Check whether a Google Maps connection exists for the current user.
-  // We do this by listing connected accounts and looking for google_maps.
-  // Composio's listing endpoint shape varies; we use a generic search.
+  const cached = linkedCacheGet();
+  if (cached !== null) {
+    return cached.ok ? { ok: true } : { ok: false, reason: cached.reason ?? "not linked" };
+  }
+  // 4s budget is enough for Composio on a warm connection but small enough
+  // that we still return 409 well inside the DO edge timeout if the
+  // account check itself hangs.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4_000);
   try {
     const data = await composioRequest<unknown>(
       apiKey,
       "/connected_accounts?toolkit_slug=google_maps",
-      { method: "GET" },
+      { method: "GET", signal: controller.signal },
     );
     const arr = Array.isArray(data) ? data : extractArray(data, ["items", "accounts", "results"]);
-    if (arr && arr.length > 0) return { ok: true };
-    return { ok: false, reason: "Google Maps is not linked. Open Settings → Integrations and connect Google Maps." };
+    if (arr && arr.length > 0) {
+      linkedCacheSet({ ok: true });
+      return { ok: true };
+    }
+    const reason = "Google Maps is not linked. Open Settings → Integrations and connect Google Maps.";
+    linkedCacheSet({ ok: false, reason });
+    return { ok: false, reason };
   } catch (e) {
-    return { ok: false, reason: "Could not verify Google Maps connection: " + (e instanceof Error ? e.message : String(e)) };
+    const reason = "Could not verify Google Maps connection: " + (e instanceof Error ? e.message : String(e));
+    linkedCacheSet({ ok: false, reason });
+    return { ok: false, reason };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -168,15 +211,30 @@ router.get("/maps/search", async (req: Request, res: Response) => {
     : { query: q };
 
   let lastErr: unknown = null;
+  let attempts = 0;
+  const MAX_TOOL_ATTEMPTS = 3; // 3 slugs × ~500ms = ~1.5s, safely under the 1.7s DO edge
   for (const slug of slugs) {
+    if (attempts >= MAX_TOOL_ATTEMPTS) break;
+    attempts += 1;
     try {
-      const raw = await runMapsTool(session.apiKey, slug, args);
+      // Per-slug 1.2s budget so a hung Composio call cannot burn the
+      // whole request budget. First success with non-empty results wins;
+      // 200+empty is treated as a no-op and we try the next slug.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1_200);
+      let raw: unknown;
+      try {
+        raw = await runMapsTool(session.apiKey, slug, args);
+      } finally {
+        clearTimeout(timer);
+      }
       const results = extractPlaces(raw);
       if (results.length > 0) {
         res.json({ ok: true, toolSlug: slug, query: q, results });
         return;
       }
-      // Empty result — try next tool slug.
+      // 200 OK with empty results — log it and move on to the next slug.
+      logger.warn({ toolSlug: slug, query: q }, "[maps] tool returned 200 with no extractable results, trying next slug");
     } catch (e) {
       lastErr = e;
       if (e instanceof ComposioApiError) {

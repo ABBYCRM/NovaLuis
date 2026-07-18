@@ -3,16 +3,16 @@
  *
  * Mirrors the client-side IndexedDB 'bob-workspaces' so the AI can read and
  * write workspace files via nova-services without requiring a browser session.
- * NOTE: routes in this file are NOT currently gated by auth. The previous
- * work-tree PIN gate (requireWtAuth) was removed in commit 4b… and the
- * helper now just calls `next()`. Anyone with network access to the
- * container can read/write workspace files. Re-enable requireWtAuth in
- * routes/index.ts if/when a real auth layer is in place.
+ *
+ * Every route in this file is gated by the NOVA_API_TOKEN shared-secret
+ * middleware (see lib/api-auth.ts). When the env var is unset the route
+ * returns 503 "auth not configured" — there is no silent-open path.
  *
  * Routes
  *   GET  /workspaces                         list all workspaces with counts
  *   GET  /workspaces/:ws/files               list + full content of files in a workspace
  *   GET  /workspaces/:ws/files/:filename     read one file
+ *   GET  /workspaces/:ws/files/:filename/raw serve raw bytes (for <img src>)
  *   POST /workspaces/:ws/files               upsert a file  { filename, content, contentType? }
  *   DELETE /workspaces/:ws/files/:filename   delete a file
  */
@@ -21,19 +21,19 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, hasDatabase, workspaceFilesTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
+import { requireApiAuth } from "../lib/api-auth";
 
 const router = Router();
 
-// Valid workspace slugs – must match the client-side workspace list in
-// `artifacts/nova/index.html`. New workspaces (notes, calendar, maps) were
-// added by PR #34; this list is the single source of truth for which
-// workspace names the API will accept.
-const VALID_WORKSPACES = new Set([
-  "medical", "health", "dietary", "fitness", "todo", "tasks", "agents",
-  "pictures", "numerology", "sacred", "vedic", "mystic", "manifest", "quantum",
-  "notes", "calendar", "maps",
-]);
+// All workspace routes require the NOVA_API_TOKEN. /raw is included so image
+// thumbnails served to <img> tags go through the same gate; the browser
+// proxy or service worker can attach x-nova-token to the request.
+router.use(requireApiAuth);
 
+// Valid workspace slugs – must match the client-side workspace list in
+// `artifacts/nova/index.html`. The validWs() regex below is the actual gate;
+// this file is the single source of truth for which workspace names the API
+// will accept.
 function validWs(ws: string): boolean {
   return /^[a-z0-9_-]{1,100}$/i.test(ws);
 }
@@ -139,8 +139,8 @@ const upsertSchema = z.object({
 // Returns the file content as raw bytes with the correct Content-Type, so
 // the browser can use it directly in <img src="..."> without parsing JSON.
 // This is the route the Pictures workspace grid uses to render image
-// thumbnails. Authentication is delegated to the global requireWtAuth gate
-// in routes/index.ts, same as the JSON variant above.
+// thumbnails. Authenticated by the NOVA_API_TOKEN middleware at the top of
+// this file; the browser fetch shim attaches the token via x-nova-token.
 router.get("/workspaces/:ws/files/:filename/raw", async (req, res) => {
   const ws = req.params.ws.toLowerCase();
   const filename = req.params.filename;

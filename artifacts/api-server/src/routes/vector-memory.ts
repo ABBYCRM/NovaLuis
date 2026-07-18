@@ -146,7 +146,7 @@ router.post("/vector-memory/embed-missing", async (req, res) => {
   res.json({ started: true, message: "background fill job started — poll GET /vector-memory/embed-missing for progress" });
 });
 
-router.get("/vector-memory/embed-missing", async (req, res) => {
+router.get("/vector-memory/embed-missing", async (_req, res) => {
   const job = getFillJobStatus();
   if (!job) {
     res.json({ running: false, message: "no fill job has been started yet" });

@@ -4,8 +4,9 @@
  * Image generation  →  Google Gemini  (GEMINI_API_KEY)
  * Video generation  →  A2E AI         (A2E_AI_API_KEY)
  *
- * All routes sit behind the requireWtAuth middleware in routes/index.ts
- * (peer-key / PIN cookie) — see that file for the current auth state.
+ * Every route in this file is gated by the NOVA_API_TOKEN shared-secret
+ * middleware (see lib/api-auth.ts). When the env var is unset the route
+ * returns 503 "auth not configured" — there is no silent-open path.
  *
  * Routes
  *   POST /media/image/generate          prompt → Gemini image → served URL
@@ -19,8 +20,11 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { requireApiAuth } from "../lib/api-auth";
 
 const router = Router();
+
+router.use(requireApiAuth);
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const GEMINI_KEY = () => process.env.GEMINI_API_KEY ?? "";

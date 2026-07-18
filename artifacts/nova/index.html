@@ -381,11 +381,6 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
 }
 .ws-item-actions button:hover { color: var(--text); background: var(--surface2); }
 .ws-item-actions button.danger:hover { color: var(--danger); border-color: var(--danger); }
-.ws-ocr-output {
-  white-space: pre-wrap; padding: 10px 12px; margin-top: 6px;
-  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
-  font-size: 0.82rem; max-height: 280px; overflow-y: auto;
-}
 
 .sidebar-footer {
   padding: 12px; border-top: 1px solid var(--border);
@@ -2022,9 +2017,6 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
       </div>
     </header>
     <input type="file" id="ws-file-picker" multiple hidden />
-    <div class="ws-toolbar" id="ws-toolbar" hidden>
-      <button id="ws-ocr-btn" title="Run OCR on selected image">Run OCR</button>
-    </div>
     <div id="ws-empty" class="ws-empty">No files yet. Click <b>+ Add file</b> to upload.</div>
     <ul id="ws-list" class="ws-list"></ul>
   </div>
@@ -2216,7 +2208,85 @@ INPUT → Parse Tone/Workspace → Adjust Hormone/Valence Vectors → Run Active
 // later IIFE (Favorites, Workspace, Social Media) can use the same
 // helper without redefining it. Falls back to raw fetch if the main
 // gFetch is not yet available.
+//
+// When the operator sets NOVA_API_TOKEN on the api-server the
+// workspaces + media routes return 401 without it. The Nova UI's
+// settings panel stores the same value under the same key
+// ('novaApiToken') in localStorage; this helper attaches it as
+// x-nova-token on every /api/workspaces/* and /api/media/* request so
+// <img src="/api/workspaces/.../raw"> can authenticate (the browser
+// <img> element cannot set Authorization, so we use the
+// x-nova-token header). Calls that don't need the token go through
+// untouched.
+(function installAuthHeader() {
+  if (window.__novaAuthHeaderInstalled) return;
+  window.__novaAuthHeaderInstalled = true;
+  function readToken() {
+    try {
+      var raw = localStorage.getItem('bob-settings');
+      if (!raw) return '';
+      var s = JSON.parse(raw);
+      return typeof s.novaApiToken === 'string' ? s.novaApiToken.trim() : '';
+    } catch (_) { return ''; }
+  }
+  var original = window.fetch ? window.fetch.bind(window) : null;
+  function needsAuth(url) {
+    try {
+      var u = new URL(url, window.location.origin);
+      return u.pathname.indexOf('/api/workspaces') === 0
+        || u.pathname.indexOf('/api/media/') === 0;
+    } catch (_) { return false; }
+  }
+  if (original) {
+    window.fetch = function (input, init) {
+      try {
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (needsAuth(url)) {
+          var token = readToken();
+          if (token) {
+            var headers = (init && init.headers) || (input && input.headers) || {};
+            if (headers && typeof headers.set === 'function') {
+              if (!headers.has('x-nova-token')) headers.set('x-nova-token', token);
+              return original(input, init);
+            }
+            var merged = {};
+            if (headers && typeof headers.forEach === 'function') {
+              headers.forEach(function (v, k) { merged[k] = v; });
+            } else if (headers && typeof headers === 'object') {
+              Object.keys(headers).forEach(function (k) { merged[k] = headers[k]; });
+            }
+            if (!merged['x-nova-token']) merged['x-nova-token'] = token;
+            var nextInit = Object.assign({}, init || {}, { headers: merged });
+            if (typeof input === 'string') return original(url, nextInit);
+            return original(input, nextInit);
+          }
+        }
+      } catch (_) {}
+      return original(input, init);
+    };
+  }
+})();
+
 function smFetch2(path, opts) {
+  // Attach the x-nova-token header so /api/workspaces/* and /api/media/*
+  // can authenticate against the NOVA_API_TOKEN gate on the server.
+  try {
+    var need = false;
+    var url = path;
+    if (typeof path === 'string') {
+      if (path.indexOf('/api/workspaces') === 0) need = true;
+      else if (path.indexOf('/api/media/') === 0) need = true;
+    }
+    if (need) {
+      var raw = localStorage.getItem('bob-settings');
+      var tok = '';
+      if (raw) { try { tok = (JSON.parse(raw).novaApiToken || '').trim(); } catch (_) {} }
+      if (tok) {
+        opts = opts || {};
+        opts.headers = Object.assign({}, opts.headers || {}, { 'x-nova-token': tok });
+      }
+    }
+  } catch (_) {}
   return (typeof gFetch === 'function' ? gFetch : fetch)(path, opts);
 }
 
@@ -2231,7 +2301,6 @@ function smFetch2(path, opts) {
     console.warn('[mobile-sidebar] missing sidebar or hamburger element');
     return;
   }
-  console.log('[mobile-sidebar] wired hamburger');
   // Build the backdrop overlay if it doesn't exist.
   let overlay = document.getElementById('sidebar-overlay');
   if (!overlay) {
@@ -4571,7 +4640,6 @@ document.addEventListener('keydown', function (e) {
   var wsCloseBtn  = document.getElementById('ws-close-btn');
   var wsPicker    = document.getElementById('ws-file-picker');
   var wsToolbar   = document.getElementById('ws-toolbar');
-  var wsOcrBtn    = document.getElementById('ws-ocr-btn');
   if (!wsOverlay || !wsList) return;
 
   var WS_LABELS = {
@@ -5162,19 +5230,6 @@ document.addEventListener('keydown', function (e) {
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && !wsOverlay.hidden) closeWs();
   });
-
-  // OCR button (text-based workspaces) — wires to existing /api/ocr if present.
-  if (wsOcrBtn) {
-    wsOcrBtn.addEventListener('click', function () {
-      wsOcrBtn.disabled = true;
-      wsOcrBtn.textContent = 'Running…';
-      setTimeout(function () {
-        wsOcrBtn.disabled = false;
-        wsOcrBtn.textContent = 'Run OCR';
-        alert('OCR is not yet wired in this build.');
-      }, 400);
-    });
-  }
 })();
 </script>
 </body>
