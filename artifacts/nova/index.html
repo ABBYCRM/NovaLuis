@@ -1980,6 +1980,12 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
       <p class="ws-muted ws-tiny" style="margin:4px 0 10px;">Plug in API tokens for each service. Stored on the server (never shown back — only a “set / not set” status). Leave a field blank to keep its current value; type a single space and save to clear it.</p>
 
       <div class="intg-svc">
+        <div class="intg-head">NOVA API Token <span class="intg-status" id="intg-st-nova-token">…</span></div>
+        <p class="ws-tiny ws-muted" style="margin:4px 0 6px;">Token set on the <code>nova-luis</code> api-server as <code>NOVA_API_TOKEN</code>. Paste the same value here so the browser can call <code>/api/workspaces/*</code> and <code>/api/media/*</code> on your behalf. The value never leaves your browser; the server only checks it on each request.</p>
+        <input class="form-input intg-in" id="intg-nova-token" type="password" autocomplete="off" placeholder="NOVA_API_TOKEN (set NOVA_API_TOKEN on the server first)">
+      </div>
+
+      <div class="intg-svc">
         <div class="intg-head">Google — Gmail · Sheets · Docs · Drive <span class="intg-status" id="intg-st-google">…</span></div>
         <input class="form-input intg-in" id="intg-google-client_id" type="text" autocomplete="off" placeholder="OAuth client_id">
         <input class="form-input intg-in" id="intg-google-client_secret" type="password" autocomplete="off" placeholder="OAuth client_secret">
@@ -2515,6 +2521,12 @@ function smFetch2(path, opts) {
     instagram: ['access_token', 'ig_user_id']
   };
 
+  // NOVA_API_TOKEN is a browser-local credential (the server doesn't
+  // echo it back), so it lives in localStorage under bob-settings.novaApiToken
+  // — the same key the installAuthHeader shim reads. The save handler below
+  // treats it specially instead of POSTing to /api/integrations/nova-token.
+  var LOCAL_FIELDS = { 'nova-token': 'novaApiToken' };
+
   function setStatus(svc, fields) {
     var el = document.getElementById('intg-st-' + svc);
     if (!el) return;
@@ -2523,8 +2535,34 @@ function smFetch2(path, opts) {
     el.classList.toggle('on', !!on);
   }
 
+  function setLocalStatus(key, present) {
+    var el = document.getElementById('intg-st-' + key);
+    if (!el) return;
+    el.textContent = present ? 'set' : 'not set';
+    el.classList.toggle('on', !!present);
+  }
+
   async function gFetch(url, opts) {
     return fetch(url, opts);
+  }
+
+  function readLocalToken(key) {
+    try {
+      var raw = localStorage.getItem('bob-settings');
+      if (!raw) return '';
+      var s = JSON.parse(raw);
+      return typeof s[key] === 'string' ? s[key] : '';
+    } catch (_) { return ''; }
+  }
+
+  function writeLocalToken(key, value) {
+    try {
+      var raw = localStorage.getItem('bob-settings');
+      var s = raw ? JSON.parse(raw) : {};
+      if (value) s[key] = value;
+      else delete s[key];
+      localStorage.setItem('bob-settings', JSON.stringify(s));
+    } catch (_) {}
   }
 
   async function load() {
@@ -2540,12 +2578,31 @@ function smFetch2(path, opts) {
         if (el) el.textContent = '—';
       });
     }
+    // local fields: read from localStorage and reflect status in the UI
+    Object.keys(LOCAL_FIELDS).forEach(function (svc) {
+      setLocalStatus(svc, !!readLocalToken(LOCAL_FIELDS[svc]));
+    });
   }
 
   async function save() {
     var msg = document.getElementById('intg-msg');
     if (msg) msg.textContent = 'Saving…';
     try {
+      // 1) local-only fields (NOVA_API_TOKEN): persist to localStorage
+      Object.keys(LOCAL_FIELDS).forEach(function (svc) {
+        var input = document.getElementById('intg-' + svc);
+        if (!input) return;
+        // Blank = keep existing. A single space (input.value === ' ') clears it.
+        var v = input.value;
+        if (v === '') return;
+        if (v.trim() === '') {
+          writeLocalToken(LOCAL_FIELDS[svc], '');
+        } else {
+          writeLocalToken(LOCAL_FIELDS[svc], v.trim());
+        }
+        input.value = '';
+      });
+      // 2) server-backed fields: POST to /api/integrations/:service
       for (var svc in FIELDS) {
         var payload = {};
         FIELDS[svc].forEach(function (f) {

@@ -191,16 +191,29 @@ router.get("/maps/search", async (req: Request, res: Response) => {
   const q = String(req.query.q || "").trim();
   if (!q) { res.status(400).json({ error: "q parameter is required" }); return; }
 
-  // Step 1: linked-account check FIRST. This call uses the project API
-  // key directly — no composio session required — so it can complete
-  // independently of session-resolution latency. The DO edge times out
-  // at ~1.7s; doing this first lets us return 409 in <1s when the
-  // toolkit isn't linked, instead of burning the whole budget on
-  // session creation + linked-check + tool call.
+  // Fast path: live Composio dispatch is opt-in via MAPS_COMPOSIO_ENABLED=1.
+  // The default is a clean 409 so the route can never burn the DO edge
+  // timeout on a slow composio lookup. The composio helpers below are
+  // preserved and the live path is fully implemented for when the
+  // operator wires up Google Maps in Settings → Integrations.
+  if (process.env["MAPS_COMPOSIO_ENABLED"] !== "1") {
+    res.status(409).json({
+      error:
+        "Google Maps live search is disabled. Open Settings → Integrations → " +
+        "Composio → Google Maps in the Nova UI, then set " +
+        "MAPS_COMPOSIO_ENABLED=1 on the api-server to enable the live search path.",
+      toolkit: "google_maps",
+    });
+    return;
+  }
+
+  // Step 1: linked-account check. Uses the project API key directly —
+  // no composio session required — so it can complete independently of
+  // session-resolution latency. The DO edge times out at ~1.7s.
   const apiKey = process.env.COMPOSIO_API_KEY ?? "";
   if (!apiKey) {
     res.status(503).json({
-      error: "Composio is not configured. Set COMPOSIO_API_KEY in the api-server env.",
+      error: "Composio is not configured. Set COMPOSIO_API_KEY on the api-server env.",
     });
     return;
   }
