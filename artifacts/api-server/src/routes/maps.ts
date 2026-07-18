@@ -147,13 +147,15 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
   if (cached !== null) {
     return cached.ok ? { ok: true } : { ok: false, reason: cached.reason ?? "not linked" };
   }
-  // Hard 1.4s deadline. The DigitalOcean App Platform edge timeout is
-  // ~1.7s, so we have to set the deadline below that or the edge will
-  // 504 us before we can populate the cache. composioRequest now
-  // honors external signals, so the AbortController actually cancels
-  // the underlying fetch.
+  // Hard 900ms deadline. The DigitalOcean App Platform edge timeout is
+  // ~1.7s, so we have to set the deadline well below that or the edge
+  // will 504 us before we can populate the cache. On a timeout we
+  // assume "not linked" (worst case) and return 409 in 409 shape, so
+  // the operator can connect Maps in Composio and retry. composioRequest
+  // now honors external signals, so the AbortController actually
+  // cancels the underlying fetch.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1_400);
+  const timer = setTimeout(() => controller.abort(), 900);
   try {
     const data = await composioRequest<unknown>(
       apiKey,
@@ -169,7 +171,17 @@ async function ensureGoogleMapsLinked(apiKey: string): Promise<{ ok: true } | { 
     linkedCacheSet({ ok: false, reason });
     return { ok: false, reason };
   } catch (e) {
-    const reason = "Could not verify Google Maps connection: " + (e instanceof Error ? e.message : String(e));
+    // On timeout / network error, assume not-linked (most common case
+    // when the operator hasn't connected Maps in Composio yet) so the
+    // UI gets a clear, actionable 409 in 409 time rather than a 504
+    // from the DO edge. If the user has actually linked Maps, they
+    // can retry — the linked-check cache will then be warm.
+    const msg = e instanceof Error ? e.message : String(e);
+    const reason =
+      msg.includes("aborted") || msg.includes("timeout")
+        ? "Google Maps link check timed out. The composio endpoint is slow; " +
+          "open Settings → Integrations and connect Google Maps in Composio, then retry."
+        : "Could not verify Google Maps connection: " + msg;
     linkedCacheSet({ ok: false, reason });
     return { ok: false, reason };
   } finally {
@@ -223,10 +235,14 @@ router.get("/maps/search", async (req: Request, res: Response) => {
     return;
   }
 
-  // Step 2: ensure composio session for the tool call.
+  // Step 2: ensure composio session for the tool call. Deadline
+  // budget: linked-check 900ms + session 600ms + 1 tool attempt 600ms
+  // = ~2.1s worst case, but linked-check is cached so steady state
+  // is 1.2s. The DO edge times out at ~1.7s, so we keep the per-step
+  // budget tight to leave room for JSON serialization.
   let session;
   try {
-    session = await ensureComposioSession({ deadlineMs: 1_400 });
+    session = await ensureComposioSession({ deadlineMs: 600 });
   } catch (e) {
     res.status(503).json({
       error: e instanceof Error ? e.message : String(e),
