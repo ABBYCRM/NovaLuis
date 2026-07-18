@@ -21,7 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, hasDatabase, socialScheduledPostsTable, socialReferenceImagesTable } from "@workspace/db";
 import { eq, desc, and, lte } from "drizzle-orm";
-import { saveToPicturesWorkspace, buildImagePrompt, fetchImageBuffer, readImageDimensions, matchesAspect } from "../lib/social-ai";
+import { saveToPicturesWorkspace, buildImagePrompt, fetchImageBuffer, readImageDimensions, matchesAspect, STYLE_TRANSFER_DIRECTIVE } from "../lib/social-ai";
 import { logger as rootLogger } from "../lib/logger";
 import { noteIgUserId, resolveIgUserId } from "../lib/instagram";
 
@@ -346,6 +346,7 @@ NO other text. NO markdown. Just the JSON object.`;
       }
 
       const imagePrompt = buildImagePrompt(
+        (refBase64 ? `${STYLE_TRANSFER_DIRECTIVE}\n\n` : "") +
         `Professional ${platform} ${contentType} social media image.
 Subject/theme: ${description}.
 Tone: ${tone}.

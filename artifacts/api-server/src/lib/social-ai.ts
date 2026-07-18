@@ -49,6 +49,37 @@ export function buildImagePrompt(base: string): string {
   return base.trimEnd() + NO_TEXT_NO_BAR_SUFFIX;
 }
 
+/**
+ * Style-transfer directive prepended to every prompt that ships with a
+ * reference image. The previous version was a single soft sentence
+ * ("Use the style from the reference image") which the image models
+ * interpreted loosely — they would change palette, line weight, character
+ * proportions, even medium. That broke the "Keeps AI visuals consistent"
+ * promise in the Social Media panel.
+ *
+ * The directive below explicitly enumerates the visual properties the
+ * model must preserve (medium, color palette, line weight, lighting,
+ * rendering technique, character design) and uses the proven
+ * Nano-Banana-Pro "as shown in [...] but with the same [...]" framing
+ * documented at https://chasejarvis.com/blog/how-to-clone-any-image-style-
+ * with-nano-banana-pro-weavy/.
+ */
+export const STYLE_TRANSFER_DIRECTIVE =
+  "STYLE TRANSFER — the reference image attached to this prompt is a STRICT style reference. " +
+  "You MUST generate a new image that preserves the reference's exact: " +
+  "(1) medium / rendering technique (e.g. 3D render, vector, watercolor, photographic); " +
+  "(2) color palette and saturation level; " +
+  "(3) line weight, edge quality and texture; " +
+  "(4) lighting model and shadow style; " +
+  "(5) character design language (proportions, anatomy, stylization); " +
+  "(6) overall mood and atmosphere. " +
+  "The new subject/scene is what the rest of the prompt describes — the rest of the prompt " +
+  "DOES NOT override the reference's style. " +
+  "Think: 'same look and feel, new scene.' " +
+  "If the reference is a 3D cartoon duck, the output must be a 3D cartoon duck-styled image. " +
+  "If the reference is a flat vector, the output must be flat vector. " +
+  "Match it; don't average it.";
+
 export async function bitdeerImage(
   prompt: string,
   size: string,
@@ -82,30 +113,47 @@ export async function bitdeerImage(
   throw new Error("Bitdeer image: no url or b64_json in response");
 }
 
+// ── Gemini image generation (with reference-image style transfer) ────────────
+
+/**
+ * Generate an image via Google's Gemini API. When a reference image is
+ * supplied, routes through gemini-3-pro-image (Nano Banana Pro) first since
+ * it's specifically designed for strict style + character consistency via
+ * up-to-3 style reference images — which is exactly what the
+ * "Keeps AI visuals consistent" feature in the Social Media panel promises
+ * users. Falls back to the flash variants, and finally to A2E's Nano Banana
+ * endpoint, if Pro is unavailable.
+ */
 export async function geminiImage(
   prompt: string,
   _aspectRatio: string,
   refBase64?: string,
   refMime?: string,
-): Promise<{ url: string; source: "gemini" }> {
+): Promise<{ url: string; source: "gemini" | "a2e" }> {
   const key = process.env.GEMINI_API_KEY ?? "";
   if (!key) throw new Error("GEMINI_API_KEY not configured");
 
-  const parts: unknown[] = [];
-  if (refBase64) {
-    parts.push({ inlineData: { mimeType: refMime ?? "image/png", data: refBase64 } });
-    parts.push({ text: `Use the style from the reference image. ${prompt}` });
-  } else {
-    parts.push({ text: prompt });
-  }
+  // ── Build the model list (Pro first when we have a reference) ──
+  const modelList: string[] = refBase64
+    ? [
+        "gemini-3-pro-image",
+        "gemini-3.1-flash-image",
+        "gemini-2.5-flash-image",
+      ]
+    : [
+        "gemini-3.1-flash-image",
+        "gemini-2.5-flash-image",
+      ];
 
-  const GEMINI_IMAGE_MODELS = [
-    "gemini-3.1-flash-image",
-    "gemini-2.5-flash-image",
-  ];
+  const parts: unknown[] = refBase64
+    ? [
+        { inlineData: { mimeType: refMime ?? "image/png", data: refBase64 } },
+        { text: prompt },
+      ]
+    : [{ text: prompt }];
 
   let lastErr: Error = new Error("All Gemini image models unavailable");
-  for (const model of GEMINI_IMAGE_MODELS) {
+  for (const model of modelList) {
     try {
       const r = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
@@ -120,6 +168,11 @@ export async function geminiImage(
       );
       if (!r.ok) {
         const errText = await r.text();
+        // 400/403 = hard client error (bad request, key perms); bubble up.
+        if (r.status === 400 || r.status === 403) {
+          throw new Error(`Gemini ${model} error ${r.status}: ${errText.slice(0, 200)}`);
+        }
+        // 404 (model not available), 429 (rate limit), 5xx (transient) → try next.
         lastErr = new Error(`Gemini ${model} error ${r.status}: ${errText.slice(0, 200)}`);
         continue;
       }
@@ -130,16 +183,143 @@ export async function geminiImage(
         for (const part of candidate.content.parts) {
           if (part.inlineData?.data) {
             const mime = part.inlineData.mimeType ?? "image/png";
-            return { url: `data:${mime};base64,${part.inlineData.data}`, source: "gemini" };
+            return { url: `data:${mime};base64,${part.inlineData.data}`, source: "gemini" as const };
           }
         }
       }
       lastErr = new Error(`Gemini ${model} returned no image data`);
     } catch (e) {
+      if (e instanceof Error && /Gemini \S+ error 40[03]/.test(e.message)) {
+        // Hard client error (e.g. key invalid) — don't loop through fallbacks.
+        throw e;
+      }
       lastErr = e instanceof Error ? e : new Error(String(e));
     }
   }
+
+  // ── A2E fallback (only when a reference image is present) ──
+  // A2E hosts the same Nano Banana model on their own infrastructure with a
+  // dedicated image-editing API that explicitly accepts reference images for
+  // style transfer. If Gemini's Pro model returned no usable image, try A2E
+  // before giving up.
+  if (refBase64) {
+    try {
+      return await a2eImageWithReference(prompt, refBase64, refMime ?? "image/png");
+    } catch (e) {
+      // A2E also failed — throw the most informative error (Gemini's last).
+      throw new Error(
+        `${lastErr.message}; A2E fallback: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   throw lastErr;
+}
+
+// ── A2E Nano Banana fallback for style transfer ──────────────────────────────
+
+/**
+ * Generate an image via A2E's Nano Banana endpoint with a reference image.
+ * Used as a final fallback when Google's Gemini family can't honor the
+ * reference style transfer. A2E accepts reference images as URLs, so we
+ * upload the base64 to the Pictures workspace first and pass the public URL.
+ *
+ * Polls for completion (synchronous wait, max 90s) and returns the first
+ * image URL.
+ */
+async function a2eImageWithReference(
+  prompt: string,
+  refBase64: string,
+  refMime: string,
+): Promise<{ url: string; source: "a2e" }> {
+  const a2eKey = process.env.A2E_AI_API_KEY ?? "";
+  if (!a2eKey) throw new Error("A2E_AI_API_KEY not configured");
+
+  // Host the reference image so A2E can fetch it. We write it to a
+  // temporary Pictures workspace file and serve it via the same route
+  // the Instagram publisher uses. The filename is prefixed a2e-ref- so
+  // it's easy to spot and clean up later.
+  const { hasDatabase, db, workspaceFilesTable } = await import("@workspace/db");
+  if (!hasDatabase || !db) throw new Error("A2E reference-image upload requires database");
+
+  const { randomUUID } = await import("node:crypto");
+  const ext = refMime.includes("jpeg") || refMime.includes("jpg") ? "jpg" : "png";
+  const filename = `a2e-ref-${Date.now()}-${randomUUID()}.${ext}`;
+  const refBuffer = Buffer.from(refBase64, "base64");
+
+  await db.insert(workspaceFilesTable).values({
+    workspace: "pictures",
+    filename,
+    content: refBuffer.toString("base64"),
+    contentType: refMime,
+  });
+
+  // The Pictures workspace files are served by the existing
+  // /api/workspaces/pictures/files/:filename route (returns the raw
+  // base64-decoded content with the correct Content-Type). We just need
+  // to build the public URL. A2E's server fetches the image from this URL
+  // so it MUST be the public absolute URL — set PUBLIC_BASE_URL on the
+  // api-server for this to work.
+  const publicBase = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+  if (!publicBase) {
+    throw new Error(
+      "A2E reference-image fallback requires PUBLIC_BASE_URL to be set on the api-server",
+    );
+  }
+  const refUrl = `${publicBase}/api/workspaces/pictures/files/${encodeURIComponent(filename)}`;
+
+  // ── Submit the A2E task ──
+  const submitRes = await fetch("https://video.a2e.ai/api/v1/userNanoBanana/start", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${a2eKey}`,
+    },
+    body: JSON.stringify({
+      name: `social-style-transfer-${Date.now()}`,
+      prompt,
+      input_images: [refUrl],
+      quality_settings: {
+        creativity_level: "medium",
+        detail_level: "detailed",
+        style_consistency: true,
+      },
+      composition_mode: "blend",
+    }),
+  });
+
+  if (!submitRes.ok) {
+    const errText = await submitRes.text();
+    throw new Error(`A2E submit ${submitRes.status}: ${errText.slice(0, 300)}`);
+  }
+  const submitJson = (await submitRes.json()) as { code: number; data?: { _id?: string } };
+  const taskId = submitJson.data?._id;
+  if (!taskId) throw new Error(`A2E submit returned no task id: ${JSON.stringify(submitJson).slice(0, 300)}`);
+
+  // ── Poll for completion (max 90s) ──
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3_000));
+    const pollRes = await fetch(
+      `https://video.a2e.ai/api/v1/userNanoBanana/detail/${encodeURIComponent(taskId)}`,
+      { headers: { Authorization: `Bearer ${a2eKey}` } },
+    );
+    if (!pollRes.ok) continue;
+    const pollJson = (await pollRes.json()) as {
+      code: number;
+      data?: { current_status?: string; image_urls?: string[]; failed_message?: string };
+    };
+    const status = pollJson.data?.current_status;
+    if (status === "completed" || status === "success") {
+      const url = pollJson.data?.image_urls?.[0];
+      if (url) return { url, source: "a2e" };
+      throw new Error(`A2E task ${taskId} completed but returned no image_urls`);
+    }
+    if (status === "failed" || status === "error") {
+      throw new Error(`A2E task ${taskId} failed: ${pollJson.data?.failed_message || "unknown"}`);
+    }
+  }
+  throw new Error(`A2E task ${taskId} timed out after 90s`);
 }
 
 export async function generateImage(
