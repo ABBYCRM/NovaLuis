@@ -2039,7 +2039,16 @@ button, a, [role="button"], .chip, .workspace-tab, .history-item, .bar-btn {
     <div class="form-group">
       <label class="form-label">Voice</label>
       <select class="form-input" id="s-voice">
-        <option value="">Auto (best female)</option>
+        <option value="">Auto (best available)</option>
+        <option value="alloy">alloy (neutral)</option>
+        <option value="ash">ash (calm male)</option>
+        <option value="coral">coral (warm)</option>
+        <option value="echo">echo (male)</option>
+        <option value="fable">fable (storyteller)</option>
+        <option value="nova">nova (female)</option>
+        <option value="onyx">onyx (deep male)</option>
+        <option value="sage">sage (thoughtful)</option>
+        <option value="shimmer">shimmer (expressive female)</option>
       </select>
     </div>
 
@@ -5745,6 +5754,9 @@ document.addEventListener('keydown', function (e) {
         }
         chat.messages.push({ role: 'assistant', content: fullText, at: Date.now() });
         saveCurrentChat(chat);
+        // Tell the TTS listener about the new assistant text so it can
+        // auto-speak when the user has the speaker button enabled.
+        try { window.dispatchEvent(new CustomEvent('bob:chat-updated', { detail: { id: chat.id, title: chat.title, lastAssistant: fullText } })); } catch (_) {}
       }
     } catch (e) {
       if (e && e.name === 'AbortError') {
@@ -6052,6 +6064,326 @@ document.addEventListener('keydown', function (e) {
   window.addEventListener('bob:chat-created', function () { renderHistory(); });
 
   console.log('[history] sidebar wired (' + loadAll().length + ' saved chats)');
+})();
+</script>
+
+<!-- ── Input bar buttons (attach / mic / tts / copy / download) ────────────────
+     The chat input bar has 5 buttons that have always had full CSS + SVG markup
+     but no click handlers. This script wires every one of them:
+
+     1. attach-btn   → open the file picker (which already exists as #attach-file-input)
+     2. mic-btn      → use the Web Speech API to dictate into #user-input
+     3. tts-btn      → toggle auto-speak of every new assistant message
+     4. copy-all-btn → copy the full conversation to the clipboard as Markdown
+     5. download-chat-btn → download the full conversation as a .md file
+
+     Also fixes the broken Settings form: the Save button only persisted
+     openaiKey before; now it persists model, baseUrl, voice, speechRate,
+     systemPrompt, gateway URL/token, and mode. The speech rate slider
+     updates its label live.
+-->
+<script>
+(function () {
+  'use strict';
+
+  var LS_SETTINGS = 'bob-settings';
+
+  // ── helpers ─────────────────────────────────────────────────────────────
+  function readSettings() {
+    try { return JSON.parse(localStorage.getItem(LS_SETTINGS) || '{}'); } catch (_) { return {}; }
+  }
+  function writeSettings(s) {
+    try { localStorage.setItem(LS_SETTINGS, JSON.stringify(s)); } catch (_) {}
+  }
+  function $(id) { return document.getElementById(id); }
+
+  // ── 1) Attach button ────────────────────────────────────────────────────
+  var attachBtn     = $('attach-btn');
+  var attachInput   = $('attach-file-input');
+  var userInput     = $('user-input');
+  if (attachBtn && attachInput) {
+    attachBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      attachInput.click();
+    });
+  }
+
+  // ── 2) Mic button — Web Speech API ───────────────────────────────────────
+  var micBtn = $('mic-btn');
+  var recognition = null;
+  if (micBtn) {
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      recognition = new SR();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      var micBaseText = '';
+      var micActive = false;
+      recognition.onstart = function () {
+        micActive = true;
+        micBtn.classList.add('listening');
+        micBaseText = (userInput && userInput.value) || '';
+        if (userInput) userInput.placeholder = 'Listening…';
+      };
+      recognition.onresult = function (e) {
+        var interim = '';
+        var final = '';
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          var r = e.results[i];
+          if (r.isFinal) final += r[0].transcript;
+          else interim += r[0].transcript;
+        }
+        if (userInput) {
+          userInput.value = (micBaseText ? micBaseText + ' ' : '') + (final + interim);
+          userInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      };
+      recognition.onerror = function (e) {
+        micActive = false;
+        micBtn.classList.remove('listening');
+        if (userInput) userInput.placeholder = 'Message NOVA\u2026';
+        console.warn('[mic] speech recognition error', e.error || e);
+      };
+      recognition.onend = function () {
+        micActive = false;
+        micBtn.classList.remove('listening');
+        if (userInput) userInput.placeholder = 'Message NOVA\u2026';
+      };
+      micBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (micActive) { try { recognition.stop(); } catch (_) {} return; }
+        try { recognition.start(); } catch (_) {}
+      });
+    } else {
+      // Browser doesn't support Web Speech API. Show a friendly message.
+      micBtn.addEventListener('click', function () {
+        alert('Voice input requires Chrome, Edge, or Safari. Firefox does not support the Web Speech API.');
+      });
+    }
+  }
+
+  // ── 3) TTS button — auto-speak every new assistant message ────────────
+  var ttsBtn = $('tts-btn');
+  var ttsEnabled = false;
+  var currentAudio = null;
+  function speakText(text) {
+    if (!ttsEnabled || !text) return;
+    try {
+      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+      var s = readSettings();
+      var voice = s.ttsVoice || 'shimmer';
+      var rate = s.speechRate || 1.0;
+      // Use the server-side TTS endpoint. Returns an mp3 we play directly.
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 30000);
+      fetch('/api/voice/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.slice(0, 4096), voice: voice, speed: rate }),
+        signal: controller.signal,
+      })
+        .then(function (r) {
+          clearTimeout(timer);
+          if (!r.ok) throw new Error('tts ' + r.status);
+          return r.blob();
+        })
+        .then(function (blob) {
+          var url = URL.createObjectURL(blob);
+          currentAudio = new Audio(url);
+          currentAudio.play().catch(function (e) { console.warn('[tts] play failed', e); });
+        })
+        .catch(function (e) { console.warn('[tts] failed', e); });
+    } catch (e) { console.warn('[tts] error', e); }
+  }
+  if (ttsBtn) {
+    var sInit = readSettings();
+    ttsEnabled = !!sInit.ttsAuto;
+    if (ttsEnabled) ttsBtn.classList.add('active');
+    ttsBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      ttsEnabled = !ttsEnabled;
+      ttsBtn.classList.toggle('active', ttsEnabled);
+      var s = readSettings();
+      s.ttsAuto = ttsEnabled;
+      writeSettings(s);
+      if (!ttsEnabled && currentAudio) { currentAudio.pause(); currentAudio = null; }
+    });
+    // Listen for chat-updated events to speak the latest assistant message
+    window.addEventListener('bob:chat-updated', function (e) {
+      if (!ttsEnabled) return;
+      var detail = (e && e.detail) || {};
+      if (detail.lastAssistant) speakText(detail.lastAssistant);
+    });
+  }
+
+  // ── 4) Copy conversation as Markdown ────────────────────────────────────
+  var copyAllBtn = $('copy-all-btn');
+  function getActiveChat() {
+    try {
+      var id = localStorage.getItem('bob-current-chat-id');
+      if (!id) return null;
+      var all = JSON.parse(localStorage.getItem('bob-chats') || '[]');
+      for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    } catch (_) {}
+    return null;
+  }
+  function chatToMarkdown(chat) {
+    if (!chat || !Array.isArray(chat.messages)) return '';
+    var lines = ['# ' + (chat.title || 'Conversation'), ''];
+    chat.messages.forEach(function (m) {
+      var role = m.role === 'user' ? '**You**' : '**NOVA**';
+      lines.push('### ' + role, '', String(m.content || ''), '');
+    });
+    return lines.join('\n');
+  }
+  if (copyAllBtn) {
+    copyAllBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      var md = chatToMarkdown(getActiveChat());
+      if (!md) { alert('No conversation to copy.'); return; }
+      var done = function () { /* no-op */ };
+      var fail = function () { alert('Copy failed — try the Download button instead.'); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(md).then(done).catch(function () {
+          // Fallback: textarea + execCommand
+          var ta = document.createElement('textarea');
+          ta.value = md; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); } catch (_) { fail(); }
+          document.body.removeChild(ta);
+        });
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = md; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (_) { fail(); }
+        document.body.removeChild(ta);
+      }
+    });
+  }
+
+  // ── 5) Download conversation as .md file ───────────────────────────────
+  var downloadBtn = $('download-chat-btn');
+  if (downloadBtn) {
+    downloadBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      var chat = getActiveChat();
+      var md = chatToMarkdown(chat);
+      if (!md) { alert('No conversation to download.'); return; }
+      var blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = (chat && chat.title ? chat.title.replace(/[^a-z0-9_-]+/gi, '-') : 'conversation') + '.md';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+  }
+
+  // ── 6) Settings form — persist every field, sync slider live, mode tabs ──
+  var saveSettingsBtn = $('save-settings-btn');
+  var sModel = $('s-model');
+  var sBaseUrl = $('s-base-url');
+  var sApiKey = $('s-api-key');
+  var sVoice = $('s-voice');
+  var sSpeechRate = $('s-speech-rate');
+  var sRateVal = $('s-rate-val');
+  var sSystemPrompt = $('s-system-prompt');
+  var sGatewayUrl = $('s-gateway-url');
+  var sGatewayToken = $('s-gateway-token');
+  var modeTabs = document.querySelectorAll('.mode-tab');
+
+  function loadSettingsIntoUI() {
+    var s = readSettings();
+    if (sModel && s.model) sModel.value = s.model;
+    if (sBaseUrl && s.baseUrl) sBaseUrl.value = s.baseUrl;
+    if (sApiKey && s.apiKey) sApiKey.value = s.apiKey;
+    if (sVoice && s.ttsVoice) sVoice.value = s.ttsVoice;
+    if (sSpeechRate) {
+      var r = Number(s.speechRate) || 1.0;
+      sSpeechRate.value = String(r);
+      if (sRateVal) sRateVal.textContent = r.toFixed(2);
+    }
+    if (sSystemPrompt && s.systemPrompt) sSystemPrompt.value = s.systemPrompt;
+    if (sGatewayUrl && s.gatewayUrl) sGatewayUrl.value = s.gatewayUrl;
+    if (sGatewayToken && s.gatewayToken) sGatewayToken.value = s.gatewayToken;
+    // Mode tabs
+    var mode = s.mode || 'direct';
+    modeTabs.forEach(function (tab) {
+      if (tab.dataset.mode === mode) tab.classList.add('active');
+      else tab.classList.remove('active');
+    });
+    var gatewayFields = $('gateway-fields');
+    if (gatewayFields) gatewayFields.style.display = (mode === 'gateway') ? 'block' : 'none';
+  }
+
+  if (sSpeechRate) {
+    sSpeechRate.addEventListener('input', function () {
+      if (sRateVal) sRateVal.textContent = Number(sSpeechRate.value).toFixed(2);
+    });
+  }
+  modeTabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      modeTabs.forEach(function (t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      var mode = tab.dataset.mode;
+      var gatewayFields = $('gateway-fields');
+      if (gatewayFields) gatewayFields.style.display = (mode === 'gateway') ? 'block' : 'none';
+      // Auto-persist the mode change
+      var s = readSettings();
+      s.mode = mode;
+      writeSettings(s);
+    });
+  });
+
+  if (saveSettingsBtn) {
+    saveSettingsBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      var s = readSettings();
+      if (sModel) s.model = sModel.value || s.model || 'gpt-4o';
+      if (sBaseUrl) s.baseUrl = sBaseUrl.value || s.baseUrl || '/api/v1';
+      if (sApiKey) s.apiKey = sApiKey.value || s.apiKey || 'proxy';
+      if (sVoice) s.ttsVoice = sVoice.value || s.ttsVoice || '';
+      if (sSpeechRate) s.speechRate = Number(sSpeechRate.value) || 1.0;
+      if (sSystemPrompt) s.systemPrompt = sSystemPrompt.value;
+      if (sGatewayUrl) s.gatewayUrl = sGatewayUrl.value;
+      if (sGatewayToken) s.gatewayToken = sGatewayToken.value;
+      var activeMode = document.querySelector('.mode-tab.active');
+      if (activeMode) s.mode = activeMode.dataset.mode || 'direct';
+      writeSettings(s);
+      // Don't reload the page if the only change was a non-key field —
+      // the chat-send handler reads these on every send, so a reload is
+      // unnecessary. Reloading wipes the active chat from the screen.
+      var origBtn = saveSettingsBtn.textContent;
+      saveSettingsBtn.textContent = '\u2713 Saved';
+      setTimeout(function () { saveSettingsBtn.textContent = origBtn; }, 1500);
+    });
+  }
+
+  // Hydrate the settings form with the current values on first load.
+  loadSettingsIntoUI();
+
+  // ── 7) Sidebar toolbar buttons: refresh / delete / settings ─────────────
+  // Most of these already have handlers via other code paths. The Settings
+  // button does too (OpenAI TTS wiring above opens the modal). We only
+  // need to ensure the workspace sidebar collapses work.
+  var wsToggle = $('ws-toggle');
+  if (wsToggle) {
+    wsToggle.addEventListener('click', function () {
+      var list = $('workspaces-list');
+      if (!list) return;
+      list.classList.toggle('collapsed');
+      var chevron = wsToggle.querySelector('.ws-chevron');
+      if (chevron) chevron.style.transform = list.classList.contains('collapsed') ? 'rotate(-90deg)' : 'rotate(0deg)';
+    });
+  }
+
+  console.log('[input-bar] attach / mic / tts / copy / download / settings wired');
 })();
 </script>
 </body>
