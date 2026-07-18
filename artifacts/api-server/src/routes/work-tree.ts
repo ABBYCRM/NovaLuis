@@ -68,7 +68,11 @@ const OPENCLAW_GATEWAY_URL = (
   process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789"
 ).replace(/\/$/, "");
 const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
-const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "openclaw/default";
+// Keep the openclaw gateway fallback consistent with agent-chat.ts so the
+// main chat and the work-tree sub-agent both resolve to a real model on a
+// fresh deploy. Override with OPENCLAW_AGENT_MODEL if a specific deploy
+// needs a different default.
+const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "kimi-k2.6";
 const OPENCLAW_RUN_TIMEOUT_MS = Math.max(
   30_000,
   Number(process.env.OPENCLAW_RUN_TIMEOUT_MS || 15 * 60 * 1000),

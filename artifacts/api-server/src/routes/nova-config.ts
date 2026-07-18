@@ -8,7 +8,7 @@ const router = Router();
 export const PROVIDER_MODELS: Record<string, { model: string; label: string }> = {
   bitdeer: { model: "moonshotai/Kimi-K2.6",  label: "Kimi K2.6 (Bitdeer)" },
   openai:  { model: "gpt-4o",                 label: "OpenAI GPT-4o"       },
-  kimi:    { model: "kimi-k2",                label: "Kimi (Moonshot)"      },
+  kimi:    { model: "kimi-k2.6",              label: "Kimi K2.6 (Moonshot)" },
 };
 
 // In-memory preference — survives requests, resets on server restart.
