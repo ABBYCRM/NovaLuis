@@ -4826,7 +4826,23 @@ document.addEventListener('keydown', function (e) {
 
     var thumb = '';
     if (showThumb && isImageFile(f.filename, f.contentType)) {
-      var url = '/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw';
+      // The Pictures panel renders <img src="/raw"> and <img> cannot set
+      // request headers. Append the NOVA_API_TOKEN as ?token= so the
+      // server's /raw route can authenticate the image fetch without
+      // requiring a custom header. The token is the same value the user
+      // pastes into Settings → Integrations → NOVA API Token, so it's
+      // never a secret the server doesn't already know.
+      var tokenQ = '';
+      try {
+        var rawS = localStorage.getItem('bob-settings');
+        if (rawS) {
+          var sTok = JSON.parse(rawS);
+          if (sTok && typeof sTok.novaApiToken === 'string' && sTok.novaApiToken.trim()) {
+            tokenQ = '?token=' + encodeURIComponent(sTok.novaApiToken.trim());
+          }
+        }
+      } catch (_) {}
+      var url = '/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw' + tokenQ;
       thumb = '<div class="ws-thumb-wrap"><img class="ws-thumb" src="' + url + '" alt="' + title + '" loading="lazy" /></div>';
     } else if (TEXT_EXT.test(f.filename)) {
       var preview = '';
@@ -4844,7 +4860,7 @@ document.addEventListener('keydown', function (e) {
       '</div>' +
       '<div class="ws-item-actions">' +
         (isImageFile(f.filename, f.contentType)
-          ? '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw" target="_blank" rel="noopener" download>Open</a>'
+          ? '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '/raw' + tokenQ + '" target="_blank" rel="noopener" download>Open</a>'
           : '<a class="ws-btn-tiny" href="/api/workspaces/' + encodeURIComponent(currentWs) + '/files/' + encodeURIComponent(f.filename) + '" target="_blank" rel="noopener">Open</a>') +
         '<button class="ws-btn-tiny" data-act="edit">Edit</button>' +
         '<button class="ws-btn-tiny ws-btn-danger" data-act="del">Delete</button>' +

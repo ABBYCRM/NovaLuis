@@ -41,6 +41,18 @@ function tokenMatches(req: Request): boolean {
   const headerToken = String(req.headers["x-nova-token"] || "").trim();
   if (timingSafeEqualStrings(headerToken, expected)) return true;
 
+  // Query-string fallback for browser <img src=...> calls, which cannot
+  // set request headers at all. Only `?token=<value>` is checked; the
+  // value is matched with the same constant-time comparison so a
+  // brute-force attacker can't learn the secret from response timing.
+  // The token is visible in the URL so the user must understand it
+  // leaks via the browser history and referer headers — that's the
+  // documented trade-off for being able to embed <img> without a SW.
+  if (req.query && typeof req.query["token"] === "string") {
+    const queryToken = String(req.query["token"]).trim();
+    if (timingSafeEqualStrings(queryToken, expected)) return true;
+  }
+
   return false;
 }
 
