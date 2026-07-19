@@ -33,17 +33,21 @@ function tokenMatches(req: Request): boolean {
   if (bearer && timingSafeEqualStrings(bearer[1]!.trim(), expected)) return true;
 
   const headerToken = String(req.headers["x-nova-token"] || "").trim();
-  return timingSafeEqualStrings(headerToken, expected);
+  if (timingSafeEqualStrings(headerToken, expected)) return true;
+
+  // Backward compatibility for existing installed PWAs. The handwritten
+  // Pictures grid appends ?token= to <img> requests because image elements
+  // cannot set custom headers. New browser sessions use the safer HttpOnly
+  // cookie path, but removing this fallback would break existing thumbnails.
+  const queryToken = typeof req.query?.token === "string"
+    ? String(req.query.token).trim()
+    : "";
+  return timingSafeEqualStrings(queryToken, expected);
 }
 
 /**
- * Protect user-data and media routes through either:
- * - a server-to-server NOVA_API_TOKEN, or
- * - a signed HttpOnly operator browser session created by /api/operator/unlock.
- *
- * The browser session restores the established PIN workflow without exposing
- * NOVA_API_TOKEN in HTML, localStorage, image URLs, browser history, or Referer
- * headers. The token path remains available for workers and automation.
+ * Protect user-data and media routes through either a server API token or a
+ * signed HttpOnly operator browser session created by /api/operator/unlock.
  */
 export function requireApiAuth(
   req: Request,
