@@ -4,13 +4,15 @@ import { createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+const LAGUNA_MODEL = "poolside/laguna-xs-2.1";
+
 function positiveInt(value, fallback) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function normalizeModelId(value) {
-  const raw = String(value || "").trim() || "kimi-k2";
+  const raw = String(value || "").trim() || LAGUNA_MODEL;
   return raw.replace(/^(?:openai|google|gemini|bitdeer|nova)\//i, "");
 }
 
@@ -24,6 +26,7 @@ function resolveSessionSecret() {
     ["SUPERNOVA_API_KEY", process.env.SUPERNOVA_API_KEY],
     ["OPENCLAW_API_KEY", process.env.OPENCLAW_API_KEY],
     ["DATABASE_URL", process.env.DATABASE_URL],
+    ["NVIDIA_API_KEY", process.env.NVIDIA_API_KEY],
     ["OPENAI_API_KEY", process.env.OPENAI_API_KEY],
     ["GEMINI_API_KEY", process.env.GEMINI_API_KEY],
     ["BITDEER_API_KEY", process.env.BITDEER_API_KEY],
@@ -60,8 +63,15 @@ const gatewayToken =
   process.env.OPENCLAW_GATEWAY_TOKEN || randomBytes(32).toString("hex");
 const sessionSecret = resolveSessionSecret();
 const modelId = normalizeModelId(
-  process.env.NOVA_OPENCLAW_MODEL_ID || process.env.WORK_TREE_MODEL,
+  process.env.NOVA_OPENCLAW_MODEL_ID || process.env.WORK_TREE_MODEL || LAGUNA_MODEL,
 );
+
+if (modelId.startsWith("poolside/") && !String(process.env.NVIDIA_API_KEY || "").trim()) {
+  console.error(
+    `start-openclaw: FATAL — ${modelId} requires NVIDIA_API_KEY; refusing to start on a different provider`,
+  );
+  process.exit(78);
+}
 
 fs.mkdirSync(stateDir, { recursive: true });
 fs.mkdirSync(workspaceDir, { recursive: true });
@@ -95,7 +105,7 @@ const childEnv = {
   OPENCLAW_WORKSPACE_DIR: workspaceDir,
   OPENCLAW_RUNTIME_VERSION:
     process.env.OPENCLAW_RUNTIME_VERSION || "2026.6.11",
-  OPENCLAW_AGENT_MODEL: process.env.OPENCLAW_AGENT_MODEL || "openclaw/default",
+  OPENCLAW_AGENT_MODEL: process.env.OPENCLAW_AGENT_MODEL || modelId,
   OPENCLAW_API_KEY: sharedInternalKey,
   SUPERNOVA_API_KEY: sharedInternalKey,
   SUPERNOVA_BASE_URL: `http://127.0.0.1:${apiPort}`,
@@ -104,6 +114,8 @@ const childEnv = {
   NOVA_OPENCLAW_PROXY_KEY:
     process.env.NOVA_OPENCLAW_PROXY_KEY || randomBytes(24).toString("hex"),
   NOVA_OPENCLAW_MODEL_ID: modelId,
+  NOVA_MODEL_PREFERENCE: process.env.NOVA_MODEL_PREFERENCE || "nvidia",
+  WORK_TREE_MODEL: process.env.WORK_TREE_MODEL || modelId,
 };
 
 const children = new Map();
@@ -190,7 +202,7 @@ async function waitForGateway(child) {
 
 async function main() {
   console.log(
-    `start-openclaw: launching OpenClaw ${childEnv.OPENCLAW_RUNTIME_VERSION} on loopback:${gatewayPort}`,
+    `start-openclaw: launching OpenClaw ${childEnv.OPENCLAW_RUNTIME_VERSION} on loopback:${gatewayPort} with ${modelId}`,
   );
   const gateway = launch("openclaw-gateway", "openclaw", [
     "gateway",
@@ -207,19 +219,6 @@ async function main() {
     "./dist/index.mjs",
   ]);
 
-  // Launch the work-tree worker daemon. This is the long-running background
-  // process that picks up work_tree_runs queued by the api-server (via the
-  // /api/work-tree/runs endpoint) and drives them to completion through the
-  // OpenClaw gateway's ReAct tool loop. Without this daemon, work-tree
-  // runs only execute when the browser chat creates them — meaning a task
-  // queued via API while the user has the app closed would sit pending
-  // forever. The worker is a separate process; if it crashes the api
-  // stays up. Each crash restarts cleanly because all state is in the DB.
-  //
-  // The worker requires the SAME DATABASE_URL the api-server uses; it
-  // queries work_tree_runs directly. The advisory lock in
-  // scripts/work-tree-worker.mjs prevents duplicate execution if more
-  // than one container replica ever runs.
   if (process.env.WORK_TREE_WORKER_ENABLED !== "0" && process.env.DATABASE_URL) {
     console.log("start-openclaw: launching work-tree worker daemon");
     launch("work-tree-worker", "node", [
@@ -232,14 +231,6 @@ async function main() {
     );
   }
 
-  // Launch the social-media worker daemon. This polls /api/social/due
-  // every 60s and publishes due posts via Composio. The in-process
-  // social-cron.ts inside nova-api already does this for the SAME
-  // loopback api; we run the worker as a sibling process too so social
-  // posts still fire even if the api-server's main thread is busy or
-  // a future deployment splits them into separate containers. The
-  // worker is idempotent — the in-process cron also writes status
-  // updates, so the second writer just hits the same DB rows.
   if (process.env.SOCIAL_MEDIA_WORKER_ENABLED !== "0") {
     console.log("start-openclaw: launching social-media worker daemon");
     launch("social-media-worker", "node", [
