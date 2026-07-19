@@ -46,10 +46,11 @@ jobs:
             --header "Content-Type: application/json" \
             --data "$PAYLOAD"
 
-      - name: Verify exact deployment and live contracts
-        run: |
-          node scripts/verify-production-runtime.mjs
-          node scripts/verify-regression-runtime.mjs
+      - name: Verify exact DigitalOcean revision, API, PWA, and mobile assets
+        run: node scripts/verify-production-runtime.mjs
+
+      - name: Verify repaired regression boundaries
+        run: node scripts/verify-regression-runtime.mjs
 
       - name: Mark production verification success
         if: success()
