@@ -134,6 +134,10 @@ describe.skipIf(!chromiumExecutable)("Nova mobile UI preservation in Chromium", 
         await route.fulfill({ status: 200, contentType: "application/json", body: asJson({ images: [] }) });
         return;
       }
+      if (pathname === "/api/social/campaigns") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: asJson({ campaigns: [] }) });
+        return;
+      }
       if (pathname === "/api/social/schedule") {
         const payload = normalizeSocialSchedulePayload({
           posts: [
@@ -158,7 +162,11 @@ describe.skipIf(!chromiumExecutable)("Nova mobile UI preservation in Chromium", 
 
     await page.goto(baseURL, { waitUntil: "load", timeout: 30_000 });
     await page.addStyleTag({ url: `${baseURL}assets/ui-preservation.css` });
-    await page.locator("#empty-state").waitFor({ state: "visible", timeout: 15_000 });
+
+    // The active production markup intentionally has no static #empty-state.
+    // Wait for the real transcript shell and composer instead.
+    await page.locator("#chat-inner").waitFor({ state: "visible", timeout: 15_000 });
+    await page.locator("#user-input").waitFor({ state: "visible", timeout: 15_000 });
     return page;
   }
 
