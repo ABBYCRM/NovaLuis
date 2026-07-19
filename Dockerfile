@@ -36,6 +36,10 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=8080 \
     NOVA_STATIC_DIR=/app/nova-static \
+    PUBLIC_BASE_URL=https://nova-luis-8hjvt.ondigitalocean.app \
+    WORK_TREE_WORKER_ENABLED=1 \
+    SOCIAL_MEDIA_WORKER_ENABLED=1 \
+    SUPER_NOVA_EXEC=1 \
     OPENCLAW_CONFIG_PATH=/app/openclaw/openclaw.json \
     OPENCLAW_STATE_DIR=/app/.openclaw \
     OPENCLAW_GATEWAY_PORT=18789 \
