@@ -22,6 +22,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  statuses: write
+
 concurrency:
   group: playwright-e2e-${{ github.ref }}
   cancel-in-progress: true
@@ -41,6 +45,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Mark browser verification pending
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"playwright/e2e",description:"Mobile UI and PWA browser verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD"
 
       - uses: actions/setup-node@v4
         with:
@@ -108,3 +130,39 @@ jobs:
       - name: Stop API server
         if: always()
         run: kill $(cat /tmp/api-server.pid) 2>/dev/null || true
+
+      - name: Mark browser verification success
+        if: success() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Mobile UI, PWA, New Chat, and deletion checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD"
+
+      - name: Mark browser verification failure
+        if: failure() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Mobile UI or PWA browser verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD"
