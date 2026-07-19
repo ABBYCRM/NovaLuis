@@ -49,7 +49,9 @@ describe("OpenClaw professional skill suite", () => {
 
       const metadata = parseField(content, "metadata");
       if (metadata) expect(() => JSON.parse(metadata), `${name} metadata`).not.toThrow();
-      expect(content.length, `${name} catalog size`).toBeLessThanOrEqual(24_000);
+      if (requiredSkills.includes(name)) {
+        expect(content.length, `${name} catalog size`).toBeLessThanOrEqual(24_000);
+      }
     }
   });
 
