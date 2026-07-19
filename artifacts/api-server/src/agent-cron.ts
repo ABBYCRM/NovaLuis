@@ -3,12 +3,13 @@ import { db, hasDatabase, workTreeRunsTable } from "@workspace/db";
 import { lt, eq, and } from "drizzle-orm";
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
-const STALE_RUN_MINUTES = Math.max(
-  30,
-  Number(process.env.AGENT_STALE_RUN_MINUTES || 180),
-);
+const configuredStaleMinutes = Number(process.env.AGENT_STALE_RUN_MINUTES || 180);
+const STALE_RUN_MINUTES = Number.isFinite(configuredStaleMinutes)
+  ? Math.max(30, configuredStaleMinutes)
+  : 180;
 
-let timer: NodeJS.Timeout | null = null;
+let startTimer: NodeJS.Timeout | null = null;
+let intervalTimer: NodeJS.Timeout | null = null;
 
 async function sweepStaleRuns(): Promise<number> {
   if (!hasDatabase || !db) return 0;
@@ -19,6 +20,7 @@ async function sweepStaleRuns(): Promise<number> {
       .set({
         status: "failed",
         error: `stale: no durable-run progress for >${STALE_RUN_MINUTES}min, swept by agent-cron`,
+        updatedAt: new Date(),
       })
       .where(and(
         eq(workTreeRunsTable.status, "running"),
@@ -57,11 +59,12 @@ export function startAgentCron(port: number): void {
     logger.info("[agent-cron] disabled (AGENT_CRON_ENABLED=0)");
     return;
   }
-  if (timer) return;
+  if (startTimer || intervalTimer) return;
 
-  setTimeout(() => {
+  startTimer = setTimeout(() => {
+    startTimer = null;
     void tick(port);
-    timer = setInterval(() => void tick(port), POLL_INTERVAL_MS);
+    intervalTimer = setInterval(() => void tick(port), POLL_INTERVAL_MS);
   }, 30_000);
 
   logger.info(
@@ -71,8 +74,12 @@ export function startAgentCron(port: number): void {
 }
 
 export function stopAgentCron(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
+  if (startTimer) {
+    clearTimeout(startTimer);
+    startTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    intervalTimer = null;
   }
 }

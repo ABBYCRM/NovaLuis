@@ -165,6 +165,14 @@ if (process.env["NODE_ENV"] === "production") {
           '  <link rel="stylesheet" href="/assets/ui-preservation.css" />\n</head>',
         );
       }
+      // The auth recovery wrapper must be parser-loaded before the navigation
+      // repair so a fast first tap on Pictures cannot race its installation.
+      if (!rendered.includes("/assets/operator-session-auth.js")) {
+        rendered = rendered.replace(
+          "</body>",
+          '  <script src="/assets/operator-session-auth.js"></script>\n</body>',
+        );
+      }
       if (!rendered.includes("/assets/ui-navigation-preservation.js")) {
         rendered = rendered.replace(
           "</body>",

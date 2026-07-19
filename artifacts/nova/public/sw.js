@@ -1,24 +1,9 @@
 // NovaLuis PWA Service Worker
-//
-// IMPORTANT: this cache name is stamped from the backend at boot time so
-// every new deploy gets a unique cache and the user's previous install is
-// evicted automatically. The backend app.ts reads each /assets/* URL and
-// the index.html and rewrites them with ?v=BUILD_ID; the service worker
-// mirrors that by also deriving its cache name from the same BUILD_ID, so
-// cached entries never collide with new code. A second copy of this file
-// is also injected at runtime by app.ts into the /assets/sw.js route so
-// the change below is picked up without a manual bump.
 const params = new URLSearchParams(self.location.search);
-const RUNTIME_BUILD_ID =
-  (params.get('v') ||
-   (self.registration && self.registration.scope ? '' : '') ||
-   String(Date.now())).slice(0, 32) || String(Date.now());
+const RUNTIME_BUILD_ID = (params.get('v') || String(Date.now())).slice(0, 32);
 const CACHE_NAME = 'nova-luis-' + RUNTIME_BUILD_ID;
+const NAVIGATION_FALLBACK = '/__nova_navigation_shell__';
 
-// The app shell — only the truly static visual assets. We deliberately
-// exclude `/` (index.html) so it is always served fresh from the network.
-// This is what stops a user from getting stuck on an old buggy bundle
-// after we push a fix.
 const APP_SHELL = [
   '/favicon.svg',
   '/icon-192.png',
@@ -28,18 +13,22 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(APP_SHELL);
+    // Seed the latest HTML immediately. Without this, a newly installed PWA
+    // had no navigation fallback until the user completed a second page load.
+    const shell = await fetch('/');
+    if (shell.ok) await cache.put(NAVIGATION_FALLBACK, shell.clone());
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(
-        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
       ))
       .then(() => self.clients.claim())
   );
@@ -47,32 +36,33 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  if (request.method !== 'GET') return;
-  if (request.url.includes('/api/')) return;
+  if (request.method !== 'GET' || request.url.includes('/api/')) return;
 
-  // NETWORK-FIRST for the SPA root. The app shell is a tiny page that
-  // pulls in the real UI as inline scripts; serving a stale copy would
-  // freeze the user on an old version after every deploy.
   if (request.mode === 'navigate' || request.url.endsWith('/') || request.url.endsWith('/index.html')) {
-    event.respondWith(
-      fetch(request)
-        .catch(() => caches.match(request))
-    );
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        if (response.ok) {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(NAVIGATION_FALLBACK, response.clone());
+        }
+        return response;
+      } catch (_) {
+        const cached = await caches.match(NAVIGATION_FALLBACK);
+        return cached || Response.error();
+      }
+    })());
     return;
   }
 
-  // CACHE-FIRST for everything else (icons, manifest, skills page).
-  // The backend's `?v=BUILD_ID` cache-busting on /assets/* means each
-  // deploy produces new URLs, so a stale cache for the old /assets/foo.js
-  // can never satisfy a request for the new one.
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        return response;
-      });
-    })
-  );
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  })());
 });

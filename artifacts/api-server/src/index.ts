@@ -19,12 +19,14 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// Self-healing schema bootstrap. Runs BEFORE listen() so the very first
-// request after a fresh DB never sees a missing table. Idempotent and safe on
-// every boot. Failure is visible but does not prevent health diagnostics.
-void ensureSchema().catch((e) => {
+// Self-healing schema bootstrap. Complete it BEFORE listen() so the very first
+// request after a fresh DB cannot race a missing table. Failure remains visible
+// but does not prevent health diagnostics from starting.
+try {
+  await ensureSchema();
+} catch (e) {
   logger.error({ err: e }, "ensureSchema failed during boot");
-});
+}
 
 app.listen(port, () => {
   logger.info({ port }, "Server listening");

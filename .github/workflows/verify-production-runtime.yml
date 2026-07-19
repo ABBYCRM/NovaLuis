@@ -36,7 +36,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"digitalocean/runtime",description:"Exact live NovaLuis runtime verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"digitalocean/runtime",description:"Exact live NovaLuis runtime and regression verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${EXPECTED_SHA}" \
@@ -47,7 +47,9 @@ jobs:
             --data "$PAYLOAD"
 
       - name: Verify exact deployment and live contracts
-        run: node scripts/verify-production-runtime.mjs
+        run: |
+          node scripts/verify-production-runtime.mjs
+          node scripts/verify-regression-runtime.mjs
 
       - name: Mark production verification success
         if: success()
@@ -55,7 +57,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"digitalocean/runtime",description:"Exact live PWA, workers, skills, voice, social, and durable runtime passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"digitalocean/runtime",description:"Exact live PWA, workspace auth, thinking cube, workers, social, skills, and durable runtime passed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${EXPECTED_SHA}" \
@@ -71,7 +73,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"digitalocean/runtime",description:"Live revision or NovaLuis runtime contract failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"digitalocean/runtime",description:"Live revision or NovaLuis regression contract failed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${EXPECTED_SHA}" \

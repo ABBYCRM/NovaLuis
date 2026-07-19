@@ -53,13 +53,17 @@
   }
 
   [
+    '/assets/operator-session-auth.js',
     '/assets/continuous-voice-input.js',
     '/assets/durable-run-reconcile.js'
   ].forEach(function (src) {
     if (scriptAlreadyLoaded(src)) return;
     var script = document.createElement('script');
     script.src = src + versionQuery;
-    script.defer = true;
+    // Dynamically inserted scripts ignore `defer`. async=false is the browser
+    // contract that preserves insertion order, ensuring auth recovery is active
+    // before workspace/media interactions and before dependent runtime modules.
+    script.async = false;
     document.head.appendChild(script);
   });
 })();

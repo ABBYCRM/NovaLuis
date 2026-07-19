@@ -22,6 +22,53 @@
     return String(report || '').replace(/^<!--sn-category:[^>]+-->\s*/i, '').trim();
   }
 
+  function buildThinkingIndicator(runId) {
+    var indicator = document.createElement('div');
+    indicator.className = 'thinking-indicator durable-thinking-indicator';
+    indicator.setAttribute('data-nova-run-id', String(runId));
+
+    var cube = document.createElement('div');
+    cube.className = 'cube3d';
+    var cubeContainer = document.createElement('div');
+    cubeContainer.className = 'cube3d-c';
+    for (var index = 0; index < 6; index++) {
+      var face = document.createElement('div');
+      face.className = 'cube3d-f';
+      cubeContainer.appendChild(face);
+    }
+    cube.appendChild(cubeContainer);
+    indicator.appendChild(cube);
+
+    var label = document.createElement('span');
+    label.className = 'think-label';
+    label.textContent = 'Working in background…';
+    indicator.appendChild(label);
+    return indicator;
+  }
+
+  function visibleBubblesForRun(runId) {
+    var marker = '[NOVA_RUN_ID:' + runId + ']';
+    return Array.prototype.filter.call(
+      document.querySelectorAll('#chat-inner .bubble'),
+      function (bubble) { return String(bubble.textContent || '').indexOf(marker) !== -1; }
+    );
+  }
+
+  function ensureVisibleThinking(runId) {
+    visibleBubblesForRun(runId).forEach(function (bubble) {
+      var body = bubble.closest ? bubble.closest('.msg-body') : bubble.parentElement;
+      if (!body) return;
+      if (body.querySelector('.durable-thinking-indicator[data-nova-run-id="' + runId + '"]')) return;
+      body.appendChild(buildThinkingIndicator(runId));
+    });
+  }
+
+  function removeVisibleThinking(runId) {
+    document.querySelectorAll(
+      '.durable-thinking-indicator[data-nova-run-id="' + runId + '"]'
+    ).forEach(function (indicator) { indicator.remove(); });
+  }
+
   function replaceStoredMessage(runId, text) {
     var marker = '[NOVA_RUN_ID:' + runId + ']';
     var chats = loadChats();
@@ -43,13 +90,11 @@
   }
 
   function replaceVisibleMessage(runId, text) {
-    var marker = '[NOVA_RUN_ID:' + runId + ']';
-    document.querySelectorAll('#chat-inner .bubble').forEach(function (bubble) {
-      if (String(bubble.textContent || '').indexOf(marker) !== -1) bubble.textContent = text;
-    });
+    visibleBubblesForRun(runId).forEach(function (bubble) { bubble.textContent = text; });
   }
 
   function finish(runId, text) {
+    removeVisibleThinking(runId);
     replaceStoredMessage(runId, text);
     replaceVisibleMessage(runId, text);
     if (timers[runId]) window.clearTimeout(timers[runId]);
@@ -57,14 +102,16 @@
   }
 
   function schedule(runId, delay) {
+    if (timers[runId]) window.clearTimeout(timers[runId]);
     timers[runId] = window.setTimeout(function () { poll(runId); }, delay);
   }
 
   async function poll(runId) {
+    ensureVisibleThinking(runId);
     try {
       var response = await fetch('/api/work-tree/runs/' + encodeURIComponent(runId), {
         headers: { Accept: 'application/json' },
-        cache: 'no-store',
+        cache: 'no-store'
       });
       if (!response.ok) {
         schedule(runId, response.status === 404 ? 10000 : 5000);
@@ -79,7 +126,7 @@
         finish(
           runId,
           '✅ Background run #' + runId + ' complete\n\n' +
-            (cleanReport(run.report) || 'The run completed without a report.'),
+            (cleanReport(run.report) || 'The run completed without a report.')
         );
         return;
       }
@@ -88,19 +135,22 @@
         finish(
           runId,
           '⚠ Background run #' + runId + ' ' + status + '\n\n' +
-            String(run.error || 'No error detail was returned.'),
+            String(run.error || 'No error detail was returned.')
         );
         return;
       }
 
+      ensureVisibleThinking(runId);
       schedule(runId, 3500);
     } catch (_) {
+      ensureVisibleThinking(runId);
       schedule(runId, 7000);
     }
   }
 
   function watch(runId) {
     if (!Number.isInteger(runId) || runId < 1 || timers[runId]) return;
+    ensureVisibleThinking(runId);
     schedule(runId, 500);
   }
 
@@ -126,7 +176,7 @@
     new MutationObserver(discover).observe(chatInner, {
       childList: true,
       subtree: true,
-      characterData: true,
+      characterData: true
     });
   }
   window.addEventListener('storage', function (event) {
