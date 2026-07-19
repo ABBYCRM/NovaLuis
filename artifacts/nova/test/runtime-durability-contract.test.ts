@@ -46,6 +46,39 @@ describe("durable runtime contracts", () => {
     expect(dockerfile).toContain("SUPER_NOVA_EXEC=1");
   });
 
+  it("routes interactive and durable inference to Poolside Laguna through NVIDIA NIM", () => {
+    const config = read("artifacts", "api-server", "src", "routes", "nova-config.ts");
+    const proxy = read("artifacts", "api-server", "src", "routes", "openai-proxy.ts");
+    const router = read("scripts", "super-nova-router.mjs");
+    const startup = read("scripts", "start-openclaw.mjs");
+    const openclaw = read("openclaw", "openclaw.json");
+    const dockerfile = read("Dockerfile");
+    const verifier = read("scripts", "verify-production-runtime.mjs");
+
+    for (const source of [config, proxy, router, startup, openclaw, dockerfile, verifier]) {
+      expect(source).toContain("poolside/laguna-xs-2.1");
+    }
+    expect(config).toContain('nvidia: {');
+    expect(config).toContain("maxTokens: 8_192");
+    expect(config).toContain("topP: 0.95");
+    expect(config).toContain("contextWindow: 262_144");
+    expect(proxy).toContain('process.env.NVIDIA_API_KEY');
+    expect(proxy).toContain('model.startsWith("poolside/")');
+    expect(proxy).toContain('requiredEnv: "NVIDIA_API_KEY"');
+    expect(proxy).not.toContain('`${NVIDIA_BASE}/v1${path}`');
+    expect(router).toContain('baseURL: process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1"');
+    expect(router).toContain('Math.min(maxTokens, 8_192)');
+    expect(router).toContain('body.top_p = 0.95');
+    expect(startup).toContain("refusing to start on a different provider");
+    expect(startup).toContain('NOVA_MODEL_PREFERENCE: process.env.NOVA_MODEL_PREFERENCE || "nvidia"');
+    expect(openclaw).toContain('"maxTokens": 8192');
+    expect(dockerfile).toContain("NOVA_MODEL_PREFERENCE=nvidia");
+    expect(dockerfile).toContain("WORK_TREE_MODEL=poolside/laguna-xs-2.1");
+    expect(dockerfile).not.toContain("NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1");
+    expect(verifier).toContain('check: "nvidia-laguna-inference"');
+    expect(verifier).toContain("MODEL_OK");
+  });
+
   it("keeps Instagram cron publishing on the public HTTPS boundary without erasing media", () => {
     const cron = read("artifacts", "api-server", "src", "social-cron.ts");
     const dockerfile = read("Dockerfile");
