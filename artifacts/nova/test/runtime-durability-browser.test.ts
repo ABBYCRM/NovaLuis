@@ -117,6 +117,7 @@ describe.skipIf(!chromiumExecutable)("durable runtime in mobile Chromium", () =>
     await page.goto(baseURL, { waitUntil: "load", timeout: 30_000 });
     await page.addScriptTag({ url: `${baseURL}assets/continuous-voice-input.js` });
     await page.addScriptTag({ url: `${baseURL}assets/durable-run-reconcile.js` });
+    await page.addScriptTag({ url: `${baseURL}assets/ui-navigation-preservation.js` });
     await page.locator("#user-input").waitFor({ state: "visible", timeout: 15_000 });
     return page;
   }
@@ -169,6 +170,49 @@ describe.skipIf(!chromiumExecutable)("durable runtime in mobile Chromium", () =>
         return runtime.__novaVoiceInput.isRequested() === false;
       });
       await page.screenshot({ path: path.join(screenshotsDir, "continuous-mic-mobile.png"), fullPage: true });
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("settles New Chat back onto the full mobile chat viewport", async () => {
+    const page = await openPage();
+    try {
+      await page.locator("#hamburger").click();
+      await page.waitForFunction(() => {
+        const sidebar = document.getElementById("sidebar");
+        if (!sidebar?.classList.contains("open")) return false;
+        const rect = sidebar.getBoundingClientRect();
+        return rect.left >= -1 && rect.right > 200;
+      });
+
+      await page.locator("#new-chat-btn").click();
+      await page.waitForFunction(() => {
+        const sidebar = document.getElementById("sidebar");
+        const overlay = document.getElementById("sidebar-overlay");
+        if (!sidebar || !overlay) return false;
+        const rect = sidebar.getBoundingClientRect();
+        return !sidebar.classList.contains("open") &&
+          !overlay.classList.contains("visible") &&
+          rect.right <= 1;
+      });
+
+      const geometry = await page.evaluate(() => {
+        const sidebar = document.getElementById("sidebar")?.getBoundingClientRect();
+        const main = document.getElementById("main")?.getBoundingClientRect();
+        return {
+          sidebarRight: sidebar?.right ?? 999,
+          mainLeft: main?.left ?? -1,
+          mainRight: main?.right ?? -1,
+          viewport: window.innerWidth,
+          activeElement: document.activeElement?.id || "",
+        };
+      });
+      expect(geometry.sidebarRight).toBeLessThanOrEqual(1);
+      expect(geometry.mainLeft).toBeGreaterThanOrEqual(0);
+      expect(geometry.mainRight).toBeGreaterThanOrEqual(geometry.viewport - 1);
+      expect(geometry.activeElement).toBe("user-input");
+      await page.screenshot({ path: path.join(screenshotsDir, "new-chat-settled-mobile.png"), fullPage: true });
     } finally {
       await page.close();
     }
