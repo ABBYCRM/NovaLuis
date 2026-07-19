@@ -154,15 +154,21 @@ if (process.env["NODE_ENV"] === "production") {
       const raw = fs.readFileSync(indexHtml, "utf8");
 
       // UI preservation boundary — keep the large, handwritten index.html as
-      // the visual and behavioral source of truth. Confirmed CSS-only repairs
-      // load after the inline styles, so they cannot replace chat handlers, API
-      // routes, persistence contracts, or workspace behavior. The guard keeps
-      // this idempotent if the stylesheet is linked directly in index.html later.
+      // the visual and behavioral source of truth. Confirmed post-style and
+      // navigation repairs load after the inline implementation, so they cannot
+      // replace chat storage, API routes, persistence, or workspace behavior.
+      // Guards keep injection idempotent if either asset is linked directly later.
       let rendered = raw;
       if (!rendered.includes("/assets/ui-preservation.css")) {
         rendered = rendered.replace(
           "</head>",
           '  <link rel="stylesheet" href="/assets/ui-preservation.css" />\n</head>',
+        );
+      }
+      if (!rendered.includes("/assets/ui-navigation-preservation.js")) {
+        rendered = rendered.replace(
+          "</body>",
+          '  <script src="/assets/ui-navigation-preservation.js"></script>\n</body>',
         );
       }
 
