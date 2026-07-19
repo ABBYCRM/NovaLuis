@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { db, hasDatabase, workTreeRunsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const router = Router();
 
@@ -7,6 +8,8 @@ interface ChatMessage {
   role?: unknown;
   content?: unknown;
 }
+
+const RUN_MARKER = /\[NOVA_RUN_ID:(\d+)\]/;
 
 function lastUserText(messages: ChatMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -16,6 +19,22 @@ function lastUserText(messages: ChatMessage[]): string {
     }
   }
   return "";
+}
+
+function latestRunId(messages: ChatMessage[]): number | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const content = messages[index]?.content;
+    if (typeof content !== "string") continue;
+    const match = RUN_MARKER.exec(content);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+function isContinuation(text: string): boolean {
+  return /^(?:yes[,.! ]*)?(?:go ahead|continue|proceed|keep going|do it|run it|finish it|carry on|resume|yes|okay|ok|start)(?:\s+(?:please|now))?[.! ]*$/i.test(
+    String(text || "").trim(),
+  );
 }
 
 export function isDurableAgentTask(text: string): boolean {
@@ -56,17 +75,26 @@ function buildGoal(messages: ChatMessage[], userText: string): string {
 }
 
 function queuedMessage(runId: number): string {
-  return `⏳ Background run #${runId} queued. This repository/debug mission is stored in the database and will continue even if you close the tab or installed app. Reopen NOVA to receive the verified final report. [NOVA_RUN_ID:${runId}]`;
+  return `⏳ Background run #${runId} queued and working. This mission is stored in the database and continues if the tab or installed app closes. [NOVA_RUN_ID:${runId}]`;
 }
 
-function sendStreamingQueuedResponse(res: Response, runId: number, content: string): void {
+function cleanReport(report: unknown): string {
+  return String(report || "").replace(/^<!--sn-category:[^>]+-->\s*/i, "").trim();
+}
+
+function sendStreamingResponse(
+  res: Response,
+  content: string,
+  runId: number | null,
+  httpStatus = 202,
+): void {
   const created = Math.floor(Date.now() / 1000);
-  const id = `chatcmpl-nova-run-${runId}`;
-  res.status(202);
+  const id = `chatcmpl-nova-run-${runId || created}`;
+  res.status(httpStatus);
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Nova-Background-Run", String(runId));
+  if (runId) res.setHeader("X-Nova-Background-Run", String(runId));
   res.flushHeaders?.();
   res.write(`data: ${JSON.stringify({
     id,
@@ -86,6 +114,67 @@ function sendStreamingQueuedResponse(res: Response, runId: number, content: stri
   res.end();
 }
 
+async function respondToContinuation(
+  messages: ChatMessage[],
+  userText: string,
+  res: Response,
+): Promise<boolean> {
+  const runId = latestRunId(messages);
+  if (!runId || !isContinuation(userText)) return false;
+  if (!hasDatabase || !db) {
+    res.status(503).json({ error: "durable execution database is unavailable" });
+    return true;
+  }
+
+  const [run] = await db
+    .select()
+    .from(workTreeRunsTable)
+    .where(eq(workTreeRunsTable.id, runId))
+    .limit(1);
+
+  if (!run) {
+    sendStreamingResponse(res, `⚠ Background run #${runId} was not found.`, runId, 404);
+    return true;
+  }
+
+  const status = String(run.status || "pending");
+  if (status === "pending" || status === "running") {
+    sendStreamingResponse(
+      res,
+      `⏳ Background run #${runId} is already ${status}. NOVA will continue until it reaches a verified terminal result.`,
+      runId,
+    );
+    return true;
+  }
+
+  if (status === "done") {
+    sendStreamingResponse(
+      res,
+      `✅ Background run #${runId} is complete.\n\n${cleanReport(run.report) || "The run completed without a report."}`,
+      runId,
+      200,
+    );
+    return true;
+  }
+
+  const [retry] = await db
+    .insert(workTreeRunsTable)
+    .values({
+      goal: `${String(run.goal || "")}\n\nUSER FOLLOW-UP: ${userText}`.slice(0, 8000),
+      status: "pending",
+      model: String(run.model || process.env.WORK_TREE_MODEL || process.env.OPENCLAW_AGENT_MODEL || "nova-durable-work-tree"),
+    })
+    .returning({ id: workTreeRunsTable.id });
+
+  if (!retry) throw new Error("database did not return the retried run");
+  sendStreamingResponse(
+    res,
+    `⏳ Previous run #${runId} was ${status}. Recovery run #${retry.id} is queued and working. [NOVA_RUN_ID:${retry.id}]`,
+    retry.id,
+  );
+  return true;
+}
+
 router.post(
   "/agent/v1/chat/completions",
   async (req: Request, res: Response, next: NextFunction) => {
@@ -99,6 +188,18 @@ router.post(
 
     const messages = body.messages as ChatMessage[];
     const userText = lastUserText(messages);
+
+    try {
+      if (await respondToContinuation(messages, userText, res)) return;
+    } catch (error) {
+      req.log.error({ err: error }, "durable continuation failed");
+      res.status(500).json({
+        error: "failed to continue background mission",
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
     if (!isDurableAgentTask(userText)) {
       next();
       return;
@@ -123,14 +224,10 @@ router.post(
 
       if (!run) throw new Error("Database did not return the queued work-tree run");
       const content = queuedMessage(run.id);
-
-      req.log.info(
-        { runId: run.id, status: run.status },
-        "queued durable main-chat mission",
-      );
+      req.log.info({ runId: run.id, status: run.status }, "queued durable main-chat mission");
 
       if (body.stream !== false) {
-        sendStreamingQueuedResponse(res, run.id, content);
+        sendStreamingResponse(res, content, run.id);
         return;
       }
 
@@ -141,13 +238,11 @@ router.post(
           object: "chat.completion",
           created: Math.floor(Date.now() / 1000),
           model: "nova-durable-work-tree",
-          choices: [
-            {
-              index: 0,
-              message: { role: "assistant", content },
-              finish_reason: "stop",
-            },
-          ],
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content },
+            finish_reason: "stop",
+          }],
           nova: { durable: true, runId: run.id, status: run.status },
         });
     } catch (error) {
