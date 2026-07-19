@@ -122,8 +122,6 @@ jobs:
         run: |
           set -euo pipefail
           docker run --detach --name nova-openclaw-ci \
-            -e SESSION_SECRET=ci-session-secret-not-production \
-            -e NOVA_WORK_TREE_PIN=22 \
             -p 18080:8080 nova-openclaw:ci
           cleanup() {
             docker logs nova-openclaw-ci || true
@@ -153,6 +151,7 @@ jobs:
           test -s /tmp/nova-bob.js
           test -s /tmp/composio-settings.js
           grep -q '/assets/composio-settings.js' /tmp/nova-index.html
+          grep -q '/assets/ui-preservation.css' /tmp/nova-index.html
           grep -q 'Connect an app' /tmp/composio-settings.js
 
           agent_code="$(curl --silent --output /tmp/agent-validation.json --write-out '%{http_code}' \
@@ -161,16 +160,14 @@ jobs:
           test "$agent_code" = '400'
           grep -q 'messages must be an array' /tmp/agent-validation.json
 
-          curl --fail --silent --cookie-jar /tmp/nova-cookie.txt \
-            -H 'Content-Type: application/json' -d '{"pin":"22"}' \
-            http://127.0.0.1:18080/api/work-tree/unlock >/tmp/unlock.json
-          grep -q '"ok":true' /tmp/unlock.json
-
-          curl --fail --silent --cookie /tmp/nova-cookie.txt \
+          # The PIN-cookie endpoint was removed from the active runtime. The
+          # Composio status and GitHub preflight routes are exercised directly,
+          # matching the current browser/runtime contract.
+          curl --fail --silent \
             http://127.0.0.1:18080/api/integrations/composio/status >/tmp/composio-status.json
           grep -q '"configured":false' /tmp/composio-status.json
 
-          curl --fail --silent --cookie /tmp/nova-cookie.txt \
+          curl --fail --silent \
             -H 'Content-Type: application/json' \
             -d '{"text":"https://github.com/ABBYCRM/NovaLuis.git tell me what is in this repository"}' \
             http://127.0.0.1:18080/api/github/preflight >/tmp/github-preflight.json

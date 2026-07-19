@@ -6,6 +6,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import instagramPublishRouter from "./routes/instagram-publish";
 import { logger } from "./lib/logger";
+import { normalizeSocialSchedulePayload } from "./lib/social-schedule-compat";
 import "./lib/vector-memory-fetch-hook";
 
 const app: Express = express();
@@ -91,6 +92,21 @@ app.use(
   },
   instagramPublishRouter,
 );
+
+// The established Scheduled renderer reads legacy snake_case fields, while
+// Drizzle returns camelCase properties. Normalize only the exact GET list
+// response, additively, before the aggregate router sends it. Request bodies,
+// database columns, publishing routes, and newer camelCase clients are unchanged.
+app.use("/api/social/schedule", (req, res, next) => {
+  if (req.method !== "GET" || req.path !== "/") {
+    next();
+    return;
+  }
+  const originalJson = res.json.bind(res);
+  res.json = ((body: unknown) => originalJson(normalizeSocialSchedulePayload(body))) as typeof res.json;
+  next();
+});
+
 app.use("/api", router);
 
 // Global error handler — every API error returns JSON, not Express's
@@ -136,13 +152,27 @@ if (process.env["NODE_ENV"] === "production") {
     const renderIndexHtml = (): string => {
       if (indexHtmlCache != null) return indexHtmlCache;
       const raw = fs.readFileSync(indexHtml, "utf8");
+
+      // UI preservation boundary — keep the large, handwritten index.html as
+      // the visual and behavioral source of truth. Confirmed CSS-only repairs
+      // load after the inline styles, so they cannot replace chat handlers, API
+      // routes, persistence contracts, or workspace behavior. The guard keeps
+      // this idempotent if the stylesheet is linked directly in index.html later.
+      let rendered = raw;
+      if (!rendered.includes("/assets/ui-preservation.css")) {
+        rendered = rendered.replace(
+          "</head>",
+          '  <link rel="stylesheet" href="/assets/ui-preservation.css" />\n</head>',
+        );
+      }
+
       // The 2026-07-18 Reel removal: the social-media-guard.js stub used
       // to silently rewrite reel→post behind the user's back. It was a
       // stub the user explicitly flagged. The UI now no longer offers
       // "reel" as a content-type option (see PLATFORMS in index.html),
       // so the guard is no longer needed and is no longer injected.
       // The Reel option can come back when a real video pipeline ships.
-      indexHtmlCache = raw.replace(
+      indexHtmlCache = rendered.replace(
         /(\/assets\/[A-Za-z0-9_\-./]+\.(?:js|css|png|jpe?g|svg|webp|gif|woff2?|ico))/g,
         `$1?v=${BUILD_ID}`,
       );

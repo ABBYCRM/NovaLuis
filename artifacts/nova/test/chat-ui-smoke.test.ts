@@ -9,10 +9,9 @@ import { createServer, type ViteDevServer } from "vite";
  * Layout smoke test for the Nova chat UI (artifacts/nova/index.html).
  *
  * The redesign was originally verified by hand via screenshots. This drives a
- * real browser (the Replit-provided Chromium) against an in-process Vite dev
- * server and asserts the things a future edit to index.html / bob.js could
- * silently break:
- *   - the empty state renders
+ * real browser (the hosted Chromium) against an in-process Vite dev server and
+ * asserts the things a future edit to index.html could silently break:
+ *   - the active chat shell renders
  *   - the composer accepts typed input
  *   - there is no horizontal overflow at 390 / 820 / 1280 widths
  *   - the mobile hamburger opens and closes the sidebar
@@ -24,9 +23,8 @@ import { createServer, type ViteDevServer } from "vite";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const novaRoot = path.resolve(here, "..");
 
-// Replit ships a Chromium binary for Playwright via this env var. When it is
-// absent (e.g. a bare CI without it) the whole suite is skipped rather than
-// failing on a missing browser.
+// The browser executable is supplied by the host workflow. Local environments
+// without Chromium may skip this suite, but CI is required to provide one.
 const chromiumExecutable = process.env.REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 
 const VIEWPORTS = [
@@ -85,14 +83,17 @@ describe.skipIf(!chromiumExecutable)("Nova chat UI smoke", () => {
       try {
         await page.goto(baseURL, { waitUntil: "load", timeout: 30_000 });
 
-        // Empty state renders.
-        await page.locator("#empty-state").waitFor({
+        // The current production markup intentionally has no static
+        // #empty-state node. The stable readiness contract is the real chat
+        // transcript container plus the visible composer.
+        await page.locator("#chat-inner").waitFor({
           state: "visible",
           timeout: 15_000,
         });
+        const input = page.locator("#user-input");
+        await input.waitFor({ state: "visible", timeout: 15_000 });
 
         // Composer accepts typed input (no message is sent).
-        const input = page.locator("#user-input");
         await input.fill("hello nova");
         expect(await input.inputValue()).toBe("hello nova");
 
@@ -141,7 +142,7 @@ describe.skipIf(!chromiumExecutable)("Nova chat UI smoke", () => {
 
       // Closes it again via the backdrop overlay (the open sidebar covers the
       // hamburger, so it can't be re-clicked). Click the overlay to the right
-      // of the 264px sidebar so the sidebar doesn't intercept the click.
+      // of the sidebar so the sidebar doesn't intercept the click.
       await page.locator("#sidebar-overlay").click({
         position: { x: 340, y: 420 },
       });
