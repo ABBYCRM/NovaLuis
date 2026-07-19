@@ -1,15 +1,5 @@
 ##############################################################################
 # Playwright E2E — NovaLuis
-#
-# Runs on every push / PR to main and on branches following the
-# YYYY-MM-DD/* naming convention used by this project.
-#
-# Steps
-#   1. Install deps + build the API server
-#   2. Start the API server in the background
-#   3. Run the API E2E suite against the live server
-#   4. Run real Chromium chat, PWA, mobile UI, voice, durability, and skill tests
-#   5. Upload browser logs and mobile screenshots as review evidence
 ##############################################################################
 name: Playwright E2E
 
@@ -34,13 +24,16 @@ jobs:
   e2e:
     name: E2E tests
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     env:
       NODE_ENV: test
       PORT: 5000
       API_E2E_BASE_URL: "http://localhost:5000"
       COMPOSIO_API_KEY: ""
+      SESSION_SECRET: "ci-operator-session-secret"
+      NOVA_WORK_TREE_PIN: "22"
+      NOVA_API_TOKEN: "ci-server-api-token"
 
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"playwright/e2e",description:"Mobile UI, PWA, voice, durable-runtime, and skill verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"playwright/e2e",description:"Regression, mobile UI, PWA, voice, durable-runtime, and skill verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
@@ -85,9 +78,9 @@ jobs:
         run: |
           node --enable-source-maps ./artifacts/api-server/dist/index.mjs &
           echo $! > /tmp/api-server.pid
-          for i in $(seq 1 15); do
+          for i in $(seq 1 20); do
             curl -sf http://localhost:5000/healthz && break
-            echo "Waiting for API server... ($i/15)"
+            echo "Waiting for API server... ($i/20)"
             sleep 1
           done
 
@@ -105,7 +98,7 @@ jobs:
           echo "REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE=$CHROME" >> "$GITHUB_ENV"
           "$CHROME" --version
 
-      - name: Run Nova browser runtime and skill regression tests
+      - name: Run Nova regression, browser runtime, and skill tests
         shell: bash
         run: |
           mkdir -p artifacts/nova/test-results/ui-preservation
@@ -113,8 +106,10 @@ jobs:
           pnpm --filter @workspace/nova exec vitest run \
             test/chat-ui-smoke.test.ts \
             test/ui-preservation.test.ts \
+            test/operator-session.test.ts \
             test/runtime-durability-contract.test.ts \
             test/runtime-durability-browser.test.ts \
+            test/regression-recovery-browser.test.ts \
             test/skills-system.test.ts \
             --reporter=verbose \
             2>&1 | tee artifacts/nova/test-results/ui-preservation/vitest.log
@@ -140,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Mobile UI, PWA, voice, New Chat, deletion, durable-run, and skill checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Regression, workspace auth, thinking cube, mobile UI, voice, durable-run, and skill checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
@@ -158,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Mobile UI, PWA, voice, durable-runtime, or skill verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Regression, workspace auth, mobile UI, durable-runtime, or skill verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
