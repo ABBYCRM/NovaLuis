@@ -45,11 +45,18 @@
     try { versionQuery = new URL(currentScript.src).search; } catch (_) {}
   }
 
+  function scriptAlreadyLoaded(pathname) {
+    return Array.prototype.some.call(document.scripts, function (script) {
+      try { return new URL(script.src, window.location.href).pathname === pathname; }
+      catch (_) { return false; }
+    });
+  }
+
   [
     '/assets/continuous-voice-input.js',
     '/assets/durable-run-reconcile.js'
   ].forEach(function (src) {
-    if (document.querySelector('script[src^="' + src + '"]')) return;
+    if (scriptAlreadyLoaded(src)) return;
     var script = document.createElement('script');
     script.src = src + versionQuery;
     script.defer = true;
