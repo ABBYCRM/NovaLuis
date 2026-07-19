@@ -125,7 +125,7 @@ function discoverRoot(root: SkillRoot): SkillMeta[] {
 
 function discoverSkills(): SkillMeta[] {
   const byName = new Map<string, SkillMeta>();
-  // Roots are already ordered by precedence. First definition wins.
+  // Roots are already ordered by precedence. first definition wins.
   for (const root of SKILL_ROOTS) {
     for (const skill of discoverRoot(root)) {
       if (!byName.has(skill.name)) byName.set(skill.name, skill);
