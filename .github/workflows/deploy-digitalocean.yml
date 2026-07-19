@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: nova-luis-digitalocean-production
@@ -25,6 +26,23 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Mark deployment pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"digitalocean/deploy",description:"DigitalOcean deployment is running",target_url:process.argv[1]}))' "$TARGET_URL")"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -131,3 +149,39 @@ jobs:
           echo "DigitalOcean deployment verified for GitHub commit ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
           echo "Deployment ID: ${{ steps.trigger.outputs.deployment_id }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Live URL: ${LIVE_URL}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Mark deployment success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"digitalocean/deploy",description:"DigitalOcean deployment and live probes passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD"
+
+      - name: Mark deployment failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"digitalocean/deploy",description:"DigitalOcean deployment or live probe failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD"
