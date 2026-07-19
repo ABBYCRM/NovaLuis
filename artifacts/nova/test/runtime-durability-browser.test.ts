@@ -30,6 +30,7 @@ describe.skipIf(!chromiumExecutable)("durable runtime in mobile Chromium", () =>
 
   beforeAll(async () => {
     fs.mkdirSync(screenshotsDir, { recursive: true });
+    process.env.BASE_PATH = "/";
     const port = await freePort();
     server = await createServer({
       configFile: path.join(novaRoot, "vite.config.ts"),
