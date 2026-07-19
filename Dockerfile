@@ -41,6 +41,10 @@ ENV NODE_ENV=production \
     WORK_TREE_WORKER_ENABLED=1 \
     SOCIAL_MEDIA_WORKER_ENABLED=1 \
     SUPER_NOVA_EXEC=1 \
+    NOVA_MODEL_PREFERENCE=nvidia \
+    OPENCLAW_AGENT_MODEL=poolside/laguna-xs-2.1 \
+    NOVA_OPENCLAW_MODEL_ID=poolside/laguna-xs-2.1 \
+    WORK_TREE_MODEL=poolside/laguna-xs-2.1 \
     OPENCLAW_CONFIG_PATH=/app/openclaw/openclaw.json \
     OPENCLAW_STATE_DIR=/app/.openclaw \
     OPENCLAW_GATEWAY_PORT=18789 \
@@ -68,4 +72,4 @@ COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 8080
 
-CMD ["node", "./scripts/start-openclaw.mjs"]
+CMD ["node", "./scripts/start-nvidia-laguna.mjs"]
