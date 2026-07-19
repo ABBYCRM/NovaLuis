@@ -22,6 +22,7 @@ jobs:
       LIVE_URL: https://nova-luis-8hjvt.ondigitalocean.app
       DIGITALOCEAN_API_TOKEN: ${{ secrets.DIGITALOCEAN_API_TOKEN }}
       DIGITALOCEAN_API_TOKEN_PAID: ${{ secrets.DIGITALOCEAN_API_TOKEN_PAID }}
+      NOVA_OPERATOR_PIN: ${{ secrets.NOVA_OPERATOR_PIN }}
 
     steps:
       - name: Check out repository
@@ -59,13 +60,6 @@ jobs:
         run: pnpm install --frozen-lockfile --shamefully-hoist
 
       - name: Typecheck API server
-        # Use the root-level `typecheck` script which first runs
-        # `tsc --build` to compile project references (@workspace/db,
-        # @workspace/api-zod) and then runs the per-workspace typecheck.
-        # Without the project-reference build, the api-server's tsc
-        # fails with TS6305 ("output file ... has not been built from
-        # source file") which cascades into TS7006 implicit-any errors
-        # on parameters whose types come from the referenced projects.
         run: pnpm run typecheck
 
       - name: Build API server
@@ -80,6 +74,14 @@ jobs:
             echo "Neither DIGITALOCEAN_API_TOKEN nor DIGITALOCEAN_API_TOKEN_PAID is configured as a GitHub Actions secret." >&2
             exit 1
           fi
+
+      - name: Ensure encrypted DigitalOcean operator PIN
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIN="${NOVA_OPERATOR_PIN:-22}"
+          echo "::add-mask::$PIN"
+          NOVA_OPERATOR_PIN="$PIN" node scripts/ensure-digitalocean-operator-pin.mjs
 
       - name: Trigger DigitalOcean deployment
         id: trigger
