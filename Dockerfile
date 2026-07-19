@@ -40,7 +40,6 @@ ENV NODE_ENV=production \
     WORK_TREE_WORKER_ENABLED=1 \
     SOCIAL_MEDIA_WORKER_ENABLED=1 \
     SUPER_NOVA_EXEC=1 \
-    NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1 \
     NOVA_MODEL_PREFERENCE=nvidia \
     OPENCLAW_AGENT_MODEL=poolside/laguna-xs-2.1 \
     NOVA_OPENCLAW_MODEL_ID=poolside/laguna-xs-2.1 \
@@ -49,6 +48,11 @@ ENV NODE_ENV=production \
     OPENCLAW_STATE_DIR=/app/.openclaw \
     OPENCLAW_GATEWAY_PORT=18789 \
     OPENCLAW_RUNTIME_VERSION=${OPENCLAW_VERSION}
+
+# Each NVIDIA caller owns its OpenAI-compatible base normalization:
+# openai-proxy appends /v1/* to https://integrate.api.nvidia.com, while the
+# durable Super Nova router uses https://integrate.api.nvidia.com/v1 directly.
+# Do not set one shared NVIDIA_BASE_URL here or one caller will double /v1.
 
 # Pin the released OpenClaw package. Node 24.18.0 satisfies the package's
 # supported runtime floor and the repository's Node <25 engine constraint.
