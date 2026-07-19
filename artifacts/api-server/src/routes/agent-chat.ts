@@ -310,6 +310,10 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     res.status(400).json({ error: "messages must be an array" });
     return;
   }
+  // Capture the original model id BEFORE the body initializer overwrites
+  // it with OPENCLAW_AGENT_MODEL. We need the user's actual model choice
+  // to decide whether the custom-agent path should rewrite to a default.
+  const originalModel = String(incoming.model || "").trim().toLowerCase();
 
   const messages = incoming.messages as ChatMessage[];
 
@@ -413,14 +417,17 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
   // Any other model id (e.g. "gpt-4o-mini", "z-ai/glm-5.2",
   // "deepseek-ai/deepseek-v4-pro") is passed through unchanged so the
   // custom agent's upstream router can pick the right provider.
+  //
+  // We use `originalModel` (captured before the body initializer
+  // overwrote it with OPENCLAW_AGENT_MODEL) so we see what the user
+  // actually requested, not the post-init kimi-k2.6 placeholder.
   if (backend === "custom") {
     const customModel = process.env.CUSTOM_AGENT_MODEL || DEFAULT_CUSTOM_AGENT_MODEL;
-    const incomingModel = String(body.model || "").toLowerCase();
     if (
-      !incomingModel ||
-      incomingModel === "openclaw/default" ||
-      incomingModel.startsWith("kimi") ||
-      incomingModel.startsWith("moonshot")
+      !originalModel ||
+      originalModel === "openclaw/default" ||
+      originalModel.startsWith("kimi") ||
+      originalModel.startsWith("moonshot")
     ) {
       body = { ...body, model: customModel };
     }
