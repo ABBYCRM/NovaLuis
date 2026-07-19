@@ -116,7 +116,11 @@ describe.skipIf(!chromiumExecutable)("regression recovery in mobile Chromium", (
 
       await page.goto(baseURL, { waitUntil: "load", timeout: 30_000 });
       await page.addScriptTag({ url: `${baseURL}assets/operator-session-auth.js` });
-      await page.locator('.workspace-tab[data-ws="pictures"]').click({ force: true });
+
+      // Follow the exact mobile user path: open drawer, expand Workspaces, open Pictures.
+      await page.locator("#hamburger").click();
+      await page.locator("#ws-toggle").click();
+      await page.locator('.workspace-tab[data-ws="pictures"]').click();
 
       await page.waitForFunction(() => {
         const panel = document.getElementById("ws-overlay");
