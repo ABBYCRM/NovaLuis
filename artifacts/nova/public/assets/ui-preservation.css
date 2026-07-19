@@ -1,0 +1,117 @@
+/*
+ * NovaLuis UI preservation layer
+ *
+ * Narrow, additive overrides only. The established inline NOVA UI remains the
+ * source of truth. Do not move API behavior, persistence, or event handlers
+ * into this file.
+ */
+
+/* Campaign controls use .sm-tone-chip while the Create tab uses .sm-chip.
+   Match the existing dark pill language instead of browser-default controls. */
+.sm-tone-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.77rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.sm-tone-chip:hover,
+.sm-tone-chip:focus-visible {
+  border-color: var(--border-strong);
+  color: var(--text);
+  outline: none;
+}
+
+.sm-tone-chip.active,
+.sm-tone-chip:has(input[type="checkbox"]:checked) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.sm-tone-chip input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+/* The Scheduled mobile card expands its thumbnail container, but the renderer
+   writes a fixed 52px inline size on the child image. Override only that child. */
+.sm-post-thumb {
+  overflow: hidden;
+}
+
+.sm-post-thumb img {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: cover !important;
+  border-radius: inherit !important;
+  display: block;
+}
+
+@media (max-width: 700px) {
+  /* Preserve the two-input Favorites header from the reference UI while
+     guaranteeing that Save remains visible on 360-390px phones. */
+  .fav-add-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(112px, 42%);
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .fav-url-input,
+  .fav-tag-input,
+  .fav-save-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .fav-save-btn {
+    grid-column: 1 / -1;
+    min-height: 44px;
+  }
+
+  .sm-post-info {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .sm-post-caption {
+    overflow-wrap: anywhere;
+  }
+
+  .sm-field-label,
+  .sm-desc-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Existing actions must not remain hover-only on touch devices. This changes
+   visibility only; all original handlers and storage behavior remain intact. */
+@media (hover: none) and (pointer: coarse) {
+  .history-item .hi-del {
+    opacity: 0.62;
+  }
+
+  .msg-actions {
+    opacity: 1;
+  }
+
+  .sm-ref-del {
+    display: block;
+  }
+}
