@@ -652,6 +652,7 @@ async function handleChatCompletions(req, res) {
     // it picks OpenAI. For 'kimi-k2.6' it picks Moonshot. The custom agent
     // does the routing so the api-server can stay provider-agnostic.
     const upstreamConfig = resolveUpstream(model);
+    log(`resolved upstream: provider=${upstreamConfig.name} base=${upstreamConfig.base} model=${model} key_set=${Boolean(upstreamConfig.key)}`);
     const { assistant, trace } = await runToolLoop({
       upstreamPayload: { ...body, messages: prepared, model },
       intent,
