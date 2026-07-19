@@ -86,7 +86,7 @@ try {
   const readyBody = await ready.json();
   check("/readyz reports backend=custom-agent and rules count",
     readyBody.backend === "custom-agent" && typeof readyBody.rules === "number" && readyBody.rules > 0,
-    `rules=${readyBody.rules} upstream_key_set=${readyBody.upstream_key_set}`);
+    `rules=${readyBody.rules} tools=${readyBody.tools} tool_names=${JSON.stringify(readyBody.tool_names)} upstream_key_set=${readyBody.upstream_key_set}`);
 
   // /v1/chat/completions: bad request without messages
   const badReq = await fetch(`http://${host}:${port}/v1/chat/completions`, {

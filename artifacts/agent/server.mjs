@@ -38,6 +38,7 @@ import {
   CONNECTED_APP_EVIDENCE_HEADER,
   connectedAppIntentForText,
 } from "./intent-rules.mjs";
+import { TOOL_DEFINITIONS, dispatchToolCall as dispatchDirectTool } from "./tools.mjs";
 
 const PORT = Number(process.env.CUSTOM_AGENT_PORT || 18790);
 const HOST = process.env.CUSTOM_AGENT_HOST || "127.0.0.1";
@@ -231,36 +232,7 @@ async function callComposioExecute({ toolSlug, args, account }) {
 }
 
 // Define the tool schema we expose to the model. Phase 1 = composio only.
-const TOOLS_PHASE_1 = [
-  {
-    type: "function",
-    function: {
-      name: "composio_execute",
-      description:
-        "Execute a Composio tool against a connected account (gmail, slack, googledrive, firecrawl, exa, serpapi, etc.). Use the toolkit slug and tool slug returned in CONNECTED_APP_PREFLIGHT_EVIDENCE. Returns the real observed result.",
-      parameters: {
-        type: "object",
-        properties: {
-          tool_slug: {
-            type: "string",
-            description:
-              "The tool slug like 'GMAIL_SEND_EMAIL' or 'EXA_SEARCH' or 'YELP_GET_BUSINESS_DETAILS'.",
-          },
-          arguments: {
-            type: "object",
-            description: "Tool-specific arguments as a JSON object.",
-          },
-          account: {
-            type: "string",
-            description:
-              "Optional connected_account id; omit to use the default active account for the toolkit.",
-          },
-        },
-        required: ["tool_slug", "arguments"],
-      },
-    },
-  },
-];
+const TOOLS_PHASE_1 = TOOL_DEFINITIONS;
 
 // --- chat completion core ----------------------------------------------------
 
@@ -437,12 +409,11 @@ async function dispatchToolCall({ name, args, intent, onToolCall }) {
     onToolCall?.({ name, observed: result.observed, ok: result.ok });
     return result;
   }
-  // Unknown tool — return a precise observed failure so the model can
-  // pick a different tool instead of hallucinating.
-  return {
-    observed: false,
-    error: `unknown tool '${name}'. Available tools in phase 1: composio_execute. Phase 2 will add first-class tools (web_search, scrape_url, screenshot_url, send_email, run_code).`,
-  };
+  // Phase 2: first-class direct tools (web_search, scrape_url, screenshot_url,
+  // send_email, run_code) — all defined in tools.mjs.
+  const direct = await dispatchDirectTool({ name, args });
+  onToolCall?.({ name, observed: direct.observed !== false, ok: direct.ok });
+  return direct;
 }
 
 // --- HTTP routes -------------------------------------------------------------
@@ -490,6 +461,8 @@ function handleReadyz(req, res) {
       model: DEFAULT_MODEL,
       upstream: UPSTREAM_BASE,
       rules: CONNECTED_APP_RULES.length,
+      tools: TOOL_DEFINITIONS.length,
+      tool_names: TOOL_DEFINITIONS.map((t) => t.function.name),
       token_set: Boolean(TOKEN),
       upstream_key_set: Boolean(UPSTREAM_API_KEY),
     }),
