@@ -378,26 +378,21 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     }
     res.end();
 
-    // If the user closed the tab mid-stream, persist whatever partial
-    // assistant text the model had already produced so reloading the app
-    // (or opening a different tab) shows the conversation in the
-    // history. Without this the user loses everything they typed in that
-    // session because recordTurn was previously only called on a
-    // successful end-of-stream.
-    if (clientClosed && assistantText.trim()) {
+    // Persist the assistant turn. The two earlier call sites (one for
+    // client-close, one for clean-completion) had a bug where both would
+    // run when a partial response was streamed before the tab closed,
+    // inserting TWO rows for the same user message and doubling the
+    // history on reload. Fix: a single recordTurn call with the correct
+    // assistant text (suffix "⏹ stopped" only when the tab was actually
+    // closed mid-stream).
+    if (assistantText.trim()) {
+      const textToSave = clientClosed
+        ? assistantText + "\n\n_⏹ stopped when tab closed_"
+        : assistantText;
       void recordTurn({
         conversationKey,
         userText,
-        assistantText: assistantText + "\n\n_⏹ stopped when tab closed_",
-        model: OPENCLAW_AGENT_MODEL,
-      }).catch((error) => req.log.warn({ err: error }, "agent chat recordTurn after client close failed"));
-    }
-
-    if (upstream.ok && assistantText.trim()) {
-      void recordTurn({
-        conversationKey,
-        userText,
-        assistantText,
+        assistantText: textToSave,
         model: OPENCLAW_AGENT_MODEL,
       }).catch((error) => req.log.warn({ err: error }, "agent chat recordTurn failed"));
     }
