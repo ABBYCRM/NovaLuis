@@ -108,6 +108,7 @@ jobs:
             test/ui-preservation.test.ts \
             test/operator-session.test.ts \
             test/runtime-durability-contract.test.ts \
+            test/pwa-offline-contract.test.ts \
             test/runtime-durability-browser.test.ts \
             test/regression-recovery-browser.test.ts \
             test/skills-system.test.ts \
@@ -135,7 +136,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Regression, workspace auth, thinking cube, mobile UI, voice, durable-run, and skill checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Regression, workspace auth, thinking cube, mobile UI, voice, durable-run, PWA, and skill checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
@@ -153,7 +154,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Regression, workspace auth, mobile UI, durable-runtime, or skill verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Regression, workspace auth, mobile UI, durable-runtime, PWA, or skill verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
