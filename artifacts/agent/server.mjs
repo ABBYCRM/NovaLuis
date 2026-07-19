@@ -57,24 +57,88 @@ const TOKEN =
     : require_("node:crypto").randomBytes(32).toString("hex"));
 
 const HELICONE_BASE = process.env.HELICONE_BASE_URL || "https:// helicone.ai";
-const UPSTREAM_BASE =
-  process.env.CUSTOM_AGENT_UPSTREAM_BASE ||
-  // Default: same upstream the openclaw gateway uses (moonshot kimi via
-  // Helicone proxy). api-server can override via env if it ever wants
-  // a different provider.
-  "https://api.moonshot.ai/v1";
-const UPSTREAM_API_KEY =
-  process.env.CUSTOM_AGENT_UPSTREAM_KEY ||
-  // The project ships a dedicated KIMI_API_KEY in the DO env for the
-  // moonshot/kimi API. Prefer it over a generic OPENAI_API_KEY because
-  // moonshot's auth scheme is separate from OpenAI's.
-  process.env.KIMI_API_KEY ||
-  // Fallback: an OpenAI key works if the upstream is api.openai.com or
-  // if a provider accepts the same key shape via a proxy like Helicone.
-  process.env.OPENAI_API_KEY ||
-  "";
 
-const DEFAULT_MODEL = process.env.CUSTOM_AGENT_MODEL || "kimi-k2.6";
+// Multi-upstream provider map. The custom agent picks an upstream based on
+// the model id in the request body. Each provider has:
+//   - key:    the env var name holding the API key
+//   - base:   the env var name holding the base URL (with a default)
+//   - match:  a function that decides if a given model id routes to this
+//             provider (first match wins)
+//   - defaultModel: used when the model id is missing or unknown
+//
+// Adding a new provider is a 4-line change below. The model id is then
+// forwarded verbatim to that provider's OpenAI-compatible endpoint.
+const UPSTREAM_PROVIDERS = [
+  {
+    name: "openai",
+    key: "CUSTOM_AGENT_UPSTREAM_KEY",
+    base: "CUSTOM_AGENT_UPSTREAM_BASE",
+    baseDefault: "https://api.openai.com/v1",
+    keyFallbacks: ["OPENAI_API_KEY"],
+    match: (model) => /^(gpt-|o1-|o3-|o4-|chatgpt-)/i.test(model || ""),
+    defaultModel: "gpt-4o-mini",
+  },
+  {
+    name: "nvidia-nim",
+    key: "CUSTOM_AGENT_NVIDIA_NIM_KEY",
+    base: "CUSTOM_AGENT_NVIDIA_NIM_BASE",
+    baseDefault: "https://integrate.api.nvidia.com/v1",
+    keyFallbacks: ["NVIDIA_NIM_API_KEY", "NVIDIA_API_KEY"],
+    // NVIDIA NIM model ids are org/model slugs like "z-ai/glm-5.2" or
+    // "deepseek-ai/deepseek-v4-pro". Match by the slash.
+    match: (model) => /^[a-z0-9._-]+\/[a-z0-9._-]+/i.test(model || ""),
+    defaultModel: "meta/llama-3.1-70b-instruct",
+  },
+  {
+    name: "moonshot",
+    key: "CUSTOM_AGENT_MOONSHOT_KEY",
+    base: "CUSTOM_AGENT_MOONSHOT_BASE",
+    baseDefault: "https://api.moonshot.ai/v1",
+    keyFallbacks: ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
+    match: (model) => /^(kimi|moonshot)/i.test(model || ""),
+    defaultModel: "kimi-k2.6",
+  },
+];
+
+function readKey(provider) {
+  // Direct env var first
+  const direct = process.env[provider.key];
+  if (direct) return direct;
+  // Then fallbacks
+  for (const fb of provider.keyFallbacks || []) {
+    const v = process.env[fb];
+    if (v) return v;
+  }
+  return "";
+}
+
+function readBase(provider) {
+  return process.env[provider.base] || provider.baseDefault;
+}
+
+function resolveUpstream(model) {
+  for (const p of UPSTREAM_PROVIDERS) {
+    try {
+      if (p.match(model)) {
+        const key = readKey(p);
+        if (!key) continue; // provider matches but no key — try next
+        return { ...p, key, base: readBase(p) };
+      }
+    } catch {
+      // skip
+    }
+  }
+  // Fallback: first provider that has a key configured
+  for (const p of UPSTREAM_PROVIDERS) {
+    const key = readKey(p);
+    if (key) return { ...p, key, base: readBase(p) };
+  }
+  // Last resort: return the first provider with no key (will 401 on use)
+  const p = UPSTREAM_PROVIDERS[0];
+  return { ...p, key: "", base: readBase(p) };
+}
+
+const DEFAULT_MODEL = process.env.CUSTOM_AGENT_MODEL || "gpt-4o-mini";
 const TOOL_TIMEOUT_MS = Number(process.env.CUSTOM_AGENT_TOOL_TIMEOUT_MS || 60_000);
 const MAX_TOOL_ITERATIONS = Number(process.env.CUSTOM_AGENT_MAX_ITER || 8);
 
@@ -309,6 +373,7 @@ async function runToolLoop({
   onToken,
   onToolCall,
   signal,
+  upstreamConfig,
 }) {
   // Loop: send the conversation to the model, stream back any tool
   // calls, execute them, append tool results, repeat until the model
@@ -340,13 +405,13 @@ async function runToolLoop({
     };
 
     const upstream = await timedFetch(
-      `${UPSTREAM_BASE}/chat/completions`,
+      `${upstreamConfig.base}/chat/completions`,
       {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${UPSTREAM_API_KEY}`,
-          ...(process.env.HELICONE_API_KEY
+          authorization: `Bearer ${upstreamConfig.key}`,
+          ...(process.env.HELICONE_API_KEY && upstreamConfig.name === "openai"
             ? { "helicone-auth": `Bearer ${process.env.HELICONE_API_KEY}` }
             : {}),
         },
@@ -462,12 +527,16 @@ function handleReadyz(req, res) {
       status: "ready",
       backend: "custom-agent",
       model: DEFAULT_MODEL,
-      upstream: UPSTREAM_BASE,
+      providers: UPSTREAM_PROVIDERS.map((p) => ({
+        name: p.name,
+        base: readBase(p),
+        key_set: Boolean(readKey(p)),
+        default_model: p.defaultModel,
+      })),
       rules: CONNECTED_APP_RULES.length,
       tools: TOOL_DEFINITIONS.length,
       tool_names: TOOL_DEFINITIONS.map((t) => t.function.name),
       token_set: Boolean(TOKEN),
-      upstream_key_set: Boolean(UPSTREAM_API_KEY),
     }),
   );
 }
@@ -578,6 +647,11 @@ async function handleChatCompletions(req, res) {
       systemPrompt: forwardedSystemPrompt,
       model,
     });
+    // Resolve which upstream provider to talk to based on the model id.
+    // For a model like 'z-ai/glm-5.2' this picks NVIDIA NIM. For 'gpt-4o-mini'
+    // it picks OpenAI. For 'kimi-k2.6' it picks Moonshot. The custom agent
+    // does the routing so the api-server can stay provider-agnostic.
+    const upstreamConfig = resolveUpstream(model);
     const { assistant, trace } = await runToolLoop({
       upstreamPayload: { ...body, messages: prepared, model },
       intent,
@@ -585,6 +659,7 @@ async function handleChatCompletions(req, res) {
       onToken: emitDelta,
       onToolCall: () => {},
       signal: clientSignal,
+      upstreamConfig,
     });
     emitFinal(assistant, trace);
     log(
@@ -656,9 +731,17 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  log(`listening on http://${HOST}:${PORT} model=${DEFAULT_MODEL} upstream=${UPSTREAM_BASE}`);
-  if (!UPSTREAM_API_KEY) {
-    log("WARN: CUSTOM_AGENT_UPSTREAM_KEY (or OPENAI_API_KEY) is not set; chat will return upstream errors until it is");
+  log(`listening on http://${HOST}:${PORT} model=${DEFAULT_MODEL}`);
+  for (const p of UPSTREAM_PROVIDERS) {
+    if (readKey(p)) {
+      log(`  provider ready: ${p.name} (default: ${p.defaultModel}, base: ${readBase(p)})`);
+    } else {
+      log(`  provider NOT ready: ${p.name} (no key for ${p.key} or fallbacks ${(p.keyFallbacks || []).join(",")})`);
+    }
+  }
+  const anyReady = UPSTREAM_PROVIDERS.some((p) => readKey(p));
+  if (!anyReady) {
+    log("WARN: no upstream provider has a key; chat will 401 until one is configured");
   }
 });
 

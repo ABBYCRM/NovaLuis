@@ -121,6 +121,14 @@ const childEnv = {
     process.env.CUSTOM_AGENT_UPSTREAM_BASE || "https://api.moonshot.ai/v1",
   CUSTOM_AGENT_MODEL: process.env.CUSTOM_AGENT_MODEL || "kimi-k2.6",
   AGENT_BACKEND: process.env.AGENT_BACKEND || "openclaw",
+  // NVIDIA NIM as a 2nd upstream. The custom agent routes to this when
+  // the model id is an org/model slug (e.g. z-ai/glm-5.2). Key is set
+  // via the DO env or via the secret tool.
+  CUSTOM_AGENT_NVIDIA_NIM_KEY: process.env.CUSTOM_AGENT_NVIDIA_NIM_KEY || "",
+  CUSTOM_AGENT_NVIDIA_NIM_BASE:
+    process.env.CUSTOM_AGENT_NVIDIA_NIM_BASE || "https://integrate.api.nvidia.com/v1",
+  CUSTOM_AGENT_NVIDIA_NIM_DEFAULT_MODEL:
+    process.env.CUSTOM_AGENT_NVIDIA_NIM_DEFAULT_MODEL || "meta/llama-3.1-70b-instruct",
 };
 
 const children = new Map();

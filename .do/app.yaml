@@ -65,6 +65,17 @@ services:
         value: "60000"
       - key: CUSTOM_AGENT_MAX_ITER
         value: "8"
+      # ── Second upstream: NVIDIA NIM (OpenAI-compatible) ─────────────────
+      # Set CUSTOM_AGENT_NVIDIA_NIM_KEY to an nvapi-... key. Models with
+      # org/model slugs (e.g. z-ai/glm-5.2, deepseek-ai/deepseek-v4-pro)
+      # auto-route here. Default model for this provider is configurable
+      # by setting CUSTOM_AGENT_NVIDIA_NIM_DEFAULT_MODEL.
+      - key: CUSTOM_AGENT_NVIDIA_NIM_KEY
+        type: SECRET
+      - key: CUSTOM_AGENT_NVIDIA_NIM_BASE
+        value: "https://integrate.api.nvidia.com/v1"
+      - key: CUSTOM_AGENT_NVIDIA_NIM_DEFAULT_MODEL
+        value: "meta/llama-3.1-70b-instruct"
 
       # ── Secrets (values set via API / dashboard, never committed) ─────────
       - key: OPENAI_API_KEY
