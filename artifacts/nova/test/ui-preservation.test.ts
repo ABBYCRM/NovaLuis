@@ -66,6 +66,10 @@ describe("Nova UI preservation contracts", () => {
       path.join(novaRoot, "public", "assets", "ui-preservation.css"),
       "utf8",
     );
+    const navigation = fs.readFileSync(
+      path.join(novaRoot, "public", "assets", "ui-navigation-preservation.js"),
+      "utf8",
+    );
     const appSource = fs.readFileSync(path.join(apiRoot, "src", "app.ts"), "utf8");
 
     expect(css).toContain(".fav-add-bar");
@@ -74,9 +78,35 @@ describe("Nova UI preservation contracts", () => {
     expect(css).toContain(".sm-post-thumb img");
     expect(css).toContain("@media (hover: none) and (pointer: coarse)");
 
+    expect(navigation).toContain("#new-chat-btn");
+    expect(navigation).toContain(".history-item");
+    expect(navigation).toContain(".hi-del");
+    expect(navigation).toContain("closeMobileSidebar");
+
     expect(appSource).toContain("/assets/ui-preservation.css");
+    expect(appSource).toContain("/assets/ui-navigation-preservation.js");
     expect(appSource).toContain("normalizeSocialSchedulePayload");
-    expect(appSource).not.toContain("/assets/ui-preservation.js");
+  });
+
+  it("retains the installable PWA contract", () => {
+    const index = fs.readFileSync(path.join(novaRoot, "index.html"), "utf8");
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(novaRoot, "public", "manifest.webmanifest"), "utf8"),
+    ) as Record<string, unknown>;
+    const serviceWorker = fs.readFileSync(path.join(novaRoot, "public", "sw.js"), "utf8");
+
+    expect(index).toContain('rel="manifest" href="/manifest.webmanifest"');
+    expect(index).toContain('rel="apple-touch-icon" href="/icon-192.png"');
+    expect(index).toContain("navigator.serviceWorker.register('/sw.js')");
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.start_url).toBe("/");
+    expect(manifest.scope).toBe("/");
+    expect(Array.isArray(manifest.icons)).toBe(true);
+    expect((manifest.icons as unknown[]).length).toBeGreaterThanOrEqual(2);
+    expect(serviceWorker).toContain("self.addEventListener('install'");
+    expect(serviceWorker).toContain("self.addEventListener('activate'");
+    expect(serviceWorker).toContain("self.addEventListener('fetch'");
+    expect(serviceWorker).toContain("'/manifest.webmanifest'");
   });
 });
 
@@ -162,6 +192,7 @@ describe.skipIf(!chromiumExecutable)("Nova mobile UI preservation in Chromium", 
 
     await page.goto(baseURL, { waitUntil: "load", timeout: 30_000 });
     await page.addStyleTag({ url: `${baseURL}assets/ui-preservation.css` });
+    await page.addScriptTag({ url: `${baseURL}assets/ui-navigation-preservation.js` });
 
     // The active production markup intentionally has no static #empty-state.
     // Wait for the real transcript shell and composer instead.
@@ -179,6 +210,19 @@ describe.skipIf(!chromiumExecutable)("Nova mobile UI preservation in Chromium", 
     );
   }
 
+  async function expectSidebarClosed(page: Page): Promise<void> {
+    await page.waitForFunction(
+      () => {
+        const sidebar = document.getElementById("sidebar");
+        const overlay = document.getElementById("sidebar-overlay");
+        return sidebar?.classList.contains("open") === false &&
+          overlay?.classList.contains("visible") === false;
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
+  }
+
   async function expectNoHorizontalOverflow(page: Page): Promise<void> {
     const widths = await page.evaluate(() => ({
       scroll: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
@@ -186,6 +230,77 @@ describe.skipIf(!chromiumExecutable)("Nova mobile UI preservation in Chromium", 
     }));
     expect(widths.scroll).toBeLessThanOrEqual(widths.viewport + 1);
   }
+
+  it("creates a fresh New Chat and returns to the mobile chat screen", async () => {
+    const page = await openMobilePage();
+    try {
+      const before = await page.evaluate(() => ({
+        current: localStorage.getItem("bob-current-chat-id"),
+        count: JSON.parse(localStorage.getItem("bob-chats") || "[]").length,
+      }));
+
+      await openSidebar(page);
+      await page.locator("#new-chat-btn").click();
+      await expectSidebarClosed(page);
+
+      const after = await page.evaluate(() => ({
+        current: localStorage.getItem("bob-current-chat-id"),
+        count: JSON.parse(localStorage.getItem("bob-chats") || "[]").length,
+        chatChildren: document.getElementById("chat-inner")?.children.length ?? -1,
+        activeElement: document.activeElement?.id || "",
+        bodyOverflow: document.body.style.overflow,
+      }));
+
+      expect(after.current).not.toBe(before.current);
+      expect(after.count).toBe(before.count + 1);
+      expect(after.chatChildren).toBe(0);
+      expect(after.activeElement).toBe("user-input");
+      expect(after.bodyOverflow).toBe("");
+      await expectNoHorizontalOverflow(page);
+      await page.screenshot({ path: path.join(screenshotsDir, "new-chat-mobile.png"), fullPage: true });
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("keeps chat deletion visible and functional on mobile", async () => {
+    const page = await openMobilePage();
+    try {
+      // Create two additional chats so a non-active history item can be deleted
+      // without the active-chat fallback creating a replacement.
+      await openSidebar(page);
+      await page.locator("#new-chat-btn").click();
+      await expectSidebarClosed(page);
+      await openSidebar(page);
+      await page.locator("#new-chat-btn").click();
+      await expectSidebarClosed(page);
+      await openSidebar(page);
+
+      const before = await page.evaluate(() => JSON.parse(localStorage.getItem("bob-chats") || "[]").length);
+      const items = page.locator("#history-list .history-item");
+      expect(await items.count()).toBeGreaterThanOrEqual(3);
+
+      const deleteControl = items.nth(1).locator(".hi-del");
+      await deleteControl.waitFor({ state: "visible", timeout: 5_000 });
+      expect(await deleteControl.getAttribute("tabindex")).toBe("0");
+
+      page.once("dialog", async (dialog) => dialog.accept());
+      await deleteControl.click();
+      await page.waitForFunction(
+        (expected) => JSON.parse(localStorage.getItem("bob-chats") || "[]").length === expected,
+        before - 1,
+        { timeout: 5_000 },
+      );
+
+      const after = await page.evaluate(() => JSON.parse(localStorage.getItem("bob-chats") || "[]").length);
+      expect(after).toBe(before - 1);
+      expect(await items.count()).toBe(after);
+      expect(await page.locator("#sidebar").evaluate((element) => element.classList.contains("open"))).toBe(true);
+      await page.screenshot({ path: path.join(screenshotsDir, "chat-delete-mobile.png"), fullPage: true });
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
 
   it("keeps Favorites Save visible without changing the reference panel", async () => {
     const page = await openMobilePage();
