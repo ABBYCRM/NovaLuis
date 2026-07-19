@@ -53,6 +53,7 @@
   }
 
   [
+    '/assets/operator-session-auth.js',
     '/assets/continuous-voice-input.js',
     '/assets/durable-run-reconcile.js'
   ].forEach(function (src) {
