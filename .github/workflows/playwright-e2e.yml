@@ -8,7 +8,8 @@
 #   1. Install deps + build the API server
 #   2. Start the API server in the background
 #   3. Run the api-e2e.test.ts suite against the live server
-#   4. Run the existing Playwright chat-ui smoke tests (if Chromium available)
+#   4. Run real Chromium chat + mobile UI preservation tests
+#   5. Upload mobile screenshots as review evidence
 ##############################################################################
 name: Playwright E2E
 
@@ -73,10 +74,32 @@ jobs:
       - name: Run API E2E tests
         run: pnpm --filter @workspace/nova exec vitest run test/api-e2e.test.ts --reporter=verbose
 
-      - name: Run Nova UI smoke tests (Playwright)
-        env:
-          REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE: ""   # skips browser suite gracefully in CI
-        run: pnpm --filter @workspace/nova exec vitest run test/chat-ui-smoke.test.ts --reporter=verbose
+      - name: Locate hosted Chromium
+        shell: bash
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$CHROME" ]; then
+            echo "No hosted Chromium executable found; mobile browser proof may not be skipped." >&2
+            exit 1
+          fi
+          echo "REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE=$CHROME" >> "$GITHUB_ENV"
+          "$CHROME" --version
+
+      - name: Run Nova UI browser regression tests
+        run: |
+          pnpm --filter @workspace/nova exec vitest run \
+            test/chat-ui-smoke.test.ts \
+            test/ui-preservation.test.ts \
+            --reporter=verbose
+
+      - name: Upload mobile UI proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-mobile-ui-proof
+          path: artifacts/nova/test-results/ui-preservation/*.png
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Stop API server
         if: always()
