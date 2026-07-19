@@ -6,6 +6,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import instagramPublishRouter from "./routes/instagram-publish";
 import { logger } from "./lib/logger";
+import { normalizeSocialSchedulePayload } from "./lib/social-schedule-compat";
 import "./lib/vector-memory-fetch-hook";
 
 const app: Express = express();
@@ -91,6 +92,21 @@ app.use(
   },
   instagramPublishRouter,
 );
+
+// The established Scheduled renderer reads legacy snake_case fields, while
+// Drizzle returns camelCase properties. Normalize only the exact GET list
+// response, additively, before the aggregate router sends it. Request bodies,
+// database columns, publishing routes, and newer camelCase clients are unchanged.
+app.use("/api/social/schedule", (req, res, next) => {
+  if (req.method !== "GET" || req.path !== "/") {
+    next();
+    return;
+  }
+  const originalJson = res.json.bind(res);
+  res.json = ((body: unknown) => originalJson(normalizeSocialSchedulePayload(body))) as typeof res.json;
+  next();
+});
+
 app.use("/api", router);
 
 // Global error handler — every API error returns JSON, not Express's
@@ -138,22 +154,15 @@ if (process.env["NODE_ENV"] === "production") {
       const raw = fs.readFileSync(indexHtml, "utf8");
 
       // UI preservation boundary — keep the large, handwritten index.html as
-      // the visual/behavioral source of truth. Confirmed compatibility fixes are
-      // loaded as isolated post-styles/post-scripts, after the legacy inline UI,
-      // so they cannot replace chat handlers, API routes, persistence contracts,
-      // or workspace behavior. The guards make this idempotent if the assets are
-      // ever linked directly in index.html later.
+      // the visual and behavioral source of truth. Confirmed CSS-only repairs
+      // load after the inline styles, so they cannot replace chat handlers, API
+      // routes, persistence contracts, or workspace behavior. The guard keeps
+      // this idempotent if the stylesheet is linked directly in index.html later.
       let rendered = raw;
       if (!rendered.includes("/assets/ui-preservation.css")) {
         rendered = rendered.replace(
           "</head>",
           '  <link rel="stylesheet" href="/assets/ui-preservation.css" />\n</head>',
-        );
-      }
-      if (!rendered.includes("/assets/ui-preservation.js")) {
-        rendered = rendered.replace(
-          "</body>",
-          '  <script src="/assets/ui-preservation.js"></script>\n</body>',
         );
       }
 
