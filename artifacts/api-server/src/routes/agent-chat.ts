@@ -54,6 +54,7 @@ const CUSTOM_AGENT_URL = (
 ).replace(/\/$/, "");
 const CUSTOM_AGENT_TOKEN =
   process.env.CUSTOM_AGENT_TOKEN || process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const DEFAULT_CUSTOM_AGENT_MODEL = process.env.CUSTOM_AGENT_MODEL || "gpt-4o-mini";
 
 function pickBackendForConversation(conversationKey: string): "openclaw" | "custom" {
   // The conversation key is the per-tab (per-session) id. Use a stable
@@ -358,7 +359,7 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
   // every kimi-k2.6 call in the system gets the same treatment — whether
   // it originates from the browser chat, the work-tree worker, or any
   // future client. Caller can override any field explicitly.
-  const body: Record<string, unknown> = {
+  let body: Record<string, unknown> = {
     ...incoming,
     model: OPENCLAW_AGENT_MODEL,
     stream,
@@ -404,6 +405,15 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     backend === "custom"
       ? `${CUSTOM_AGENT_URL}/v1/chat/completions`
       : `${OPENCLAW_GATEWAY_URL}/v1/chat/completions`;
+  // When routing to the custom agent, override the model id to the
+  // CUSTOM_AGENT_MODEL. The custom agent's upstream may be api.openai.com
+  // (not api.moonshot.ai), and OpenAI rejects model ids it doesn't
+  // recognize. OpenClaw accepts kimi-k2.6 natively so we leave that path
+  // alone.
+  if (backend === "custom") {
+    const customModel = process.env.CUSTOM_AGENT_MODEL || DEFAULT_CUSTOM_AGENT_MODEL;
+    body = { ...body, model: customModel };
+  }
   const upstreamAuth =
     backend === "custom" ? CUSTOM_AGENT_TOKEN : OPENCLAW_GATEWAY_TOKEN;
   const upstreamHeaders: Record<string, string> = {
