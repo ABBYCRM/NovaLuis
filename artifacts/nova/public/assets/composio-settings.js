@@ -109,11 +109,17 @@
       '.cmp-app-copy{min-width:0}',
       '.cmp-app-name{font-size:12.5px;font-weight:650;color:var(--text);display:flex;align-items:center;gap:6px}',
       '.cmp-connected-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(34,197,94,.55)}',
+      '.cmp-connected-dot.bad{background:#fca5a5;box-shadow:0 0 8px rgba(252,165,165,.55)}',
       '.cmp-app-desc{font-size:10.8px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.cmp-connect{padding:6px 10px;font-size:11px}',
       '.cmp-connect.connected{color:#86efac;border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.08)}',
-      '.cmp-connections{display:flex;flex-wrap:wrap;gap:6px}',
+      '.cmp-connections{display:flex;flex-direction:column;gap:8px}',
+      '.cmp-conn-heading{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:4px}',
+      '.cmp-conn-section{display:flex;flex-direction:column;gap:5px}',
       '.cmp-account{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;border:1px solid rgba(34,197,94,.25);background:rgba(34,197,94,.07);color:#bbf7d0;font-size:10.5px}',
+      '.cmp-account-bad{border-color:rgba(252,165,165,.35);background:rgba(252,165,165,.08);color:#fecaca}',
+      '.cmp-reconnect{margin-left:6px;padding:2px 7px;font-size:10px;border-radius:6px;border:1px solid rgba(252,165,165,.4);background:rgba(252,165,165,.1);color:#fee2e2;cursor:pointer}',
+      '.cmp-reconnect:hover{background:rgba(252,165,165,.2)}',
       '.cmp-empty{padding:17px;text-align:center;color:var(--muted);font-size:11.5px;border:1px dashed var(--border);border-radius:9px}',
       '#cmp-msg{min-height:17px}',
       '@media(max-width:680px){.cmp-config{grid-template-columns:1fr}.cmp-config .cmp-btn{width:100%}.cmp-app{grid-template-columns:34px minmax(0,1fr);}.cmp-logo{width:34px;height:34px}.cmp-connect{grid-column:1/-1;width:100%}}'
@@ -184,24 +190,34 @@
     el.textContent = label || (state.configured ? 'ready' : 'API key needed');
   }
 
+  // Healthy states per the Composio API: only ACTIVE (and the legacy CONNECTED
+  // alias) mean the account can actually be used. Any other status — EXPIRED,
+  // INITIATED, FAILED, INACTIVE, DISABLED, MISSING — must NOT appear as
+  // connected in the UI or the agent tool preflight.
   function normalizeConnection(item) {
     var connection = item && (item.connected_account || item.connectedAccount || item.connection);
     var account = connection && (connection.connected_account || connection.connectedAccount || connection);
     var status = String((account && account.status) || '').toUpperCase();
+    var statusReason = String((account && account.status_reason) || (account && account.state && account.state.val && account.state.val.status_reason) || '');
+    var isHealthy = status === 'ACTIVE' || status === 'CONNECTED';
     return {
-      active: Boolean(account && (status === 'ACTIVE' || status === 'CONNECTED' || account.id)),
+      active: isHealthy,
       id: account && account.id,
-      status: status || 'UNKNOWN'
+      status: status || 'UNKNOWN',
+      statusReason: statusReason,
+      isExpired: status === 'EXPIRED' || status === 'FAILED' || status === 'INACTIVE' || status === 'DISABLED'
     };
   }
 
   function updateConnectedMap(items) {
     state.connected = {};
+    state.expired = {};
     (items || []).forEach(function (item) {
       var slug = String(item.slug || (item.toolkit && item.toolkit.slug) || '').toLowerCase();
       if (!slug) return;
       var info = normalizeConnection(item);
       if (info.active) state.connected[slug] = info;
+      else if (info.isExpired || info.status === 'INITIATED' || info.status === 'UNKNOWN') state.expired[slug] = info;
     });
   }
 
@@ -209,15 +225,33 @@
     var box = document.getElementById('cmp-connections');
     if (!box) return;
     updateConnectedMap(items);
-    var slugs = Object.keys(state.connected);
-    if (!slugs.length) {
+    var healthySlugs = Object.keys(state.connected);
+    var unhealthySlugs = Object.keys(state.expired);
+    if (!healthySlugs.length && !unhealthySlugs.length) {
       box.innerHTML = '<span class="ws-tiny ws-muted">No Composio apps connected yet.</span>';
       return;
     }
-    box.innerHTML = slugs.sort().map(function (slug) {
-      var info = state.connected[slug];
-      return '<span class="cmp-account"><span class="cmp-connected-dot"></span>' + esc(slug) + (info.id ? ' · ' + esc(info.id) : '') + '</span>';
-    }).join('');
+    var parts = [];
+    if (healthySlugs.length) {
+      parts.push('<div class="cmp-conn-section">');
+      parts.push('<div class="cmp-conn-heading">Healthy</div>');
+      parts.push(healthySlugs.sort().map(function (slug) {
+        var info = state.connected[slug];
+        return '<span class="cmp-account"><span class="cmp-connected-dot"></span>' + esc(slug) + (info.id ? ' · ' + esc(info.id) : '') + '</span>';
+      }).join(''));
+      parts.push('</div>');
+    }
+    if (unhealthySlugs.length) {
+      parts.push('<div class="cmp-conn-section">');
+      parts.push('<div class="cmp-conn-heading">Needs reconnect</div>');
+      parts.push(unhealthySlugs.sort().map(function (slug) {
+        var info = state.expired[slug];
+        var reason = info.statusReason || info.status || 'expired';
+        return '<span class="cmp-account cmp-account-bad" title="' + esc(reason) + '"><span class="cmp-connected-dot bad"></span>' + esc(slug) + ' · ' + esc(info.status || 'unknown') + ' — <button type="button" class="cmp-reconnect" data-cmp-reconnect="' + esc(slug) + '">Reconnect</button></span>';
+      }).join(''));
+      parts.push('</div>');
+    }
+    box.innerHTML = parts.join('');
   }
 
   function fallbackApps(filter) {
@@ -281,6 +315,29 @@
       renderConnections([]);
       setMessage('Composio status failed: ' + error.message, true);
       return null;
+    }
+  }
+
+  // Pull the AUTHORITATIVE per-toolkit health from the server. The toolkits
+  // listing endpoint can be stale (e.g. gmail shows ACTIVE there but the
+  // /connected_accounts endpoint shows the new connection is EXPIRED), so we
+  // always prefer the health endpoint when it's available.
+  async function loadHealth() {
+    try {
+      var data = await api('/api/integrations/composio/health');
+      if (!data || !data.configured) return;
+      var toolkits = data.toolkits || {};
+      var items = Object.keys(toolkits).map(function (slug) {
+        var info = toolkits[slug];
+        return {
+          slug: slug,
+          toolkit: { slug: slug, name: info.toolkitName || slug },
+          connected_account: { id: info.id, status: info.status, status_reason: info.statusReason }
+        };
+      });
+      renderConnections(items);
+    } catch (error) {
+      // Swallow — loadStatus() already surfaces a generic error message.
     }
   }
 
@@ -401,7 +458,7 @@
     setTimeout(function () {
       var settings = document.getElementById('settings-btn');
       if (settings) settings.click();
-      loadStatus().then(function () { loadApps(''); });
+      loadStatus().then(function () { loadHealth(); loadApps(''); });
       history.replaceState(null, '', window.location.pathname + window.location.hash);
     }, 250);
   }
@@ -411,12 +468,12 @@
       var target = event.target;
       if (!target || !target.closest) return;
       if (target.closest('#settings-btn')) {
-        setTimeout(function () { loadStatus().then(function () { loadApps(document.getElementById('cmp-search') && document.getElementById('cmp-search').value); }); }, 80);
+        setTimeout(function () { loadStatus().then(function () { loadHealth(); loadApps(document.getElementById('cmp-search') && document.getElementById('cmp-search').value); }); }, 80);
         return;
       }
       if (target.closest('#cmp-save')) { saveConfig(); return; }
       if (target.closest('#cmp-refresh')) {
-        loadStatus().then(function () { loadApps(document.getElementById('cmp-search') && document.getElementById('cmp-search').value); });
+        loadStatus().then(function () { loadHealth(); loadApps(document.getElementById('cmp-search') && document.getElementById('cmp-search').value); });
         return;
       }
       var chip = target.closest('[data-cmp-search]');
@@ -429,6 +486,13 @@
       }
       var connect = target.closest('[data-cmp-connect]');
       if (connect) connectToolkit(connect.getAttribute('data-cmp-connect') || '');
+      var reconnect = target.closest('[data-cmp-reconnect]');
+      if (reconnect) {
+        var slug = reconnect.getAttribute('data-cmp-reconnect') || '';
+        // Reconnect = start a fresh OAuth flow for the same toolkit.
+        connectToolkit(slug);
+        return;
+      }
     });
 
     document.addEventListener('input', function (event) {

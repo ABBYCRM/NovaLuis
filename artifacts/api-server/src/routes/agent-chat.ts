@@ -67,6 +67,33 @@ const CONNECTED_APP_RULES: Array<{
     pattern: /\bgoogle\s+(?:drive|docs|sheets|calendar)\b/i,
     intent: { app: "Google Workspace", toolkitHints: ["googledrive", "googledocs", "googlesheets", "googlecalendar"] },
   },
+  // Web search / travel / hotel / restaurant / local place lookup. When the
+  // user asks for things like "find hotels near 33442" or "best pizza in NYC"
+  // we MUST preflight a real web-search tool (yelp, tripadvisor, serpapi,
+  // exa, tavily, etc.) instead of falling through to OpenClaw's generic
+  // web_fetch — which can't render JS-only pages and surfaces a generic
+  // "failed" message that the user rightly calls an internal error.
+  {
+    pattern: /\bhotels?\b.*\bnear\b|\bnear\b.*\bhotels?\b|\bplaces?\s+to\s+stay\b|\bstay\s+near\b/i,
+    intent: {
+      app: "Hotel & Travel Search",
+      toolkitHints: ["tripadvisor", "yelp", "serpapi", "exa", "tavily_mcp", "composio_search", "linkup", "yousearch", "firecrawl", "bright_data"],
+    },
+  },
+  {
+    pattern: /\brestaurants?\s+near\b|\bfood\s+near\b|\bwhere\s+to\s+eat\b|\bbest\s+(?:pizza|sushi|cafe|coffee|burger|ramen|tacos)\s+in\b/i,
+    intent: {
+      app: "Restaurant Search",
+      toolkitHints: ["yelp", "tripadvisor", "foursquare", "googlemaps", "serpapi", "composio_search", "linkup", "yousearch"],
+    },
+  },
+  {
+    pattern: /\bsearch\s+(?:the\s+web|online|for)\b|\blook\s+up\b|\bfind\s+(?:out|information)\b|\bwhat\s+is\s+the\s+(?:weather|time|news|score|stock|price)\b/i,
+    intent: {
+      app: "Web Search",
+      toolkitHints: ["serpapi", "exa", "tavily_mcp", "composio_search", "linkup", "yousearch", "google_search_console", "firecrawl", "bright_data", "news_api", "fireflies"],
+    },
+  },
   {
     pattern: /\bsalesforce\b/i,
     intent: { app: "Salesforce", toolkitHints: ["salesforce"] },
@@ -82,6 +109,7 @@ const TOOL_SYSTEM_PROMPT = [
   "You have executable workspace tools and the nova-services skill. Discover and use them before answering capability questions.",
   "Public GitHub repository URLs are preflighted server-side through the real GitHub REST API. When a GITHUB_PREFLIGHT_EVIDENCE system message is present, treat it as observed tool evidence and analyze it directly instead of claiming GitHub is unavailable.",
   "For Microsoft Teams, Outlook, Slack, Notion, Gmail, Google Workspace, Salesforce, HubSpot, and every other connected external account, use Composio through nova-services before answering. Microsoft Teams requests include checking new messages, chats, channels, teams, groups, memberships, notifications, and counts.",
+  "For hotel, travel, restaurant, local place, weather, news, and generic web-search requests (e.g. 'find hotels near 33442', 'best pizza in NYC', 'what's the weather in Tokyo'), the CONNECTED_APP_PREFLIGHT_EVIDENCE will include the toolkitHints the server discovered for that request. Pick the FIRST connected toolkit from toolkitHints (or the first one that appears in the toolSearch discovery results) and use it with nova-services composio-execute. If no connected toolkit is available for the request, say precisely which toolkits would be needed and ask the user to connect one \u2014 do NOT fall through to OpenClaw's generic web_fetch and surface a generic internal error.",
   "When CONNECTED_APP_PREFLIGHT_EVIDENCE is present, NOVA attempted a real Composio preflight for the user's exact request. Inspect its observed field. If observed is true, use the returned discovery evidence and execute the relevant tool slug with nova-services composio-execute before answering. If observed is false, report or recover from the concrete observed Composio failure instead of inventing access or replacing execution with generic manual UI instructions.",
   "If execution reports that the app is disconnected, use composio-connect with the best toolkit slug discovered from the evidence and return the real Connect Link. Never claim a supported connected app is unavailable until a real Composio preflight or execution produced a concrete error.",
   "Use Composio for connected-account actions and apps that require OAuth. It is optional for ordinary public GitHub repository inspection.",

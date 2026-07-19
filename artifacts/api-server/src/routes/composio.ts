@@ -221,6 +221,76 @@ router.get("/integrations/composio/connections", async (_req, res) => {
   }
 });
 
+// Authoritative per-toolkit health: the live status of every connected account
+// as reported by /connected_accounts (source of truth) — NOT the toolkits list
+// which can be stale or scoped to a different project. Returns
+// { configured, toolkits: { [slug]: { status, statusReason, id, isHealthy } } }.
+router.get("/integrations/composio/health", async (_req, res) => {
+  const config = await getComposioConfig();
+  if (!config.configured) {
+    res.json({ configured: false, ready: false, toolkits: {} });
+    return;
+  }
+
+  try {
+    const session = await ensureComposioSession();
+    const query = new URLSearchParams({
+      user_ids: session.userId,
+      limit: "100",
+      account_type: "ALL",
+    });
+    const data = await composioRequest<{ items?: unknown[] }>(
+      session.apiKey,
+      `/connected_accounts?${query}`,
+    );
+
+    const toolkits: Record<string, { status: string; statusReason: string; id: string | null; isHealthy: boolean; toolkitName: string | null }> = {};
+    for (const item of data.items || []) {
+      const rec = record(item);
+      if (!rec) continue;
+      const tk = record(rec.toolkit) || record(record(rec.connected_account)?.toolkit);
+      const slug = String(tk?.slug || rec.toolkit_slug || "").toLowerCase();
+      if (!slug) continue;
+      const status = String(rec.status || "").toUpperCase();
+      const stateRec = record(rec.state);
+      const stateVal = stateRec ? record(stateRec.val) : null;
+      const statusReason = String(
+        rec.status_reason || stateVal?.status_reason || "",
+      );
+      const isHealthy = status === "ACTIVE" || status === "CONNECTED";
+      // If a slug has multiple accounts, the MOST RECENT wins (Composio returns
+      // them ordered by created_at desc), so this loops in the right order.
+      if (toolkits[slug] && toolkits[slug].isHealthy) continue;
+      toolkits[slug] = {
+        status: status || "UNKNOWN",
+        statusReason,
+        id: typeof rec.id === "string" ? rec.id : null,
+        isHealthy,
+        toolkitName: typeof tk?.name === "string" ? tk.name : null,
+      };
+    }
+
+    res.json({ configured: true, ready: true, toolkits });
+  } catch (error) {
+    if (error instanceof ComposioApiError) {
+      res.json({
+        configured: true,
+        ready: false,
+        toolkits: {},
+        upstreamStatus: error.status,
+        error: error.message,
+      });
+      return;
+    }
+    res.json({
+      configured: true,
+      ready: false,
+      toolkits: {},
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 router.post("/integrations/composio/connect", async (req, res) => {
   const parsed = connectSchema.safeParse(req.body);
   if (!parsed.success) {
