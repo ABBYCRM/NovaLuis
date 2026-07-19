@@ -104,6 +104,23 @@ const childEnv = {
   NOVA_OPENCLAW_PROXY_KEY:
     process.env.NOVA_OPENCLAW_PROXY_KEY || randomBytes(24).toString("hex"),
   NOVA_OPENCLAW_MODEL_ID: modelId,
+  // Custom agent (artifacts/agent/server.mjs) wiring. Runs alongside the
+  // api-server on a different loopback port. Disabled by default until
+  // we land the cutover; flip CUSTOM_AGENT_ENABLED=1 to boot it. The
+  // api-server routes to it via AGENT_BACKEND=custom|split:N|both.
+  CUSTOM_AGENT_ENABLED: process.env.CUSTOM_AGENT_ENABLED || "0",
+  CUSTOM_AGENT_HOST: process.env.CUSTOM_AGENT_HOST || "127.0.0.1",
+  CUSTOM_AGENT_PORT:
+    process.env.CUSTOM_AGENT_PORT || String(18790),
+  CUSTOM_AGENT_TOKEN:
+    process.env.CUSTOM_AGENT_TOKEN || gatewayToken,
+  CUSTOM_AGENT_URL:
+    process.env.CUSTOM_AGENT_URL ||
+    `http://127.0.0.1:${process.env.CUSTOM_AGENT_PORT || 18790}`,
+  CUSTOM_AGENT_UPSTREAM_BASE:
+    process.env.CUSTOM_AGENT_UPSTREAM_BASE || "https://api.moonshot.ai/v1",
+  CUSTOM_AGENT_MODEL: process.env.CUSTOM_AGENT_MODEL || "kimi-k2.6",
+  AGENT_BACKEND: process.env.AGENT_BACKEND || "openclaw",
 };
 
 const children = new Map();
@@ -158,6 +175,35 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       process.exit(signal === "SIGINT" ? 130 : 143);
     });
   });
+}
+
+async function waitForCustomAgent(child) {
+  const timeoutMs = positiveInt(process.env.CUSTOM_AGENT_STARTUP_TIMEOUT_MS, 15_000);
+  const deadline = Date.now() + timeoutMs;
+  const port = childEnv.CUSTOM_AGENT_PORT;
+  const url = `http://127.0.0.1:${port}/healthz`;
+
+  while (Date.now() < deadline) {
+    if (child.exitCode != null) {
+      throw new Error(`custom agent exited before readiness (code ${child.exitCode})`);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    timer.unref?.();
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (response.ok) {
+        const body = await response.json().catch(() => null);
+        if (body && body.backend === "custom-agent") return;
+      }
+    } catch {
+      // still booting
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`custom agent did not become ready within ${timeoutMs}ms`);
 }
 
 async function waitForGateway(child) {
@@ -248,6 +294,33 @@ async function main() {
   } else {
     console.log(
       "start-openclaw: social-media worker disabled (SOCIAL_MEDIA_WORKER_ENABLED=0)",
+    );
+  }
+
+  // Launch the custom agent (artifacts/agent/server.mjs). Disabled by
+  // default. Set CUSTOM_AGENT_ENABLED=1 to boot it. The api-server
+  // routes traffic here when AGENT_BACKEND=custom or AGENT_BACKEND is
+  // a split/percentage value. The token is shared with OpenClaw so a
+  // single secret can authenticate both during the transition window.
+  if (process.env.CUSTOM_AGENT_ENABLED === "1") {
+    console.log(
+      `start-openclaw: launching custom agent on loopback:${childEnv.CUSTOM_AGENT_PORT} (AGENT_BACKEND=${childEnv.AGENT_BACKEND})`,
+    );
+    const customAgent = launch("custom-agent", "node", [
+      "--enable-source-maps",
+      "./artifacts/agent/server.mjs",
+    ]);
+    // Wait for it to be reachable before we start serving traffic; if
+    // the binary is missing the child will exit fast and we log it.
+    try {
+      await waitForCustomAgent(customAgent);
+      console.log("start-openclaw: custom agent ready");
+    } catch (error) {
+      console.error("start-openclaw: custom agent failed to start:", error.message);
+    }
+  } else {
+    console.log(
+      "start-openclaw: custom agent disabled (CUSTOM_AGENT_ENABLED!=1)",
     );
   }
 

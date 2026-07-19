@@ -19,6 +19,7 @@ RUN pnpm install --frozen-lockfile --shamefully-hoist
 
 COPY lib/ ./lib/
 COPY artifacts/api-server/ ./artifacts/api-server/
+COPY artifacts/agent/ ./artifacts/agent/
 COPY artifacts/nova/ ./artifacts/nova/
 COPY scripts/ ./scripts/
 COPY skills/ ./skills/
@@ -51,6 +52,8 @@ RUN npm install -g "openclaw@${OPENCLAW_VERSION}" --omit=dev --no-audit --no-fun
     && openclaw --version
 
 COPY --from=builder /app/artifacts/api-server/dist ./dist
+# Custom agent runtime. Boots alongside the api-server when CUSTOM_AGENT_ENABLED=1.
+COPY --from=builder /app/artifacts/agent ./artifacts/agent
 # Preserve the existing public URL layout: /assets/*, not /public/assets/*.
 COPY --from=builder /app/artifacts/nova/index.html ./nova-static/index.html
 COPY --from=builder /app/artifacts/nova/skills.html ./nova-static/skills.html

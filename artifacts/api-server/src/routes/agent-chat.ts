@@ -34,6 +34,53 @@ const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
 // var if you need a different default for a specific deploy.
 const OPENCLAW_AGENT_MODEL = process.env.OPENCLAW_AGENT_MODEL || "kimi-k2.6";
 
+// Custom agent backend (artifacts/agent/server.mjs). Replaces the OpenClaw
+// gateway dependency for the main chat path. Same wire format, same
+// OpenAI-compatible surface, same TOOL_SYSTEM_PROMPT + CONNECTED_APP_RULES.
+//
+// Routing is controlled by AGENT_BACKEND:
+//   "openclaw"           → always use OpenClaw (legacy, default)
+//   "custom"             → always use the custom agent
+//   "split:<0..100>"     → percentage of NEW conversations routed to custom
+//   "both"               → round-robin / parity mode for transition windows
+//
+// Custom-agent URL/port/token come from CUSTOM_AGENT_URL / CUSTOM_AGENT_TOKEN
+// (default http://127.0.0.1:18790 with the shared OPENCLAW_GATEWAY_TOKEN so
+// the existing start-openclaw.mjs token reuse works).
+const AGENT_BACKEND = String(process.env.AGENT_BACKEND || "openclaw").toLowerCase();
+const CUSTOM_AGENT_URL = (
+  process.env.CUSTOM_AGENT_URL ||
+  `http://127.0.0.1:${process.env.CUSTOM_AGENT_PORT || 18790}`
+).replace(/\/$/, "");
+const CUSTOM_AGENT_TOKEN =
+  process.env.CUSTOM_AGENT_TOKEN || process.env.OPENCLAW_GATEWAY_TOKEN || "";
+
+function pickBackendForConversation(conversationKey: string): "openclaw" | "custom" {
+  // The conversation key is the per-tab (per-session) id. Use a stable
+  // hash so the same session always lands on the same backend — critical
+  // for the split mode so a single chat doesn't bounce between backends
+  // mid-conversation and produce inconsistent history.
+  if (AGENT_BACKEND === "openclaw") return "openclaw";
+  if (AGENT_BACKEND === "custom") return "custom";
+  if (AGENT_BACKEND === "both") {
+    // "both" = parity, alternate by conversation key parity
+    let h = 0;
+    for (let i = 0; i < conversationKey.length; i++) {
+      h = (h * 31 + conversationKey.charCodeAt(i)) >>> 0;
+    }
+    return h % 2 === 0 ? "custom" : "openclaw";
+  }
+  if (AGENT_BACKEND.startsWith("split:")) {
+    const pct = Math.max(0, Math.min(100, Number(AGENT_BACKEND.slice(6)) || 0));
+    let h = 0;
+    for (let i = 0; i < conversationKey.length; i++) {
+      h = (h * 31 + conversationKey.charCodeAt(i)) >>> 0;
+    }
+    return h % 100 < pct ? "custom" : "openclaw";
+  }
+  return "openclaw";
+}
+
 interface ConnectedAppIntent {
   app: string;
   toolkitHints: string[];
@@ -238,8 +285,17 @@ function extractDeltas(buffer: string): { text: string; rest: string } {
 }
 
 router.post("/agent/v1/chat/completions", async (req, res) => {
-  if (!OPENCLAW_GATEWAY_TOKEN) {
+  // Only enforce the openclaw token gate when at least one conversation
+  // could still be routed to the openclaw backend. If AGENT_BACKEND is
+  // "custom" 100% and CUSTOM_AGENT_TOKEN is set, we don't need the
+  // openclaw token to answer chats.
+  const needsOpenclawToken = AGENT_BACKEND !== "custom";
+  if (needsOpenclawToken && !OPENCLAW_GATEWAY_TOKEN) {
     res.status(503).json({ error: "OpenClaw Gateway token is not configured" });
+    return;
+  }
+  if (AGENT_BACKEND === "custom" && !CUSTOM_AGENT_TOKEN) {
+    res.status(503).json({ error: "Custom agent token is not configured" });
     return;
   }
 
@@ -340,16 +396,33 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     }
   });
 
+  // Pick the backend for this conversation. The decision is stable per
+  // session so a chat doesn't bounce between backends mid-turn. In split
+  // mode, the conversationKey hash decides which side handles the request.
+  const backend = pickBackendForConversation(conversationKey);
+  const upstreamUrl =
+    backend === "custom"
+      ? `${CUSTOM_AGENT_URL}/v1/chat/completions`
+      : `${OPENCLAW_GATEWAY_URL}/v1/chat/completions`;
+  const upstreamAuth =
+    backend === "custom" ? CUSTOM_AGENT_TOKEN : OPENCLAW_GATEWAY_TOKEN;
+  const upstreamHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: (req.headers.accept as string) ?? "text/event-stream, application/json",
+    Authorization: `Bearer ${upstreamAuth}`,
+  };
+  if (backend === "openclaw") {
+    upstreamHeaders["x-openclaw-session-key"] = `nova-chat-${conversationKey}`;
+    upstreamHeaders["x-openclaw-message-channel"] = "webchat";
+  } else {
+    upstreamHeaders["x-nova-agent-backend"] = "custom";
+    upstreamHeaders["x-nova-conversation-key"] = conversationKey;
+  }
+
   try {
-    const upstream = await fetch(`${OPENCLAW_GATEWAY_URL}/v1/chat/completions`, {
+    const upstream = await fetch(upstreamUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: req.headers.accept ?? "text/event-stream, application/json",
-        Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}`,
-        "x-openclaw-session-key": `nova-chat-${conversationKey}`,
-        "x-openclaw-message-channel": "webchat",
-      },
+      headers: upstreamHeaders,
       body: JSON.stringify(body),
       duplex: "half",
       // Abort the upstream call if the browser tab closes. `clientCloseController`

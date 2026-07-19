@@ -42,6 +42,30 @@ services:
       - key: NOVA_AGENT_CHAT_GATEWAY_URL
         value: ""
 
+      # ── Custom agent (artifacts/agent/server.mjs) ─────────────────────
+      # Phase 1: AGENT_BACKEND=openclaw (default; legacy path). To enable
+      # the custom agent in production, set:
+      #   CUSTOM_AGENT_ENABLED=1
+      #   AGENT_BACKEND=custom   (or split:N / both for transition)
+      # The token, port, and upstream base are read from the same env
+      # block; defaults are safe (loopback 18790, shares OpenClaw token).
+      - key: CUSTOM_AGENT_ENABLED
+        value: "0"
+      - key: CUSTOM_AGENT_HOST
+        value: "127.0.0.1"
+      - key: CUSTOM_AGENT_PORT
+        value: "18790"
+      - key: AGENT_BACKEND
+        value: "openclaw"
+      - key: CUSTOM_AGENT_UPSTREAM_BASE
+        value: "https://api.moonshot.ai/v1"
+      - key: CUSTOM_AGENT_MODEL
+        value: "kimi-k2.6"
+      - key: CUSTOM_AGENT_TOOL_TIMEOUT_MS
+        value: "60000"
+      - key: CUSTOM_AGENT_MAX_ITER
+        value: "8"
+
       # ── Secrets (values set via API / dashboard, never committed) ─────────
       - key: OPENAI_API_KEY
         type: SECRET
