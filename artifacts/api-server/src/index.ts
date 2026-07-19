@@ -5,31 +5,46 @@ import { startSocialCron } from "./social-cron";
 import { startAgentCron } from "./agent-cron";
 import { ensureSchema } from "./lib/db-migrate";
 
-const rawPort = process.env.PORT;
-if (!rawPort) throw new Error("PORT environment variable is required but was not provided.");
+const rawPort = process.env["PORT"];
+
+if (!rawPort) {
+  throw new Error(
+    "PORT environment variable is required but was not provided.",
+  );
+}
 
 const port = Number(rawPort);
-if (!Number.isFinite(port) || port <= 0) {
+
+if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// Complete the idempotent schema bootstrap before the server accepts traffic.
-// The previous fire-and-forget call contradicted this contract and allowed the
-// first workspace/social request to race missing-table creation.
+// Self-healing schema bootstrap. Complete it BEFORE listen() so the very first
+// request after a fresh DB cannot race a missing table. Failure remains visible
+// but does not prevent health diagnostics from starting.
 try {
   await ensureSchema();
-} catch (error) {
-  logger.error({ err: error }, "ensureSchema failed during boot");
+} catch (e) {
+  logger.error({ err: e }, "ensureSchema failed during boot");
 }
 
 app.listen(port, () => {
   logger.info({ port }, "Server listening");
+
+  // Scheduled social media posts run independently of browser sessions.
   startSocialCron(port);
+
+  // Janitor for stale persisted runs. Heavy execution belongs to the worker.
   startAgentCron(port);
 
+  // When the dedicated DB-backed worker is enabled, it is the sole owner of
+  // pending/running work-tree missions. This prevents startup reconciliation
+  // from racing the worker and executing the same durable mission twice through
+  // the shorter interactive OpenClaw path. API-only deployments can explicitly
+  // disable the worker and retain the legacy reconciliation fallback.
   if (process.env.WORK_TREE_WORKER_ENABLED === "0") {
-    void resumeOpenClawRuns().catch((resumeError) => {
-      logger.warn({ err: resumeError }, "OpenClaw run reconciliation skipped");
+    void resumeOpenClawRuns().catch((resumeErr) => {
+      logger.warn({ err: resumeErr }, "OpenClaw run reconciliation skipped");
     });
   } else {
     logger.info("Dedicated work-tree worker owns durable run reconciliation");
