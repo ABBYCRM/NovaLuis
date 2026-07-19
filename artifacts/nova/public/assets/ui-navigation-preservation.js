@@ -39,13 +39,19 @@
     new MutationObserver(exposeDeleteControls).observe(history, { childList: true, subtree: true });
   }
 
+  var currentScript = document.currentScript;
+  var versionQuery = '';
+  if (currentScript && currentScript.src) {
+    try { versionQuery = new URL(currentScript.src).search; } catch (_) {}
+  }
+
   [
     '/assets/continuous-voice-input.js',
     '/assets/durable-run-reconcile.js'
   ].forEach(function (src) {
     if (document.querySelector('script[src^="' + src + '"]')) return;
     var script = document.createElement('script');
-    script.src = src;
+    script.src = src + versionQuery;
     script.defer = true;
     document.head.appendChild(script);
   });
