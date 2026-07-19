@@ -258,16 +258,35 @@ router.get("/integrations/composio/health", async (_req, res) => {
         rec.status_reason || stateVal?.status_reason || "",
       );
       const isHealthy = status === "ACTIVE" || status === "CONNECTED";
-      // If a slug has multiple accounts, the MOST RECENT wins (Composio returns
-      // them ordered by created_at desc), so this loops in the right order.
-      if (toolkits[slug] && toolkits[slug].isHealthy) continue;
-      toolkits[slug] = {
-        status: status || "UNKNOWN",
-        statusReason,
-        id: typeof rec.id === "string" ? rec.id : null,
-        isHealthy,
-        toolkitName: typeof tk?.name === "string" ? tk.name : null,
-      };
+      const id = typeof rec.id === "string" ? rec.id : null;
+      // A slug is only healthy if EVERY account we see for it is healthy. The
+      // existence of any EXPIRED / FAILED / DISABLED account for the same
+      // slug means the user's OAuth grant has lapsed and the toolkit should
+      // be surfaced as needing a fresh reconnect. We pick the first non-
+      // healthy status to surface, falling back to the first healthy one.
+      const existing = toolkits[slug];
+      if (!existing) {
+        toolkits[slug] = {
+          status: status || "UNKNOWN",
+          statusReason,
+          id,
+          isHealthy,
+          toolkitName: typeof tk?.name === "string" ? tk.name : null,
+        };
+        continue;
+      }
+      // If we already have a non-healthy record, don't overwrite it.
+      if (!existing.isHealthy) continue;
+      // Existing is healthy but this new one is not — demote.
+      if (!isHealthy) {
+        toolkits[slug] = {
+          status: status || "UNKNOWN",
+          statusReason,
+          id,
+          isHealthy: false,
+          toolkitName: typeof tk?.name === "string" ? tk.name : null,
+        };
+      }
     }
 
     res.json({ configured: true, ready: true, toolkits });
