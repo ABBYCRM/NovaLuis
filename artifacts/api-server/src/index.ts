@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { resumeOpenClawRuns } from "./routes/work-tree";
 import { startSocialCron } from "./social-cron";
+import { startAgentCron } from "./agent-cron";
 import { ensureSchema } from "./lib/db-migrate";
 
 const rawPort = process.env["PORT"];
@@ -32,6 +33,12 @@ app.listen(port, () => {
 
   // Scheduled social media posts — runs inside this process, no separate worker needed.
   startSocialCron(port);
+
+  // In-process background kicker for the main chat runtime. Sweeps stale
+  // work-tree runs every 5 min so the work-tree worker (separate process)
+  // can re-pick them up. Keeps the main chat runtime healthy between user
+  // sessions — no user needs to be in the app for this to run.
+  startAgentCron(port);
 
   void resumeOpenClawRuns().catch((resumeErr) => {
     logger.warn({ err: resumeErr }, "OpenClaw run reconciliation skipped");

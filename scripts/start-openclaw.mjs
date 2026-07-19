@@ -207,6 +207,50 @@ async function main() {
     "./dist/index.mjs",
   ]);
 
+  // Launch the work-tree worker daemon. This is the long-running background
+  // process that picks up work_tree_runs queued by the api-server (via the
+  // /api/work-tree/runs endpoint) and drives them to completion through the
+  // OpenClaw gateway's ReAct tool loop. Without this daemon, work-tree
+  // runs only execute when the browser chat creates them — meaning a task
+  // queued via API while the user has the app closed would sit pending
+  // forever. The worker is a separate process; if it crashes the api
+  // stays up. Each crash restarts cleanly because all state is in the DB.
+  //
+  // The worker requires the SAME DATABASE_URL the api-server uses; it
+  // queries work_tree_runs directly. The advisory lock in
+  // scripts/work-tree-worker.mjs prevents duplicate execution if more
+  // than one container replica ever runs.
+  if (process.env.WORK_TREE_WORKER_ENABLED !== "0" && process.env.DATABASE_URL) {
+    console.log("start-openclaw: launching work-tree worker daemon");
+    launch("work-tree-worker", "node", [
+      "--enable-source-maps",
+      "./scripts/work-tree-worker.mjs",
+    ]);
+  } else {
+    console.log(
+      "start-openclaw: work-tree worker disabled (WORK_TREE_WORKER_ENABLED=0 or no DATABASE_URL)",
+    );
+  }
+
+  // Launch the social-media worker daemon. This polls /api/social/due
+  // every 60s and publishes due posts via Composio. The in-process
+  // social-cron.ts inside nova-api already does this for the SAME
+  // loopback api; we run the worker as a sibling process too so social
+  // posts still fire even if the api-server's main thread is busy or
+  // a future deployment splits them into separate containers. The
+  // worker is idempotent — the in-process cron also writes status
+  // updates, so the second writer just hits the same DB rows.
+  if (process.env.SOCIAL_MEDIA_WORKER_ENABLED !== "0") {
+    console.log("start-openclaw: launching social-media worker daemon");
+    launch("social-media-worker", "node", [
+      "./scripts/social-media-worker.mjs",
+    ]);
+  } else {
+    console.log(
+      "start-openclaw: social-media worker disabled (SOCIAL_MEDIA_WORKER_ENABLED=0)",
+    );
+  }
+
   const exited = await Promise.race([
     closePromise("openclaw-gateway", gateway),
     closePromise("nova-api", api),

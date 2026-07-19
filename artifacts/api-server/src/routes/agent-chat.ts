@@ -274,6 +274,21 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     }
   }
 
+  // Track whether the client (browser tab) is still connected. If the user
+  // closes the tab or navigates away, `req.on("close")` fires and we abort
+  // the upstream OpenClaw fetch so the model stops generating. Without
+  // this, every tab close leaves the model running to completion in the
+  // background and bills tokens for a response nobody is listening for.
+  // The OpenClaw-side abort also stops the underlying tool loop cleanly.
+  let clientClosed = false;
+  const clientCloseController = new AbortController();
+  req.on("close", () => {
+    if (!res.writableEnded) {
+      clientClosed = true;
+      clientCloseController.abort();
+    }
+  });
+
   try {
     const upstream = await fetch(`${OPENCLAW_GATEWAY_URL}/v1/chat/completions`, {
       method: "POST",
@@ -286,6 +301,12 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
       },
       body: JSON.stringify(body),
       duplex: "half",
+      // Abort the upstream call if the browser tab closes. `clientCloseController`
+      // is signalled by the req.on("close") handler above. Combined with the
+      // OpenClaw-side abort this stops the model + tool loop immediately when
+      // the user closes the app, so we never bill tokens for a response that
+      // nobody is listening for.
+      signal: clientCloseController.signal,
     });
 
     res.status(upstream.status);
@@ -333,6 +354,15 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     const decoder = new TextDecoder();
     const reader = upstream.body.getReader();
     for (;;) {
+      // If the browser tab closed mid-stream, stop the upstream read
+      // immediately. The signal propagates into the upstream fetch and
+      // cancels the model + tool loop on the gateway side too. We still
+      // end `res` so Express doesn't log a half-written response.
+      if (clientClosed) {
+        try { await reader.cancel(); } catch (_) { /* already closed */ }
+        req.log.info({ conversationKey }, "agent chat: client closed, upstream cancelled");
+        break;
+      }
       const { done, value } = await reader.read();
       if (done) break;
       if (upstream.ok && value) {
@@ -341,10 +371,27 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
         assistantText += parsed.text;
         sseBuffer = parsed.rest;
       }
-      const writable = res.write(value);
-      if (!writable) await new Promise<void>((resolve) => res.once("drain", resolve));
+      if (!clientClosed) {
+        const writable = res.write(value);
+        if (!writable) await new Promise<void>((resolve) => res.once("drain", resolve));
+      }
     }
     res.end();
+
+    // If the user closed the tab mid-stream, persist whatever partial
+    // assistant text the model had already produced so reloading the app
+    // (or opening a different tab) shows the conversation in the
+    // history. Without this the user loses everything they typed in that
+    // session because recordTurn was previously only called on a
+    // successful end-of-stream.
+    if (clientClosed && assistantText.trim()) {
+      void recordTurn({
+        conversationKey,
+        userText,
+        assistantText: assistantText + "\n\n_⏹ stopped when tab closed_",
+        model: OPENCLAW_AGENT_MODEL,
+      }).catch((error) => req.log.warn({ err: error }, "agent chat recordTurn after client close failed"));
+    }
 
     if (upstream.ok && assistantText.trim()) {
       void recordTurn({
@@ -363,6 +410,13 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
       });
     } else {
       res.end();
+    }
+  } finally {
+    // Make sure we always release the clientCloseController so the GC
+    // can collect the listener; even on success the req.on("close")
+    // registration stays live until the request object is freed.
+    if (!clientClosed && res.writableEnded) {
+      clientCloseController.abort();
     }
   }
 });
