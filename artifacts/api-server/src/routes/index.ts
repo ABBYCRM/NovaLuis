@@ -7,6 +7,7 @@ import integrationsRouter from "./integrations";
 import composioRouter from "./composio";
 import githubRouter from "./github";
 import agentChatRouter from "./agent-chat";
+import durableAgentChatRouter from "./durable-agent-chat";
 import knowledgeRouter from "./knowledge";
 import vectorMemoryRouter from "./vector-memory";
 import openaiProxyRouter from "./openai-proxy";
@@ -15,6 +16,7 @@ import skillsRouter from "./skills";
 import workspacesRouter from "./workspaces";
 import mediaRouter from "./media";
 import socialMediaRouter from "./social-media";
+import socialRuntimeHealthRouter from "./social-runtime-health";
 import instagramCampaignGuardRouter from "./instagram-campaign-guard";
 import campaignsRouter from "./campaigns";
 import favoritesRouter from "./favorites";
@@ -48,6 +50,7 @@ router.use(workspacesRouter);
 router.use(mediaRouter);
 // The hardened Instagram publisher is mounted directly in app.ts before this
 // aggregate router so the legacy social publisher cannot intercept the route.
+router.use(socialRuntimeHealthRouter);
 router.use(socialMediaRouter);
 // Normalize image-only Instagram campaign formats before the legacy campaign
 // implementation creates or executes them.
@@ -59,9 +62,12 @@ router.use(renderScenariosRouter);
 router.use(githubScenariosRouter);
 router.use(composioScenariosRouter);
 router.use(firecrawlSteelScenariosRouter);
-// Browser chat uses the OpenClaw agent loop. OpenClaw's own model provider still
-// calls /v1/* below, keeping the agent endpoint and raw inference endpoint separate.
+// Browser chat uses the OpenClaw agent loop. Durable repository/debug missions
+// are intercepted first and persisted to work_tree_runs so closing the tab or
+// installed PWA cannot cancel them. Ordinary conversation continues to stream
+// through the interactive OpenClaw route below.
 router.use(sessionsRouter);
+router.use(durableAgentChatRouter);
 router.use(agentChatRouter);
 router.use(openaiProxyRouter);
 router.use("/skills", skillsRouter);
