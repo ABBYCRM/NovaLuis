@@ -14,6 +14,11 @@ const router = Router();
 const OPENAI_BASE = "https://api.openai.com";
 const OPENAI_KEY = process.env.OPENAI_API_KEY ?? "";
 
+const NVIDIA_BASE = (
+  process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com"
+).replace(/\/$/, "");
+const NVIDIA_KEY = process.env.NVIDIA_API_KEY ?? "";
+
 // Bitdeer: OpenAI-compatible endpoint that hosts OSS + proprietary models.
 const BITDEER_BASE = "https://api-inference.bitdeer.ai";
 const BITDEER_KEY = process.env.BITDEER_API_KEY ?? "";
@@ -28,32 +33,69 @@ const KIMI_KEY = process.env.KIMI_API_KEY ?? "";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 const GEMINI_KEY = process.env.GEMINI_API_KEY ?? "";
 
-function pickProvider(model: string): {
+interface ProviderSelection {
+  name: string;
   url: (path: string) => string;
   key: string;
-} {
-  // gemini-* → Google's OpenAI-compatible shim (strip leading /v1).
-  if (model.startsWith("gemini-") && GEMINI_KEY) {
+  requiredEnv: string;
+}
+
+function pickProvider(model: string): ProviderSelection {
+  // Poolside Laguna is served by NVIDIA's OpenAI-compatible NIM endpoint.
+  // Keep this selection even when the key is missing so the request fails with
+  // an exact NVIDIA_API_KEY configuration error instead of being misrouted.
+  if (model.startsWith("poolside/")) {
     return {
-      url: (path) => `${GEMINI_BASE}${path.replace(/^\/v1/, "")}`,
-      key: GEMINI_KEY,
+      name: "nvidia",
+      url: (path) => `${NVIDIA_BASE}${path}`,
+      key: NVIDIA_KEY,
+      requiredEnv: "NVIDIA_API_KEY",
     };
   }
-  // gpt-* / o1* / o3* / o4* → OpenAI directly.
-  if ((model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) && OPENAI_KEY) {
-    return { url: (path) => `${OPENAI_BASE}${path}`, key: OPENAI_KEY };
+  if (model.startsWith("gemini-") && GEMINI_KEY) {
+    return {
+      name: "gemini",
+      url: (path) => `${GEMINI_BASE}${path.replace(/^\/v1/, "")}`,
+      key: GEMINI_KEY,
+      requiredEnv: "GEMINI_API_KEY",
+    };
   }
-  // kimi-* → Moonshot official API (native Moonshot model names e.g. kimi-k2).
+  if (
+    (model.startsWith("gpt-") ||
+      model.startsWith("o1") ||
+      model.startsWith("o3") ||
+      model.startsWith("o4")) &&
+    OPENAI_KEY
+  ) {
+    return {
+      name: "openai",
+      url: (path) => `${OPENAI_BASE}${path}`,
+      key: OPENAI_KEY,
+      requiredEnv: "OPENAI_API_KEY",
+    };
+  }
   if (model.startsWith("kimi-") && KIMI_KEY) {
-    return { url: (path) => `${KIMI_BASE}${path}`, key: KIMI_KEY };
+    return {
+      name: "kimi",
+      url: (path) => `${KIMI_BASE}${path}`,
+      key: KIMI_KEY,
+      requiredEnv: "KIMI_API_KEY",
+    };
   }
-  // moonshotai/* and everything else (HuggingFace-style org/model names, deepseek-*,
-  // qwen-*, mistral-*, zai-org/*, etc.) → Bitdeer inference cluster.
   if (BITDEER_KEY) {
-    return { url: (path) => `${BITDEER_BASE}${path}`, key: BITDEER_KEY };
+    return {
+      name: "bitdeer",
+      url: (path) => `${BITDEER_BASE}${path}`,
+      key: BITDEER_KEY,
+      requiredEnv: "BITDEER_API_KEY",
+    };
   }
-  // Last resort: OpenAI fallback.
-  return { url: (path) => `${OPENAI_BASE}${path}`, key: OPENAI_KEY };
+  return {
+    name: "openai",
+    url: (path) => `${OPENAI_BASE}${path}`,
+    key: OPENAI_KEY,
+    requiredEnv: "OPENAI_API_KEY",
+  };
 }
 
 const MEMORY_HEADER =
@@ -65,7 +107,6 @@ const KNOWLEDGE_HEADER =
   "leads and transcripts. Ground your answer in these when applicable; cite naturally, " +
   "do not mention that they were retrieved.\n";
 
-// Pull assistant text out of a streamed SSE chunk so we can capture the reply.
 function extractDeltas(buffer: string): { text: string; rest: string } {
   let text = "";
   const parts = buffer.split("\n");
@@ -80,7 +121,7 @@ function extractDeltas(buffer: string): { text: string; rest: string } {
       const delta = json?.choices?.[0]?.delta?.content;
       if (typeof delta === "string") text += delta;
     } catch {
-      // partial JSON across chunks — ignore, handled by buffering
+      // Partial JSON across chunks is retained in the caller buffer.
     }
   }
   return { text, rest };
@@ -151,10 +192,6 @@ async function proxyBrowserChatToAgent(
   }
 }
 
-// Streaming proxy — mounted on the router at /api, so req.path within this router
-// is e.g. /v1/chat/completions or /v1/audio/speech. Browser chat is deliberately
-// rerouted into the OpenClaw agent endpoint. Only OpenClaw's authenticated internal
-// model-provider call is allowed to continue to raw inference, preventing recursion.
 router.all("/v1/*splat", async (req, res) => {
   const qs = req.url.slice(req.path.length);
 
@@ -175,57 +212,52 @@ router.all("/v1/*splat", async (req, res) => {
     return;
   }
 
-  // When the internal OpenClaw agent calls back with its configured model,
-  // override it with the user's live model preference so the selection in
-  // Settings takes effect immediately without restarting the gateway.
   if (isChat && isInternalOpenClaw) {
     req.body.model = getModelPreference().model;
   }
 
-  // ── Model-specific agentic tuning ─────────────────────────────────────────
-  // Look up the registered tuning for the requested model and fill in any
-  // missing fields. This guarantees every chat request reaches the upstream
-  // with the right sampler, output cap, and thinking-mode setting — even
-  // if the caller (browser, openclaw gateway, work-tree worker) didn't set
-  // them. The caller can still OVERRIDE any of these by passing them
-  // explicitly; we only fill in the gaps.
   if (isChat) {
     const chatBody = req.body as Record<string, unknown>;
     const chatModel = String(chatBody.model ?? "");
     const tuning = getModelTuning(chatModel);
     if (tuning) {
-      // 1) Output cap — models default to a tiny cap (e.g. Moonshot uses
-      //    1024 when max_tokens is absent) which truncates long responses.
       if (chatBody.max_tokens == null && chatBody.max_completion_tokens == null) {
         chatBody.max_tokens = tuning.maxTokens;
       }
-      // 2) Sampler defaults.
       if (chatBody.temperature == null) chatBody.temperature = tuning.temperature;
       if (chatBody.top_p == null) chatBody.top_p = tuning.topP;
-      // 3) Thinking mode — only models that support it (kimi-k2.6) need
-      //    extra_body.thinking. Models without it (gpt-4o) skip this.
       if (tuning.thinking.type !== "disabled") {
-        const extra = (chatBody.extra_body && typeof chatBody.extra_body === "object"
-          ? chatBody.extra_body as Record<string, unknown>
-          : {});
+        const extra =
+          chatBody.extra_body && typeof chatBody.extra_body === "object"
+            ? (chatBody.extra_body as Record<string, unknown>)
+            : {};
         if (extra.thinking == null) {
-          // keep=null means: reason, but don't return the reasoning trace
-          // in the final response (saves tokens, faster for the user).
-          // Set keep="all" if the caller wants the trace back.
-          extra.thinking = { type: tuning.thinking.type, keep: tuning.thinking.keep };
+          extra.thinking = {
+            type: tuning.thinking.type,
+            keep: tuning.thinking.keep,
+          };
           chatBody.extra_body = extra;
         }
       }
     }
   }
 
-  // Memory injection + capture setup for raw/internal inference calls.
   let convKey: string | null = null;
   let userText = "";
   const model: string = isChat ? String(req.body.model ?? "") : "";
   const provider = pickProvider(model);
   const upstreamUrl = `${provider.url(req.path)}${qs}`;
   const API_KEY = provider.key;
+
+  if (!API_KEY) {
+    res.status(503).json({
+      error: `${provider.name} model provider is not configured`,
+      requiredEnv: provider.requiredEnv,
+      model: model || null,
+    });
+    return;
+  }
+
   if (isChat) {
     const messages = req.body.messages as ChatMessage[];
     convKey = conversationKeyFor(messages);
@@ -265,7 +297,7 @@ router.all("/v1/*splat", async (req, res) => {
   const proxyAbort = new AbortController();
   const proxyTimeout = setTimeout(
     () => proxyAbort.abort(),
-    Number(process.env.OPENAI_PROXY_TIMEOUT_MS) || 15 * 60 * 1000, // default 15 min
+    Number(process.env.OPENAI_PROXY_TIMEOUT_MS) || 15 * 60 * 1000,
   );
 
   try {
@@ -290,7 +322,6 @@ router.all("/v1/*splat", async (req, res) => {
       "upgrade",
       "proxy-authenticate",
       "proxy-authorization",
-      // fetch() auto-decompresses — strip these so clients don't double-decompress
       "content-encoding",
       "content-length",
     ]);
@@ -320,7 +351,7 @@ router.all("/v1/*splat", async (req, res) => {
           sseBuffer = rest;
         }
         const ok = res.write(value);
-        if (!ok) await new Promise<void>((r) => res.once("drain", r));
+        if (!ok) await new Promise<void>((resolve) => res.once("drain", resolve));
       }
       clearTimeout(proxyTimeout);
       res.end();
@@ -342,7 +373,13 @@ router.all("/v1/*splat", async (req, res) => {
   } catch (e) {
     clearTimeout(proxyTimeout);
     req.log.error({ err: e }, "openai-proxy fetch error");
-    if (!res.headersSent) res.status(502).json({ error: "upstream unreachable" });
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: `${provider.name} upstream unreachable`,
+        details: e instanceof Error ? e.message : String(e),
+        model: model || null,
+      });
+    }
   }
 });
 
