@@ -9,7 +9,7 @@
 #   2. Start the API server in the background
 #   3. Run the api-e2e.test.ts suite against the live server
 #   4. Run real Chromium chat + mobile UI preservation tests
-#   5. Upload mobile screenshots as review evidence
+#   5. Upload browser logs and mobile screenshots as review evidence
 ##############################################################################
 name: Playwright E2E
 
@@ -86,19 +86,23 @@ jobs:
           "$CHROME" --version
 
       - name: Run Nova UI browser regression tests
+        shell: bash
         run: |
+          mkdir -p artifacts/nova/test-results/ui-preservation
+          set -o pipefail
           pnpm --filter @workspace/nova exec vitest run \
             test/chat-ui-smoke.test.ts \
             test/ui-preservation.test.ts \
-            --reporter=verbose
+            --reporter=verbose \
+            2>&1 | tee artifacts/nova/test-results/ui-preservation/vitest.log
 
       - name: Upload mobile UI proof
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nova-mobile-ui-proof
-          path: artifacts/nova/test-results/ui-preservation/*.png
-          if-no-files-found: warn
+          path: artifacts/nova/test-results/ui-preservation/
+          if-no-files-found: error
           retention-days: 14
 
       - name: Stop API server
