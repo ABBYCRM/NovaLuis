@@ -49,8 +49,14 @@ jobs:
       - name: Verify exact DigitalOcean revision, API, PWA, and mobile assets
         run: node scripts/verify-production-runtime.mjs
 
-      - name: Verify repaired regression boundaries
-        run: node scripts/verify-regression-runtime.mjs
+      - name: Verify live operator session and workspace challenge
+        run: node scripts/verify-regression-runtime.mjs operator-session
+
+      - name: Verify live auth and thinking-cube assets
+        run: node scripts/verify-regression-runtime.mjs browser-assets
+
+      - name: Verify durable, startup, and social source contracts
+        run: node scripts/verify-regression-runtime.mjs source-contracts
 
       - name: Mark production verification success
         if: success()
