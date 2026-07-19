@@ -421,7 +421,9 @@ async function runToolLoop({
     );
     if (!upstream.ok) {
       const errText = await upstream.text();
-      throw new Error(`upstream ${upstream.status}: ${errText.slice(0, 500)}`);
+      throw new Error(
+        `upstream ${upstreamConfig.name} ${upstream.status} at ${upstreamConfig.base}/chat/completions model=${model}: ${errText.slice(0, 500)}`,
+      );
     }
     const data = await upstream.json();
     const choice = data.choices?.[0];
