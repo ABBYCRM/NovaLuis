@@ -1,89 +1,166 @@
-/**
- * /api/skills — Skills catalog API for Nova-Aura-Tools.
- * Mounted at /api/skills via the workspace index.ts mount point.
- */
 import { Router } from "express";
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 
 const router = Router();
-
-// Skills dir is at repo root (next to package.json)
-const SKILLS_ROOT = path.resolve(process.cwd(), "skills");
+const MAX_SKILL_DEPTH = 6;
+const MAX_CONTENT_CHARS = 24_000;
 
 interface SkillMeta {
   name: string;
   description: string;
   tags: string[];
   content: string;
+  source: "workspace" | "catalog";
+  relativePath: string;
 }
 
-function getSkillMeta(name: string): SkillMeta {
-  // Prevent path traversal: resolve and confirm it stays inside SKILLS_ROOT.
-  const skillDir = path.resolve(SKILLS_ROOT, name);
-  if (!skillDir.startsWith(SKILLS_ROOT + path.sep) && skillDir !== SKILLS_ROOT) {
-    return { name, description: name, tags: [], content: "" };
-  }
-  const skillMd = path.join(skillDir, "SKILL.md");
-  const composioMd = path.join(SKILLS_ROOT, `${name}.md`);
-
-  const readmePath = fs.existsSync(skillMd)
-    ? skillMd
-    : fs.existsSync(composioMd) ? composioMd : null;
-
-  if (readmePath) {
-    const content = fs.readFileSync(readmePath, "utf-8").slice(0, 8000);
-    const firstLine = content.split("\n").find((l) => l.trim().startsWith("#"));
-    const description = firstLine?.replace(/^#+\s*/, "").trim() || name;
-    const tagMatch = content.match(/<!--\s*tags:(.*?)\s*-->/i);
-    const tags = tagMatch ? tagMatch[1].split(",").map((t) => t.trim()).filter(Boolean) : [];
-    return { name, description, tags, content };
-  }
-
-  return { name, description: name, tags: [], content: "" };
+interface SkillRoot {
+  source: SkillMeta["source"];
+  root: string;
 }
 
-// GET /api/skills — list all skills
-router.get("/", (_req, res) => {
-  if (!fs.existsSync(SKILLS_ROOT)) {
-    res.json({ count: 0, skills: [] });
-    return;
-  }
+// Workspace skills have the same precedence used by OpenClaw. The legacy root
+// catalog remains supported for existing UI-only skills and indexes.
+const SKILL_ROOTS: SkillRoot[] = [
+  {
+    source: "workspace",
+    root: path.resolve(process.cwd(), "openclaw", "workspace", "skills"),
+  },
+  {
+    source: "catalog",
+    root: path.resolve(process.cwd(), "skills"),
+  },
+];
 
-  let names: string[] = [];
+function withinRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function frontmatterValue(content: string, key: string): string {
+  const match = content.match(new RegExp(`^${key}:\\s*(.+)$`, "mi"));
+  if (!match) return "";
+  return match[1]!.trim().replace(/^['"]|['"]$/g, "");
+}
+
+function skillFromFile(root: SkillRoot, filePath: string): SkillMeta | null {
+  const resolved = path.resolve(filePath);
+  if (!withinRoot(root.root, resolved)) return null;
+
+  let content = "";
   try {
-    names = fs.readdirSync(SKILLS_ROOT).filter((name) => {
-      try {
-        const stat = fs.statSync(path.join(SKILLS_ROOT, name));
-        if (stat.isDirectory()) {
-          return fs.existsSync(path.join(SKILLS_ROOT, name, "SKILL.md"));
-        }
-        return name.endsWith("-catalog.md") || name.endsWith("-index.md");
-      } catch {
-        return false;
-      }
-    });
+    content = fs.readFileSync(resolved, "utf8").slice(0, MAX_CONTENT_CHARS);
   } catch {
-    res.json({ count: 0, skills: [] });
-    return;
+    return null;
   }
 
-  const skills = names.map((name) => {
-    const meta = getSkillMeta(name);
-    return { name, description: meta.description, tags: meta.tags };
-  });
+  const directoryName = path.basename(path.dirname(resolved));
+  const fileName = path.basename(resolved, path.extname(resolved));
+  const name = frontmatterValue(content, "name") ||
+    (path.basename(resolved) === "SKILL.md" ? directoryName : fileName);
+  if (!/^[a-z0-9][a-z0-9-]{0,79}$/i.test(name)) return null;
 
-  res.json({ count: skills.length, skills });
+  const firstHeading = content
+    .split("\n")
+    .find((line) => line.trim().startsWith("#"))
+    ?.replace(/^#+\s*/, "")
+    .trim();
+  const description = frontmatterValue(content, "description") || firstHeading || name;
+  const tagMatch = content.match(/<!--\s*tags:(.*?)\s*-->/i);
+  const tags = tagMatch
+    ? tagMatch[1]!.split(",").map((tag) => tag.trim()).filter(Boolean)
+    : [];
+
+  return {
+    name,
+    description,
+    tags,
+    content,
+    source: root.source,
+    relativePath: path.relative(root.root, resolved).replaceAll(path.sep, "/"),
+  };
+}
+
+function discoverRoot(root: SkillRoot): SkillMeta[] {
+  if (!fs.existsSync(root.root)) return [];
+  const discovered: SkillMeta[] = [];
+
+  const walk = (directory: string, depth: number): void => {
+    if (depth > MAX_SKILL_DEPTH || !withinRoot(root.root, directory)) return;
+
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const skillFile = entries.find((entry) => entry.isFile() && entry.name === "SKILL.md");
+    if (skillFile) {
+      const meta = skillFromFile(root, path.join(directory, skillFile.name));
+      if (meta) discovered.push(meta);
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath, depth + 1);
+      } else if (
+        depth === 0 &&
+        entry.isFile() &&
+        (entry.name.endsWith("-catalog.md") || entry.name.endsWith("-index.md"))
+      ) {
+        const meta = skillFromFile(root, fullPath);
+        if (meta) discovered.push(meta);
+      }
+    }
+  };
+
+  walk(root.root, 0);
+  return discovered;
+}
+
+function discoverSkills(): SkillMeta[] {
+  const byName = new Map<string, SkillMeta>();
+  // Roots are already ordered by precedence. First definition wins.
+  for (const root of SKILL_ROOTS) {
+    for (const skill of discoverRoot(root)) {
+      if (!byName.has(skill.name)) byName.set(skill.name, skill);
+    }
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+router.get("/", (_req, res) => {
+  const skills = discoverSkills();
+  res.json({
+    count: skills.length,
+    skills: skills.map(({ name, description, tags, source, relativePath }) => ({
+      name,
+      description,
+      tags,
+      source,
+      relativePath,
+    })),
+  });
 });
 
-// GET /api/skills/:name — skill detail
 router.get("/:name", (req, res) => {
-  const meta = getSkillMeta(req.params.name);
-  if (!meta.content) {
-    res.status(404).json({ error: `Skill '${req.params.name}' not found` });
+  const requested = String(req.params.name || "").trim();
+  if (!/^[a-z0-9][a-z0-9-]{0,79}$/i.test(requested)) {
+    res.status(400).json({ error: "invalid skill name" });
     return;
   }
-  res.json(meta);
+
+  const skill = discoverSkills().find((item) => item.name === requested);
+  if (!skill) {
+    res.status(404).json({ error: `Skill '${requested}' not found` });
+    return;
+  }
+  res.json(skill);
 });
 
 export default router;
