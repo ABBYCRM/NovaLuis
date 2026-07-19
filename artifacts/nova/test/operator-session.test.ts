@@ -72,6 +72,24 @@ describe("operator workspace session", () => {
     expect(protectedResponse.state.body).toBeNull();
   });
 
+  it("preserves token query authentication for existing image elements", async () => {
+    const auth = await import("../../api-server/src/lib/api-auth");
+    const next = vi.fn();
+    const { response, state } = responseDouble();
+
+    auth.requireApiAuth(
+      {
+        headers: {},
+        query: { token: "test-server-token" },
+      } as never,
+      response as never,
+      next,
+    );
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(state.body).toBeNull();
+  });
+
   it("rejects a wrong PIN without creating a session", async () => {
     const session = await import("../../api-server/src/lib/operator-session");
     const { response, state } = responseDouble();
