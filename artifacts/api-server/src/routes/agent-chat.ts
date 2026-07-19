@@ -405,14 +405,25 @@ router.post("/agent/v1/chat/completions", async (req, res) => {
     backend === "custom"
       ? `${CUSTOM_AGENT_URL}/v1/chat/completions`
       : `${OPENCLAW_GATEWAY_URL}/v1/chat/completions`;
-  // When routing to the custom agent, override the model id to the
-  // CUSTOM_AGENT_MODEL. The custom agent's upstream may be api.openai.com
-  // (not api.moonshot.ai), and OpenAI rejects model ids it doesn't
-  // recognize. OpenClaw accepts kimi-k2.6 natively so we leave that path
-  // alone.
+  // When routing to the custom agent, conditionally rewrite the model
+  // id. The browser chat UI historically sent "kimi-k2.6" or
+  // "openclaw/default" because OpenClaw accepted those. The custom
+  // agent's upstream may be api.openai.com (which rejects kimi-*) so
+  // those two model ids need to be rewritten to CUSTOM_AGENT_MODEL.
+  // Any other model id (e.g. "gpt-4o-mini", "z-ai/glm-5.2",
+  // "deepseek-ai/deepseek-v4-pro") is passed through unchanged so the
+  // custom agent's upstream router can pick the right provider.
   if (backend === "custom") {
     const customModel = process.env.CUSTOM_AGENT_MODEL || DEFAULT_CUSTOM_AGENT_MODEL;
-    body = { ...body, model: customModel };
+    const incomingModel = String(body.model || "").toLowerCase();
+    if (
+      !incomingModel ||
+      incomingModel === "openclaw/default" ||
+      incomingModel.startsWith("kimi") ||
+      incomingModel.startsWith("moonshot")
+    ) {
+      body = { ...body, model: customModel };
+    }
   }
   const upstreamAuth =
     backend === "custom" ? CUSTOM_AGENT_TOKEN : OPENCLAW_GATEWAY_TOKEN;
