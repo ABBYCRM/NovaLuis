@@ -145,8 +145,6 @@ jobs:
           set -euo pipefail
           docker run --detach --name nova-composio-auth \
             --add-host=host.docker.internal:host-gateway \
-            -e SESSION_SECRET=ci-session-secret \
-            -e NOVA_WORK_TREE_PIN=22 \
             -e COMPOSIO_API_KEY=oak_ci_org \
             -e COMPOSIO_BASE_URL=http://host.docker.internal:19090/api/v3.1 \
             -e NOVA_AGENT_CHAT_GATEWAY_URL=http://host.docker.internal:19091 \
@@ -158,12 +156,13 @@ jobs:
             if curl --fail --silent http://127.0.0.1:18082/api/healthz >/tmp/health.json; then break; fi
             sleep 1
           done
-          curl --fail --silent --cookie-jar /tmp/cookie.txt \
-            -H 'Content-Type: application/json' -d '{"pin":"22"}' \
-            http://127.0.0.1:18082/api/work-tree/unlock >/tmp/unlock.json
-          curl --fail --silent --cookie /tmp/cookie.txt \
+
+          # The legacy PIN-cookie gate was removed from the active runtime.
+          # Exercise the current routes directly; the test remains deterministic
+          # because every upstream Composio/OpenClaw interaction is local and fake.
+          curl --fail --silent \
             http://127.0.0.1:18082/api/integrations/composio/status >/tmp/composio-status.json
-          curl --fail --silent --cookie /tmp/cookie.txt \
+          curl --fail --silent \
             -H 'Content-Type: application/json' \
             -d '{"model":"nova","stream":false,"messages":[{"role":"user","content":"how many groups am i in in microsoft teams?"}]}' \
             http://127.0.0.1:18082/api/agent/v1/chat/completions >/tmp/teams-chat.json
