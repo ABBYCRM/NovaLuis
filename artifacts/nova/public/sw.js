@@ -13,11 +13,15 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(APP_SHELL);
+    // Seed the latest HTML immediately. Without this, a newly installed PWA
+    // had no navigation fallback until the user completed a second page load.
+    const shell = await fetch('/');
+    if (shell.ok) await cache.put(NAVIGATION_FALLBACK, shell.clone());
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -34,43 +38,31 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET' || request.url.includes('/api/')) return;
 
-  // Network-first navigation keeps every deploy fresh. Each successful page
-  // response replaces the synthetic fallback entry, so an installed PWA can
-  // still reopen offline without ever being pinned to an old shell forever.
   if (request.mode === 'navigate' || request.url.endsWith('/') || request.url.endsWith('/index.html')) {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            event.waitUntil(
-              caches.open(CACHE_NAME).then((cache) => cache.put(NAVIGATION_FALLBACK, copy))
-            );
-          }
-          return response;
-        })
-        .catch(async () => {
-          const cached = await caches.match(NAVIGATION_FALLBACK);
-          return cached || Response.error();
-        })
-    );
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        if (response.ok) {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(NAVIGATION_FALLBACK, response.clone());
+        }
+        return response;
+      } catch (_) {
+        const cached = await caches.match(NAVIGATION_FALLBACK);
+        return cached || Response.error();
+      }
+    })());
     return;
   }
 
-  // Versioned assets are cache-first. Only successful responses are stored so
-  // a transient 404/500 can never poison an installed user's cache.
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          event.waitUntil(
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
-          );
-        }
-        return response;
-      });
-    })
-  );
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  })());
 });
