@@ -65,9 +65,12 @@ const UPSTREAM_BASE =
   "https://api.moonshot.ai/v1";
 const UPSTREAM_API_KEY =
   process.env.CUSTOM_AGENT_UPSTREAM_KEY ||
-  process.env.OPENAI_API_KEY ||
-  // Fall through to the project's OPENAI key — moonshot accepts the
-  // same key shape via Helicone. api-server wires the right value in.
+  // The project ships a dedicated KIMI_API_KEY in the DO env for the
+  // moonshot/kimi API. Prefer it over a generic OPENAI_API_KEY because
+  // moonshot's auth scheme is separate from OpenAI's.
+  process.env.KIMI_API_KEY ||
+  // Fallback: an OpenAI key works if the upstream is api.openai.com or
+  // if a provider accepts the same key shape via a proxy like Helicone.
   process.env.OPENAI_API_KEY ||
   "";
 
