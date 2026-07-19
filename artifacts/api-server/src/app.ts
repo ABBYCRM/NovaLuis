@@ -136,13 +136,34 @@ if (process.env["NODE_ENV"] === "production") {
     const renderIndexHtml = (): string => {
       if (indexHtmlCache != null) return indexHtmlCache;
       const raw = fs.readFileSync(indexHtml, "utf8");
+
+      // UI preservation boundary — keep the large, handwritten index.html as
+      // the visual/behavioral source of truth. Confirmed compatibility fixes are
+      // loaded as isolated post-styles/post-scripts, after the legacy inline UI,
+      // so they cannot replace chat handlers, API routes, persistence contracts,
+      // or workspace behavior. The guards make this idempotent if the assets are
+      // ever linked directly in index.html later.
+      let rendered = raw;
+      if (!rendered.includes("/assets/ui-preservation.css")) {
+        rendered = rendered.replace(
+          "</head>",
+          '  <link rel="stylesheet" href="/assets/ui-preservation.css" />\n</head>',
+        );
+      }
+      if (!rendered.includes("/assets/ui-preservation.js")) {
+        rendered = rendered.replace(
+          "</body>",
+          '  <script src="/assets/ui-preservation.js"></script>\n</body>',
+        );
+      }
+
       // The 2026-07-18 Reel removal: the social-media-guard.js stub used
       // to silently rewrite reel→post behind the user's back. It was a
       // stub the user explicitly flagged. The UI now no longer offers
       // "reel" as a content-type option (see PLATFORMS in index.html),
       // so the guard is no longer needed and is no longer injected.
       // The Reel option can come back when a real video pipeline ships.
-      indexHtmlCache = raw.replace(
+      indexHtmlCache = rendered.replace(
         /(\/assets\/[A-Za-z0-9_\-./]+\.(?:js|css|png|jpe?g|svg|webp|gif|woff2?|ico))/g,
         `$1?v=${BUILD_ID}`,
       );
