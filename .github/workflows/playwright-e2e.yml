@@ -7,8 +7,8 @@
 # Steps
 #   1. Install deps + build the API server
 #   2. Start the API server in the background
-#   3. Run the api-e2e.test.ts suite against the live server
-#   4. Run real Chromium chat + mobile UI preservation tests
+#   3. Run the API E2E suite against the live server
+#   4. Run real Chromium chat, PWA, mobile UI, voice, and durability tests
 #   5. Upload browser logs and mobile screenshots as review evidence
 ##############################################################################
 name: Playwright E2E
@@ -34,13 +34,12 @@ jobs:
   e2e:
     name: E2E tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     env:
       NODE_ENV: test
       PORT: 5000
       API_E2E_BASE_URL: "http://localhost:5000"
-      # Ensure Composio routes respond in "not configured" mode without a key.
       COMPOSIO_API_KEY: ""
 
     steps:
@@ -54,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"playwright/e2e",description:"Mobile UI and PWA browser verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"playwright/e2e",description:"Mobile UI, PWA, voice, and durable-runtime verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
@@ -86,7 +85,6 @@ jobs:
         run: |
           node --enable-source-maps ./artifacts/api-server/dist/index.mjs &
           echo $! > /tmp/api-server.pid
-          # Wait up to 15 s for the health endpoint to respond
           for i in $(seq 1 15); do
             curl -sf http://localhost:5000/healthz && break
             echo "Waiting for API server... ($i/15)"
@@ -101,13 +99,13 @@ jobs:
         run: |
           CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           if [ -z "$CHROME" ]; then
-            echo "No hosted Chromium executable found; mobile browser proof may not be skipped." >&2
+            echo "No hosted Chromium executable found; browser proof may not be skipped." >&2
             exit 1
           fi
           echo "REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE=$CHROME" >> "$GITHUB_ENV"
           "$CHROME" --version
 
-      - name: Run Nova UI browser regression tests
+      - name: Run Nova browser and runtime regression tests
         shell: bash
         run: |
           mkdir -p artifacts/nova/test-results/ui-preservation
@@ -115,6 +113,8 @@ jobs:
           pnpm --filter @workspace/nova exec vitest run \
             test/chat-ui-smoke.test.ts \
             test/ui-preservation.test.ts \
+            test/runtime-durability-contract.test.ts \
+            test/runtime-durability-browser.test.ts \
             --reporter=verbose \
             2>&1 | tee artifacts/nova/test-results/ui-preservation/vitest.log
 
@@ -139,7 +139,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Mobile UI, PWA, New Chat, and deletion checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Mobile UI, PWA, voice, New Chat, deletion, and durable-run checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
@@ -157,7 +157,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Mobile UI or PWA browser verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Mobile UI, PWA, voice, or durable-runtime verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
           curl --fail-with-body --silent --show-error \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
