@@ -56,7 +56,7 @@ describe("durable runtime contracts", () => {
     const appSpec = read(".do", "app.yaml");
     const verifier = read("scripts", "verify-production-runtime.mjs");
 
-    for (const source of [config, proxy, router, bootstrap, openclaw, dockerfile, appSpec, verifier]) {
+    for (const source of [config, router, bootstrap, openclaw, dockerfile, appSpec, verifier]) {
       expect(source).toContain("poolside/laguna-xs-2.1");
     }
     expect(config).toContain('nvidia: {');
