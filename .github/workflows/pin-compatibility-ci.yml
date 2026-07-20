@@ -33,11 +33,10 @@ jobs:
       - name: Prove current API-token boundary across independent replicas
         run: |
           set -euo pipefail
-          # The legacy /api/work-tree/unlock PIN-cookie surface was removed from
-          # the runtime. User-data workspace/media routes now use the explicit,
-          # replica-stable NOVA_API_TOKEN contract. Keep the historical workflow
-          # name so required-check configuration remains compatible, but verify
-          # the active security boundary instead of a deleted endpoint.
+          # Browser operator sessions and explicit NOVA_API_TOKEN calls share the
+          # protected route boundary. Keep the historical workflow name so required
+          # checks remain compatible while proving server-to-server token access on
+          # two independent replicas.
           for spec in 'nova-auth-a:18081' 'nova-auth-b:18083'; do
             name="${spec%%:*}"
             port="${spec##*:}"
@@ -77,14 +76,14 @@ jobs:
             http://127.0.0.1:18081/api/workspaces)"
           echo "$missing_code" >/tmp/missing.status
           test "$missing_code" = '401'
-          grep -q 'invalid or missing API token' /tmp/missing.json
+          grep -q 'operator authentication required' /tmp/missing.json
 
           wrong_code="$(curl --silent --output /tmp/wrong.json --write-out '%{http_code}' \
             -H 'Authorization: Bearer definitely-wrong' \
             http://127.0.0.1:18081/api/workspaces)"
           echo "$wrong_code" >/tmp/wrong.status
           test "$wrong_code" = '401'
-          grep -q 'invalid or missing API token' /tmp/wrong.json
+          grep -q 'operator authentication required' /tmp/wrong.json
 
           # The same configured token must pass the auth layer on both replicas.
           # No test database is configured, so the next expected boundary is the
@@ -103,7 +102,7 @@ jobs:
           test "$header_code" = '503'
           grep -q 'database not configured' /tmp/header.json
 
-          # The retired PIN endpoint must not silently reappear or mint cookies.
+          # The retired legacy endpoint must not silently reappear or mint cookies.
           legacy_code="$(curl --silent --output /tmp/legacy.json --write-out '%{http_code}' \
             -H 'Content-Type: application/json' -d '{"pin":"22"}' \
             http://127.0.0.1:18081/api/work-tree/unlock)"
