@@ -12,11 +12,14 @@ if (!String(process.env.NVIDIA_API_KEY || "").trim()) {
   if (existingNimKey) process.env.NVIDIA_API_KEY = existingNimKey;
 }
 
+// Secretless CI containers must still start so health, schema, and UI checks can
+// run. Model requests will return an explicit NVIDIA_API_KEY configuration error,
+// and the post-deployment verifier rejects production unless real Laguna
+// inference succeeds. There is no fallback to a different model or provider.
 if (!String(process.env.NVIDIA_API_KEY || "").trim()) {
-  console.error(
-    "start-nvidia-laguna: FATAL — NVIDIA_API_KEY or CUSTOM_AGENT_NVIDIA_NIM_KEY is required",
+  console.warn(
+    "start-nvidia-laguna: NVIDIA credential absent; health diagnostics enabled, inference disabled",
   );
-  process.exit(78);
 }
 
 process.env.NOVA_MODEL_PREFERENCE ||= "nvidia";
