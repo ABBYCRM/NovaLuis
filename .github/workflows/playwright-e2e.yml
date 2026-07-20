@@ -44,17 +44,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"playwright/e2e",description:"Regression, mobile UI, PWA, voice, durable-runtime, and skill verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
-          curl --fail-with-body --silent --show-error \
+          if ! curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             --header "Content-Type: application/json" \
-            --data "$PAYLOAD"
+            --data "$PAYLOAD"; then
+            echo "::warning::Could not post pending playwright/e2e commit status after retries. Verification will continue."
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -134,17 +137,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"playwright/e2e",description:"Regression, workspace auth, thinking cube, mobile UI, voice, durable-run, PWA, and skill checks passed",target_url:process.argv[1]}))' "$TARGET_URL")"
-          curl --fail-with-body --silent --show-error \
+          if ! curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             --header "Content-Type: application/json" \
-            --data "$PAYLOAD"
+            --data "$PAYLOAD"; then
+            echo "::warning::All browser tests passed, but the success commit status could not be posted after retries."
+          fi
 
       - name: Mark browser verification failure
         if: failure() && github.event_name == 'push'
@@ -152,14 +158,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"playwright/e2e",description:"Regression, workspace auth, mobile UI, durable-runtime, PWA, or skill verification failed",target_url:process.argv[1]}))' "$TARGET_URL")"
-          curl --fail-with-body --silent --show-error \
+          if ! curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             --header "Content-Type: application/json" \
-            --data "$PAYLOAD"
+            --data "$PAYLOAD"; then
+            echo "::warning::Browser verification failed and the failure commit status could not be posted after retries."
+          fi
