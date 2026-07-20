@@ -63,9 +63,9 @@
         "models": [
           {
             "id": "${NOVA_OPENCLAW_MODEL_ID}",
-            "name": "NOVA server-side model route (kimi-k2.6 by default)",
+            "name": "NOVA server-side NVIDIA NIM route (Poolside Laguna XS 2.1 default)",
             "reasoning": true,
-            "input": ["text", "image"],
+            "input": ["text"],
             "cost": {
               "input": 0,
               "output": 0,
@@ -74,7 +74,7 @@
             },
             "contextWindow": 262144,
             "contextTokens": 256000,
-            "maxTokens": 32768
+            "maxTokens": 8192
           }
         ]
       }
