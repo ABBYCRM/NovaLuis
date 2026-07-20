@@ -56,7 +56,7 @@ describe("durable runtime contracts", () => {
     const appSpec = read(".do", "app.yaml");
     const verifier = read("scripts", "verify-production-runtime.mjs");
 
-    for (const source of [config, router, bootstrap, openclaw, dockerfile, appSpec, verifier]) {
+    for (const source of [config, router, bootstrap, dockerfile, appSpec, verifier]) {
       expect(source).toContain("poolside/laguna-xs-2.1");
     }
     expect(config).toContain('nvidia: {');
@@ -73,6 +73,7 @@ describe("durable runtime contracts", () => {
     expect(bootstrap).toContain("process.env.NVIDIA_API_KEY = existingNimKey");
     expect(bootstrap).toContain('process.env.NOVA_MODEL_PREFERENCE ||= "nvidia"');
     expect(bootstrap).toContain('await import("./start-openclaw.mjs")');
+    expect(openclaw).toContain('"id": "${NOVA_OPENCLAW_MODEL_ID}"');
     expect(openclaw).toContain('"maxTokens": 8192');
     expect(dockerfile).toContain("NOVA_MODEL_PREFERENCE=nvidia");
     expect(dockerfile).toContain("WORK_TREE_MODEL=poolside/laguna-xs-2.1");
