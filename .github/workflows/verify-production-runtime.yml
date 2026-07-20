@@ -17,7 +17,7 @@ jobs:
   verify:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
       LIVE_URL: https://nova-luis-8hjvt.ondigitalocean.app
@@ -35,19 +35,70 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"digitalocean/runtime",description:"Exact live NovaLuis runtime and regression verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
-          curl --fail-with-body --silent --show-error \
+          if ! curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${EXPECTED_SHA}" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             --header "Content-Type: application/json" \
-            --data "$PAYLOAD"
+            --data "$PAYLOAD"; then
+            echo "::warning::Could not post pending digitalocean/runtime status after retries."
+          fi
+
+      - name: Capture sanitized NVIDIA deployment state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/production-runtime
+          TOKEN="${DIGITALOCEAN_API_TOKEN:-${DIGITALOCEAN_API_TOKEN_PAID:-}}"
+          export DO_READ_TOKEN="$TOKEN"
+          node --input-type=module <<'NODE' > artifacts/production-runtime/digitalocean-nvidia-state.json
+          const appId = process.env.DO_APP_ID;
+          const token = process.env.DO_READ_TOKEN;
+          const response = await fetch(`https://api.digitalocean.com/v2/apps/${appId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(30000),
+          });
+          const text = await response.text();
+          if (!response.ok) throw new Error(`DigitalOcean HTTP ${response.status}: ${text.slice(0, 500)}`);
+          const payload = JSON.parse(text);
+          const spec = payload?.app?.spec || {};
+          const records = [];
+          const visit = (owner, envs) => {
+            for (const entry of Array.isArray(envs) ? envs : []) {
+              if (!/NVIDIA|MODEL_PREFERENCE|OPENCLAW_AGENT_MODEL|WORK_TREE_MODEL/i.test(String(entry?.key || ""))) continue;
+              records.push({
+                owner,
+                key: entry.key,
+                type: entry.type || "GENERAL",
+                scope: entry.scope || "RUN_AND_BUILD_TIME",
+                hasStoredValue: typeof entry.value === "string" && entry.value.trim().length > 0,
+              });
+            }
+          };
+          visit("app", spec.envs);
+          for (const group of ["services", "workers", "jobs", "static_sites", "functions"]) {
+            for (const component of Array.isArray(spec[group]) ? spec[group] : []) {
+              visit(`${group}:${component?.name || "unnamed"}`, component?.envs);
+            }
+          }
+          console.log(JSON.stringify({ appId, records }, null, 2));
+          NODE
+          curl --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 \
+            "${LIVE_URL}/api/nova-config" \
+            > artifacts/production-runtime/live-nova-config.json || true
 
       - name: Verify exact DigitalOcean revision, API, PWA, and mobile assets
-        run: node scripts/verify-production-runtime.mjs
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/verify-production-runtime.mjs \
+            2>&1 | tee artifacts/production-runtime/verify-production-runtime.log
 
       - name: Verify live operator session and workspace challenge
         run: node scripts/verify-regression-runtime.mjs operator-session
@@ -58,34 +109,51 @@ jobs:
       - name: Verify durable, startup, and social source contracts
         run: node scripts/verify-regression-runtime.mjs source-contracts
 
+      - name: Upload production runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-runtime-diagnostics
+          if-no-files-found: warn
+          retention-days: 30
+          path: artifacts/production-runtime/
+
       - name: Mark production verification success
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"digitalocean/runtime",description:"Exact live PWA, workspace auth, thinking cube, workers, social, skills, and durable runtime passed",target_url:process.argv[1]}))' "$TARGET_URL")"
-          curl --fail-with-body --silent --show-error \
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"digitalocean/runtime",description:"Exact live NVIDIA Laguna, PWA, workspace auth, workers, social, skills, and durable runtime passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          if ! curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${EXPECTED_SHA}" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             --header "Content-Type: application/json" \
-            --data "$PAYLOAD"
+            --data "$PAYLOAD"; then
+            echo "::warning::Production verification passed, but the success status could not be posted after retries."
+          fi
 
       - name: Mark production verification failure
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"digitalocean/runtime",description:"Live revision or NovaLuis regression contract failed",target_url:process.argv[1]}))' "$TARGET_URL")"
-          curl --fail-with-body --silent --show-error \
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"digitalocean/runtime",description:"Live revision, NVIDIA Laguna inference, or NovaLuis runtime contract failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          if ! curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${EXPECTED_SHA}" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             --header "Content-Type: application/json" \
-            --data "$PAYLOAD"
+            --data "$PAYLOAD"; then
+            echo "::warning::Production verification failed and the failure status could not be posted after retries."
+          fi
