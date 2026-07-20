@@ -46,6 +46,45 @@ describe("durable runtime contracts", () => {
     expect(dockerfile).toContain("SUPER_NOVA_EXEC=1");
   });
 
+  it("routes interactive and durable inference to Poolside Laguna through NVIDIA NIM", () => {
+    const config = read("artifacts", "api-server", "src", "routes", "nova-config.ts");
+    const proxy = read("artifacts", "api-server", "src", "routes", "openai-proxy.ts");
+    const router = read("scripts", "super-nova-router.mjs");
+    const bootstrap = read("scripts", "start-nvidia-laguna.mjs");
+    const openclaw = read("openclaw", "openclaw.json");
+    const dockerfile = read("Dockerfile");
+    const appSpec = read(".do", "app.yaml");
+    const verifier = read("scripts", "verify-production-runtime.mjs");
+
+    for (const source of [config, router, bootstrap, dockerfile, appSpec, verifier]) {
+      expect(source).toContain("poolside/laguna-xs-2.1");
+    }
+    expect(config).toContain('nvidia: {');
+    expect(config).toContain("maxTokens: 8_192");
+    expect(config).toContain("topP: 0.95");
+    expect(config).toContain("contextWindow: 262_144");
+    expect(proxy).toContain("process.env.NVIDIA_API_KEY");
+    expect(proxy).toContain('model.startsWith("poolside/")');
+    expect(proxy).toContain('requiredEnv: "NVIDIA_API_KEY"');
+    expect(router).toContain('baseURL: process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1"');
+    expect(router).toContain("Math.min(maxTokens, 8_192)");
+    expect(router).toContain("body.top_p = 0.95");
+    expect(bootstrap).toContain("CUSTOM_AGENT_NVIDIA_NIM_KEY");
+    expect(bootstrap).toContain("process.env.NVIDIA_API_KEY = existingNimKey");
+    expect(bootstrap).toContain('process.env.NOVA_MODEL_PREFERENCE ||= "nvidia"');
+    expect(bootstrap).toContain('await import("./start-openclaw.mjs")');
+    expect(openclaw).toContain('"id": "${NOVA_OPENCLAW_MODEL_ID}"');
+    expect(openclaw).toContain('"maxTokens": 8192');
+    expect(dockerfile).toContain("NOVA_MODEL_PREFERENCE=nvidia");
+    expect(dockerfile).toContain("WORK_TREE_MODEL=poolside/laguna-xs-2.1");
+    expect(dockerfile).toContain('CMD ["node", "./scripts/start-nvidia-laguna.mjs"]');
+    expect(dockerfile).toContain("COPY artifacts/agent/ ./artifacts/agent/");
+    expect(appSpec).toContain('value: "poolside/laguna-xs-2.1"');
+    expect(appSpec).toContain("CUSTOM_AGENT_NVIDIA_NIM_KEY");
+    expect(verifier).toContain('check: "nvidia-laguna-inference"');
+    expect(verifier).toContain("MODEL_OK");
+  });
+
   it("keeps Instagram cron publishing on the public HTTPS boundary without erasing media", () => {
     const cron = read("artifacts", "api-server", "src", "social-cron.ts");
     const dockerfile = read("Dockerfile");
