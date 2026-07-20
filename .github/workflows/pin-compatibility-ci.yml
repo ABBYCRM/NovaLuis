@@ -53,8 +53,8 @@ jobs:
               -p "${port}:8080" nova-api-auth:ci
           done
           cleanup() {
-            docker logs nova-auth-a || true
-            docker logs nova-auth-b || true
+            docker logs nova-auth-a >/tmp/nova-auth-a.log 2>&1 || true
+            docker logs nova-auth-b >/tmp/nova-auth-b.log 2>&1 || true
             docker rm --force nova-auth-a nova-auth-b || true
           }
           trap cleanup EXIT
@@ -75,12 +75,14 @@ jobs:
           # Missing and incorrect credentials fail before database access.
           missing_code="$(curl --silent --output /tmp/missing.json --write-out '%{http_code}' \
             http://127.0.0.1:18081/api/workspaces)"
+          echo "$missing_code" >/tmp/missing.status
           test "$missing_code" = '401'
           grep -q 'invalid or missing API token' /tmp/missing.json
 
           wrong_code="$(curl --silent --output /tmp/wrong.json --write-out '%{http_code}' \
             -H 'Authorization: Bearer definitely-wrong' \
             http://127.0.0.1:18081/api/workspaces)"
+          echo "$wrong_code" >/tmp/wrong.status
           test "$wrong_code" = '401'
           grep -q 'invalid or missing API token' /tmp/wrong.json
 
@@ -90,12 +92,14 @@ jobs:
           bearer_code="$(curl --silent --output /tmp/bearer.json --write-out '%{http_code}' \
             -H 'Authorization: Bearer ci-shared-api-token' \
             http://127.0.0.1:18081/api/workspaces)"
+          echo "$bearer_code" >/tmp/bearer.status
           test "$bearer_code" = '503'
           grep -q 'database not configured' /tmp/bearer.json
 
           header_code="$(curl --silent --output /tmp/header.json --write-out '%{http_code}' \
             -H 'x-nova-token: ci-shared-api-token' \
             http://127.0.0.1:18083/api/workspaces)"
+          echo "$header_code" >/tmp/header.status
           test "$header_code" = '503'
           grep -q 'database not configured' /tmp/header.json
 
@@ -103,4 +107,27 @@ jobs:
           legacy_code="$(curl --silent --output /tmp/legacy.json --write-out '%{http_code}' \
             -H 'Content-Type: application/json' -d '{"pin":"22"}' \
             http://127.0.0.1:18081/api/work-tree/unlock)"
+          echo "$legacy_code" >/tmp/legacy.status
           test "$legacy_code" = '404'
+
+      - name: Upload operator-boundary diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-boundary-diagnostics
+          if-no-files-found: warn
+          path: |
+            /tmp/health-*.json
+            /tmp/version.json
+            /tmp/missing.json
+            /tmp/missing.status
+            /tmp/wrong.json
+            /tmp/wrong.status
+            /tmp/bearer.json
+            /tmp/bearer.status
+            /tmp/header.json
+            /tmp/header.status
+            /tmp/legacy.json
+            /tmp/legacy.status
+            /tmp/nova-auth-a.log
+            /tmp/nova-auth-b.log
