@@ -2,30 +2,28 @@ import { Router } from "express";
 
 const router = Router();
 
-// ── Model provider registry ────────────────────────────────────────────────
-// These are the three user-selectable providers and their canonical model IDs.
-// Adding a new provider here is the only place that needs changing on the backend.
-//
-// `tuning` is the default agentic tuning applied to every chat request for
-// this model. The openai-proxy and agent-chat routes fill in any missing
-// fields from this table so the request that reaches the upstream model
-// always has the right sampler, output cap, and thinking-mode setting for
-// the job (tool use, code generation, multi-turn agent loops).
 export interface ModelTuning {
-  /** Default output cap. Caller can override up to the upstream's hard limit. */
+  /** Default output cap. Caller can override up to the upstream hard limit. */
   maxTokens: number;
-  /** Sampler temperature. Moonshot recommends 1.0 for thinking mode. */
+  /** Sampler temperature. */
   temperature: number;
   /** Nucleus sampling cutoff. */
   topP: number;
-  /** Whether the model should run with chain-of-thought reasoning. */
+  /** Provider-specific reasoning extension, when supported. */
   thinking: { type: "enabled" | "disabled"; keep: "all" | null };
-  /** Context window the model supports. Surfaced to the UI for transparency. */
+  /** Context window surfaced to the UI for transparency. */
   contextWindow: number;
 }
+
 export const MODEL_TUNING: Record<string, ModelTuning> = {
-  // Moonshot kimi-k2.6 — 256K context, 32K default output, thinking on.
-  // Fast: 193 tok/s after Moonshot's 14-iteration optimization.
+  // Poolside Laguna XS 2.1 on NVIDIA NIM — 262K context and 8K output.
+  "poolside/laguna-xs-2.1": {
+    maxTokens: 8_192,
+    temperature: 1.0,
+    topP: 0.95,
+    thinking: { type: "disabled", keep: null },
+    contextWindow: 262_144,
+  },
   "kimi-k2.6": {
     maxTokens: 32_768,
     temperature: 1.0,
@@ -33,7 +31,6 @@ export const MODEL_TUNING: Record<string, ModelTuning> = {
     thinking: { type: "enabled", keep: null },
     contextWindow: 262_144,
   },
-  // Bitdeer-hosted mirror of kimi-k2.6 (org/model style id).
   "moonshotai/Kimi-K2.6": {
     maxTokens: 32_768,
     temperature: 1.0,
@@ -41,7 +38,6 @@ export const MODEL_TUNING: Record<string, ModelTuning> = {
     thinking: { type: "enabled", keep: null },
     contextWindow: 262_144,
   },
-  // OpenAI gpt-4o — chat-tuned, 128K context, 16K output.
   "gpt-4o": {
     maxTokens: 16_384,
     temperature: 0.7,
@@ -51,71 +47,86 @@ export const MODEL_TUNING: Record<string, ModelTuning> = {
   },
 };
 
-export const PROVIDER_MODELS: Record<string, { model: string; label: string }> = {
-  bitdeer: { model: "moonshotai/Kimi-K2.6",  label: "Kimi K2.6 (Bitdeer)" },
-  openai:  { model: "gpt-4o",                 label: "OpenAI GPT-4o"       },
-  kimi:    { model: "kimi-k2.6",              label: "Kimi K2.6 (Moonshot) — agentic" },
+export const PROVIDER_MODELS: Record<
+  string,
+  { model: string; label: string; requiredEnv: string }
+> = {
+  nvidia: {
+    model: "poolside/laguna-xs-2.1",
+    label: "Poolside Laguna XS 2.1 (NVIDIA NIM) — primary",
+    requiredEnv: "NVIDIA_API_KEY",
+  },
+  bitdeer: {
+    model: "moonshotai/Kimi-K2.6",
+    label: "Kimi K2.6 (Bitdeer)",
+    requiredEnv: "BITDEER_API_KEY",
+  },
+  openai: {
+    model: "gpt-4o",
+    label: "OpenAI GPT-4o",
+    requiredEnv: "OPENAI_API_KEY",
+  },
+  kimi: {
+    model: "kimi-k2.6",
+    label: "Kimi K2.6 (Moonshot) — agentic",
+    requiredEnv: "KIMI_API_KEY",
+  },
 };
 
-// In-memory preference — survives requests, resets on server restart.
-// Seed from NOVA_MODEL_PREFERENCE env var (default: bitdeer).
+const DEFAULT_PROVIDER = "nvidia";
+
+function providerConfigured(provider: string): boolean {
+  const entry = PROVIDER_MODELS[provider];
+  return Boolean(entry && String(process.env[entry.requiredEnv] || "").trim());
+}
+
 let currentProvider: string =
   process.env.NOVA_MODEL_PREFERENCE && PROVIDER_MODELS[process.env.NOVA_MODEL_PREFERENCE]
     ? process.env.NOVA_MODEL_PREFERENCE
-    : "bitdeer";
+    : DEFAULT_PROVIDER;
 
-/**
- * Returns the currently active provider id and its resolved model string.
- * Called by openai-proxy to override the model on internal OpenClaw calls.
- */
 export function getModelPreference(): { provider: string; model: string } {
-  const entry = PROVIDER_MODELS[currentProvider] ?? PROVIDER_MODELS.bitdeer;
+  const entry = PROVIDER_MODELS[currentProvider] ?? PROVIDER_MODELS[DEFAULT_PROVIDER];
   return { provider: currentProvider, model: entry.model };
 }
 
-/**
- * Returns the agentic tuning for a given model id, or undefined if no tuning
- * is registered. Both the openai-proxy and agent-chat routes call this to
- * default the missing fields (max_tokens, temperature, top_p, thinking).
- */
 export function getModelTuning(model: string): ModelTuning | undefined {
   return MODEL_TUNING[model];
 }
 
-// ── GET /api/nova-config ───────────────────────────────────────────────────
-// Returns proxy config (apiKey, baseUrl) PLUS the current model preference,
-// the full list of selectable options, and the agentic tuning applied to
-// each model. The settings panel uses this to show the user exactly what
-// sampler / output cap / thinking mode is in effect.
 router.get("/nova-config", (_req, res) => {
+  const active = PROVIDER_MODELS[currentProvider] ?? PROVIDER_MODELS[DEFAULT_PROVIDER];
   res.json({
-    apiKey:          "proxy",
-    baseUrl:         "/api/v1",
+    apiKey: "proxy",
+    baseUrl: "/api/v1",
     modelPreference: currentProvider,
-    modelOptions:    Object.entries(PROVIDER_MODELS).map(([id, { model, label }]) => {
-      const tuning = MODEL_TUNING[model];
-      return {
-        id,
-        model,
-        label,
-        tuning: tuning
-          ? {
-              maxTokens: tuning.maxTokens,
-              temperature: tuning.temperature,
-              topP: tuning.topP,
-              thinking: tuning.thinking,
-              contextWindow: tuning.contextWindow,
-            }
-          : null,
-      };
-    }),
+    activeModel: active.model,
+    activeProviderConfigured: providerConfigured(currentProvider),
+    activeProviderRequiredEnv: active.requiredEnv,
+    modelOptions: Object.entries(PROVIDER_MODELS).map(
+      ([id, { model, label, requiredEnv }]) => {
+        const tuning = MODEL_TUNING[model];
+        return {
+          id,
+          model,
+          label,
+          configured: providerConfigured(id),
+          requiredEnv,
+          tuning: tuning
+            ? {
+                maxTokens: tuning.maxTokens,
+                temperature: tuning.temperature,
+                topP: tuning.topP,
+                thinking: tuning.thinking,
+                contextWindow: tuning.contextWindow,
+              }
+            : null,
+        };
+      },
+    ),
   });
 });
 
-// ── PATCH /api/nova-config ─────────────────────────────────────────────────
-// Switches the active model provider.  Takes effect immediately for the next
-// chat request — no gateway restart required.
-// Body: { "modelPreference": "openai" | "bitdeer" | "kimi" }
 router.patch("/nova-config", (req, res) => {
   const { modelPreference } = (req.body ?? {}) as { modelPreference?: string };
 
@@ -126,9 +137,24 @@ router.patch("/nova-config", (req, res) => {
     return;
   }
 
+  if (!providerConfigured(modelPreference)) {
+    const requiredEnv = PROVIDER_MODELS[modelPreference].requiredEnv;
+    res.status(409).json({
+      error: `${modelPreference} is not configured`,
+      requiredEnv,
+    });
+    return;
+  }
+
   currentProvider = modelPreference;
-  const { model, label } = PROVIDER_MODELS[currentProvider];
-  res.json({ modelPreference: currentProvider, model, label });
+  const { model, label, requiredEnv } = PROVIDER_MODELS[currentProvider];
+  res.json({
+    modelPreference: currentProvider,
+    model,
+    label,
+    configured: true,
+    requiredEnv,
+  });
 });
 
 export default router;
