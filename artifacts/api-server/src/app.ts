@@ -137,7 +137,10 @@ if (process.env["NODE_ENV"] === "production") {
 
   if (fs.existsSync(indexHtml)) {
     logger.info({ staticDir }, "Serving Nova UI static files");
-    app.use(express.static(staticDir, { index: false }));
+    // Resolve clean paths such as /fluidvoice against fluidvoice.html while
+    // preserving the correct text/html content type. This avoids packaging an
+    // extensionless duplicate that some browsers treat as a download.
+    app.use(express.static(staticDir, { index: false, extensions: ["html"] }));
 
     // Cache-busting: stamp a per-deploy version onto fixed-name static assets
     // (e.g. /assets/bob.js, /assets/nova-bg.png) so every new build is a "new
