@@ -9,6 +9,7 @@
  *   GET /openclaw/status              → ready or unavailable
  *   POST /fluidvoice/pair             → operator-session protected pairing
  *   GET /fluidvoice/status            → paired device-token verification
+ *   POST /fluidvoice/v1/chat/completions → immediate SSE transport boundary
  *
  * The server is started by the vitest globalSetup (test/global-setup.ts) on a
  * random free port. The base URL and peer key are injected via vitest's
@@ -115,7 +116,7 @@ describe("FluidVoice companion bridge", () => {
     await expect(res.json()).resolves.toMatchObject({ needPin: true });
   }, TIMEOUT);
 
-  it("pairs a device after unlock and validates the scoped token", async () => {
+  it("pairs a device, validates the token, and opens SSE before OpenClaw completes", async () => {
     const unlock = await fetch(`${BASE}/operator/unlock`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -137,6 +138,7 @@ describe("FluidVoice companion bridge", () => {
     const pairing = (await pair.json()) as Record<string, unknown>;
     expect(pairing).toMatchObject({
       ok: true,
+      tokenVersion: 2,
       deviceName: "E2E Mac",
       provider: "NOVA OpenClaw",
       model: "poolside/laguna-xs-2.1",
@@ -148,7 +150,7 @@ describe("FluidVoice companion bridge", () => {
     const payload = JSON.parse(
       Buffer.from(token.split(".")[0] || "", "base64url").toString("utf8"),
     ) as Record<string, unknown>;
-    expect(payload).toMatchObject({ aud: "fluidvoice", deviceName: "E2E Mac" });
+    expect(payload).toMatchObject({ v: 2, aud: "fluidvoice", deviceName: "E2E Mac" });
     expect(payload).not.toHaveProperty("pin");
 
     const status = await fetch(`${BASE}/fluidvoice/status`, {
@@ -157,11 +159,37 @@ describe("FluidVoice companion bridge", () => {
     expect(status.status).toBe(200);
     await expect(status.json()).resolves.toMatchObject({
       ok: true,
+      tokenVersion: 2,
       backend: "openclaw",
       provider: "nvidia",
       model: "poolside/laguna-xs-2.1",
       device: { name: "E2E Mac" },
     });
+
+    const stream = await fetch(`${BASE}/fluidvoice/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        model: "poolside/laguna-xs-2.1",
+        stream: true,
+        messages: [{ role: "user", content: "Reply with FLUIDVOICE_OK" }],
+      }),
+    });
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toMatch(/text\/event-stream/);
+    expect(stream.headers.get("x-nova-agent-backend")).toBe("openclaw");
+    expect(stream.headers.get("x-nova-model")).toBe("poolside/laguna-xs-2.1");
+    const streamBody = await stream.text();
+    expect(streamBody).toContain(": nova-fluidvoice-openclaw");
+    // CI has no live OpenClaw gateway, so the wrapper should serialize the
+    // upstream failure inside the already-open SSE response instead of changing
+    // to an HTML/JSON 5xx after the edge connection has been established.
+    expect(streamBody).toContain("event: error");
+    expect(streamBody).toContain("data: [DONE]");
 
     const invalid = await fetch(`${BASE}/fluidvoice/status`, {
       headers: { Authorization: "Bearer invalid.invalid" },
