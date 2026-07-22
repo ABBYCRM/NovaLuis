@@ -61,6 +61,8 @@ COPY --from=builder /app/artifacts/agent ./artifacts/agent
 # Preserve the existing public URL layout: /assets/*, not /public/assets/*.
 COPY --from=builder /app/artifacts/nova/index.html ./nova-static/index.html
 COPY --from=builder /app/artifacts/nova/skills.html ./nova-static/skills.html
+COPY --from=builder /app/artifacts/nova/fluidvoice.html ./nova-static/fluidvoice.html
+COPY --from=builder /app/artifacts/nova/fluidvoice.html ./nova-static/fluidvoice
 COPY --from=builder /app/artifacts/nova/public ./nova-static/
 COPY --from=builder /app/skills ./skills
 COPY --from=builder /app/openclaw ./openclaw

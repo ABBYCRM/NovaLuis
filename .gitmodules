@@ -1,0 +1,3 @@
+[submodule "integrations/fluidvoice/upstream"]
+	path = integrations/fluidvoice/upstream
+	url = https://github.com/altic-dev/FluidVoice.git

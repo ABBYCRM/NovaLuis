@@ -12,6 +12,7 @@ import knowledgeRouter from "./knowledge";
 import vectorMemoryRouter from "./vector-memory";
 import openaiProxyRouter from "./openai-proxy";
 import voiceRouter from "./voice";
+import fluidVoiceRouter from "./fluidvoice";
 import skillsRouter from "./skills";
 import operatorSessionRouter from "./operator-session";
 import workspacesRouter from "./workspaces";
@@ -40,9 +41,12 @@ router.use(composioRouter);
 router.use(githubRouter);
 router.use(knowledgeRouter);
 router.use(vectorMemoryRouter);
-// The signed operator session lifecycle must be available before the protected
-// workspace/media routers so their 401 challenge can unlock and retry in place.
+// The signed operator session lifecycle must be available before pairing a
+// FluidVoice device or entering the protected workspace/media routers.
 router.use(operatorSessionRouter);
+// FluidVoice is a native macOS companion. Pairing requires the signed operator
+// session; subsequent OpenAI-compatible requests require the scoped device token.
+router.use(fluidVoiceRouter);
 // Workspaces and media are mounted at root, but the auth gate is registered
 // per-route (see requireApiAuthCall below) so it scopes only to the
 // /api/workspaces/* and /api/media/* paths. The previous
