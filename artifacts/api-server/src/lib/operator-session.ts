@@ -5,6 +5,7 @@ const COOKIE_NAME = "nova_operator_session";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 8;
 const LOCKOUT_MS = 10 * 60 * 1000;
+const SESSION_SIGNATURE_DOMAIN = "nova-operator-session:v2";
 
 const failedAttempts = new Map<string, { count: number; lockedUntil: number }>();
 
@@ -40,7 +41,9 @@ export function operatorSessionConfigured(): boolean {
 }
 
 function signature(expiresAt: string, secret: string): string {
-  return createHmac("sha256", secret).update(expiresAt).digest("hex");
+  return createHmac("sha256", secret)
+    .update(`${SESSION_SIGNATURE_DOMAIN}:${expiresAt}`)
+    .digest("hex");
 }
 
 function encodeSession(expiresAtMs: number, secret: string): string {
