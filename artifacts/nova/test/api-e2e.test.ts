@@ -7,6 +7,8 @@
  *   GET /version                      → shape check (Render metadata fields)
  *   GET /integrations/composio/status → always responds (configured or not)
  *   GET /openclaw/status              → ready or unavailable
+ *   POST /fluidvoice/pair             → operator-session protected pairing
+ *   GET /fluidvoice/status            → paired device-token verification
  *
  * The server is started by the vitest globalSetup (test/global-setup.ts) on a
  * random free port. The base URL and peer key are injected via vitest's
@@ -96,5 +98,75 @@ describe("GET /openclaw/status", () => {
     expect([200, 503]).toContain(res.status);
     const body = (await res.json()) as Record<string, unknown>;
     expect(["ready", "unavailable"]).toContain(body.status);
+  }, TIMEOUT);
+});
+
+// ---------------------------------------------------------------------------
+// FluidVoice pairing and scoped device authentication
+// ---------------------------------------------------------------------------
+describe("FluidVoice companion bridge", () => {
+  it("rejects pairing without a signed operator session", async () => {
+    const res = await fetch(`${BASE}/fluidvoice/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceName: "E2E Mac" }),
+    });
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toMatchObject({ needPin: true });
+  }, TIMEOUT);
+
+  it("pairs a device after unlock and validates the scoped token", async () => {
+    const unlock = await fetch(`${BASE}/operator/unlock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: "22" }),
+    });
+    expect(unlock.status).toBe(200);
+    const cookie = unlock.headers.get("set-cookie");
+    expect(cookie).toContain("nova_operator_session=");
+
+    const pair = await fetch(`${BASE}/fluidvoice/pair`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookie ?? "",
+      },
+      body: JSON.stringify({ deviceName: "E2E Mac", ttlDays: 30 }),
+    });
+    expect(pair.status).toBe(200);
+    const pairing = (await pair.json()) as Record<string, unknown>;
+    expect(pairing).toMatchObject({
+      ok: true,
+      deviceName: "E2E Mac",
+      provider: "NOVA OpenClaw",
+      model: "poolside/laguna-xs-2.1",
+    });
+    expect(String(pairing.baseUrl)).toMatch(/\/api\/fluidvoice\/v1$/);
+
+    const token = String(pairing.token || "");
+    expect(token.split(".")).toHaveLength(2);
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[0] || "", "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+    expect(payload).toMatchObject({ aud: "fluidvoice", deviceName: "E2E Mac" });
+    expect(payload).not.toHaveProperty("pin");
+    expect(token).not.toContain("22");
+
+    const status = await fetch(`${BASE}/fluidvoice/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      ok: true,
+      backend: "openclaw",
+      provider: "nvidia",
+      model: "poolside/laguna-xs-2.1",
+      device: { name: "E2E Mac" },
+    });
+
+    const invalid = await fetch(`${BASE}/fluidvoice/status`, {
+      headers: { Authorization: "Bearer invalid.invalid" },
+    });
+    expect(invalid.status).toBe(401);
   }, TIMEOUT);
 });
