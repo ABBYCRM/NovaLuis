@@ -24,6 +24,7 @@ jobs:
       DO_APP_ID: a1046ca0-ab98-4775-8ed7-24f156432aaf
       DIGITALOCEAN_API_TOKEN: ${{ secrets.DIGITALOCEAN_API_TOKEN }}
       DIGITALOCEAN_API_TOKEN_PAID: ${{ secrets.DIGITALOCEAN_API_TOKEN_PAID }}
+      NOVA_OPERATOR_PIN: ${{ secrets.NOVA_OPERATOR_PIN }}
 
     steps:
       - name: Check out deployed revision
@@ -37,7 +38,7 @@ jobs:
         run: |
           set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"digitalocean/runtime",description:"Exact live NovaLuis runtime and regression verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"pending",context:"digitalocean/runtime",description:"Exact live NovaLuis, FluidVoice, and regression verification is running",target_url:process.argv[1]}))' "$TARGET_URL")"
           if ! curl --fail-with-body --silent --show-error \
             --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
@@ -100,6 +101,15 @@ jobs:
           node scripts/verify-production-runtime.mjs \
             2>&1 | tee artifacts/production-runtime/verify-production-runtime.log
 
+      - name: Verify live FluidVoice pairing and OpenClaw bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIN="${NOVA_OPERATOR_PIN:-22}"
+          echo "::add-mask::$PIN"
+          NOVA_OPERATOR_PIN="$PIN" node scripts/verify-production-fluidvoice.mjs \
+            2>&1 | tee artifacts/production-runtime/verify-production-fluidvoice.log
+
       - name: Verify live operator session and workspace challenge
         run: node scripts/verify-regression-runtime.mjs operator-session
 
@@ -125,7 +135,7 @@ jobs:
         run: |
           set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"digitalocean/runtime",description:"Exact live NVIDIA Laguna, PWA, workspace auth, workers, social, skills, and durable runtime passed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"success",context:"digitalocean/runtime",description:"Live Laguna, FluidVoice/OpenClaw bridge, PWA, auth, workers, social, skills, and durable runtime passed",target_url:process.argv[1]}))' "$TARGET_URL")"
           if ! curl --fail-with-body --silent --show-error \
             --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
@@ -145,7 +155,7 @@ jobs:
         run: |
           set -u -o pipefail
           TARGET_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"digitalocean/runtime",description:"Live revision, NVIDIA Laguna inference, or NovaLuis runtime contract failed",target_url:process.argv[1]}))' "$TARGET_URL")"
+          PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({state:"failure",context:"digitalocean/runtime",description:"Live revision, Laguna inference, FluidVoice bridge, or NovaLuis runtime contract failed",target_url:process.argv[1]}))' "$TARGET_URL")"
           if ! curl --fail-with-body --silent --show-error \
             --retry 5 --retry-all-errors --retry-delay 2 \
             --request POST \
