@@ -6,6 +6,7 @@ on:
     types: [completed]
 
 permissions:
+  actions: write
   contents: read
   statuses: write
 
@@ -25,12 +26,34 @@ jobs:
       DIGITALOCEAN_API_TOKEN: ${{ secrets.DIGITALOCEAN_API_TOKEN }}
       DIGITALOCEAN_API_TOKEN_PAID: ${{ secrets.DIGITALOCEAN_API_TOKEN_PAID }}
       NOVA_OPERATOR_PIN: ${{ secrets.NOVA_OPERATOR_PIN }}
+      COMPROMISED_ARTIFACT_ID: "8544632347"
 
     steps:
       - name: Check out deployed revision
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Delete compromised prior diagnostics artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS="$(curl --silent --show-error \
+            --output /tmp/delete-artifact-response.txt \
+            --write-out '%{http_code}' \
+            --request DELETE \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${COMPROMISED_ARTIFACT_ID}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28")"
+          if [ "$STATUS" != "204" ] && [ "$STATUS" != "404" ]; then
+            echo "Could not delete compromised diagnostics artifact; HTTP $STATUS" >&2
+            cat /tmp/delete-artifact-response.txt >&2
+            exit 1
+          fi
+          echo "Compromised diagnostics artifact is absent (HTTP $STATUS)."
 
       - name: Mark production verification pending
         env:

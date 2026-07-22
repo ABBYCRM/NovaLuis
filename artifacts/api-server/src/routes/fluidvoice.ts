@@ -4,9 +4,11 @@ import { requireOperatorSession } from "../lib/operator-session";
 
 const router = Router();
 const TOKEN_AUDIENCE = "fluidvoice";
-const TOKEN_VERSION = 1;
+const TOKEN_VERSION = 2;
 const DEFAULT_TOKEN_TTL_DAYS = 90;
 const MAX_TOKEN_TTL_DAYS = 365;
+const MIN_SHORT_TOKEN_TTL_MINUTES = 5;
+const MAX_SHORT_TOKEN_TTL_MINUTES = 60;
 const DEFAULT_MODEL = "poolside/laguna-xs-2.1";
 
 interface FluidVoiceTokenPayload {
@@ -23,6 +25,13 @@ interface FluidVoiceRequest extends Request {
   fluidVoiceDevice?: FluidVoiceTokenPayload;
 }
 
+interface FluidVoicePairBody {
+  deviceName?: unknown;
+  ttlDays?: unknown;
+  /** Short-lived automation/verifier credential. The public setup UI uses ttlDays. */
+  ttlMinutes?: unknown;
+}
+
 function baseSigningSecret(): string {
   return String(process.env.SESSION_SECRET || process.env.NOVA_API_TOKEN || "").trim();
 }
@@ -31,7 +40,7 @@ function fluidVoiceSigningSecret(): string {
   const secret = baseSigningSecret();
   if (!secret) return "";
   return createHmac("sha256", secret)
-    .update("nova-fluidvoice-device-token:v1")
+    .update("nova-fluidvoice-device-token:v2")
     .digest("hex");
 }
 
@@ -125,6 +134,23 @@ function publicBaseUrl(req: Request): string {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+function tokenTtlMs(body: FluidVoicePairBody): number {
+  const requestedMinutes = Number(body.ttlMinutes);
+  if (Number.isFinite(requestedMinutes) && requestedMinutes > 0) {
+    const minutes = Math.max(
+      MIN_SHORT_TOKEN_TTL_MINUTES,
+      Math.min(MAX_SHORT_TOKEN_TTL_MINUTES, Math.floor(requestedMinutes)),
+    );
+    return minutes * 60 * 1000;
+  }
+
+  const requestedDays = Number(body.ttlDays);
+  const days = Number.isFinite(requestedDays)
+    ? Math.max(1, Math.min(MAX_TOKEN_TTL_DAYS, Math.floor(requestedDays)))
+    : DEFAULT_TOKEN_TTL_DAYS;
+  return days * 24 * 60 * 60 * 1000;
+}
+
 router.post("/fluidvoice/pair", requireOperatorSession, (req, res) => {
   const secret = fluidVoiceSigningSecret();
   if (!secret) {
@@ -135,27 +161,17 @@ router.post("/fluidvoice/pair", requireOperatorSession, (req, res) => {
     return;
   }
 
-  const requestedDays = Number(
-    req.body && typeof req.body === "object"
-      ? (req.body as { ttlDays?: unknown }).ttlDays
-      : DEFAULT_TOKEN_TTL_DAYS,
-  );
-  const ttlDays = Number.isFinite(requestedDays)
-    ? Math.max(1, Math.min(MAX_TOKEN_TTL_DAYS, Math.floor(requestedDays)))
-    : DEFAULT_TOKEN_TTL_DAYS;
+  const pairBody: FluidVoicePairBody =
+    req.body && typeof req.body === "object" ? req.body as FluidVoicePairBody : {};
   const now = Date.now();
-  const deviceName = sanitizeDeviceName(
-    req.body && typeof req.body === "object"
-      ? (req.body as { deviceName?: unknown }).deviceName
-      : undefined,
-  );
+  const deviceName = sanitizeDeviceName(pairBody.deviceName);
   const payload: FluidVoiceTokenPayload = {
     v: TOKEN_VERSION,
     aud: TOKEN_AUDIENCE,
     deviceId: randomBytes(16).toString("hex"),
     deviceName,
     iat: now,
-    exp: now + ttlDays * 24 * 60 * 60 * 1000,
+    exp: now + tokenTtlMs(pairBody),
     nonce: randomBytes(16).toString("hex"),
   };
   const token = encodeToken(payload, secret);
@@ -165,6 +181,7 @@ router.post("/fluidvoice/pair", requireOperatorSession, (req, res) => {
   res.json({
     ok: true,
     token,
+    tokenVersion: TOKEN_VERSION,
     deviceId: payload.deviceId,
     deviceName: payload.deviceName,
     expiresAt: new Date(payload.exp).toISOString(),
@@ -179,6 +196,7 @@ router.get("/fluidvoice/status", requireFluidVoiceToken, (req: FluidVoiceRequest
   res.setHeader("Cache-Control", "no-store");
   res.json({
     ok: true,
+    tokenVersion: TOKEN_VERSION,
     backend: "openclaw",
     provider: "nvidia",
     model: process.env.OPENCLAW_AGENT_MODEL || DEFAULT_MODEL,
