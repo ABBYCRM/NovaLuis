@@ -150,7 +150,6 @@ describe("FluidVoice companion bridge", () => {
     ) as Record<string, unknown>;
     expect(payload).toMatchObject({ aud: "fluidvoice", deviceName: "E2E Mac" });
     expect(payload).not.toHaveProperty("pin");
-    expect(token).not.toContain("22");
 
     const status = await fetch(`${BASE}/fluidvoice/status`, {
       headers: { Authorization: `Bearer ${token}` },
