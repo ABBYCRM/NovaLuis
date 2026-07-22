@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NOVA × FluidVoice</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top, #17243f 0, #090d16 48%, #05070b 100%); color: #f4f7fb; }
+    main { width: min(760px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0 80px; }
+    .eyebrow { color: #8fb7ff; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 10px 0 10px; font-size: clamp(34px, 7vw, 58px); line-height: 1; }
+    .lead { margin: 0 0 28px; max-width: 680px; color: #b9c4d6; font-size: 17px; line-height: 1.6; }
+    .card { border: 1px solid rgba(255,255,255,.12); background: rgba(12,17,28,.86); border-radius: 20px; padding: 24px; box-shadow: 0 24px 70px rgba(0,0,0,.35); backdrop-filter: blur(16px); }
+    .grid { display: grid; gap: 16px; }
+    label { display: grid; gap: 7px; color: #d8e0ed; font-size: 13px; font-weight: 700; }
+    input { width: 100%; padding: 13px 14px; border: 1px solid rgba(255,255,255,.15); border-radius: 12px; background: #090d15; color: #fff; font: inherit; }
+    button { border: 0; border-radius: 12px; padding: 14px 18px; background: linear-gradient(135deg, #74a7ff, #9e78ff); color: #07101f; font: inherit; font-weight: 900; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .notice { margin-top: 16px; padding: 13px 14px; border-radius: 12px; background: rgba(255,255,255,.055); color: #c8d2e2; line-height: 1.5; }
+    .error { color: #ffb8b8; border: 1px solid rgba(255,100,100,.25); background: rgba(125,25,25,.24); }
+    .result { display: none; margin-top: 22px; }
+    .result.visible { display: block; }
+    .field { margin-top: 13px; }
+    .field strong { display: block; margin-bottom: 6px; font-size: 12px; color: #8fb7ff; text-transform: uppercase; letter-spacing: .08em; }
+    .copyrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .copyrow button { padding: 11px 14px; background: #202a3d; color: #eef4ff; }
+    code { overflow-wrap: anywhere; }
+    ol { color: #c8d2e2; line-height: 1.7; padding-left: 22px; }
+    a { color: #9fc1ff; }
+    .small { color: #8f9db2; font-size: 12px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">NOVA Companion Integration</div>
+    <h1>FluidVoice pairing</h1>
+    <p class="lead">Keep speech recognition and microphone access on your Mac. FluidVoice sends only the resulting request to NOVA, where OpenClaw and Poolside Laguna execute it.</p>
+
+    <section class="card">
+      <form id="pair-form" class="grid">
+        <label>
+          Device name
+          <input id="device-name" autocomplete="off" maxlength="80" value="FluidVoice Mac" />
+        </label>
+        <label>
+          NOVA operator PIN
+          <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" />
+        </label>
+        <button id="pair-button" type="submit">Pair this FluidVoice device</button>
+      </form>
+
+      <div id="message" class="notice">The PIN is sent only to NOVA over HTTPS. It is not saved in this page or included in the FluidVoice device token.</div>
+
+      <div id="result" class="result">
+        <h2>FluidVoice custom provider settings</h2>
+        <div class="field">
+          <strong>Base URL</strong>
+          <div class="copyrow"><input id="base-url" readonly /><button type="button" data-copy="base-url">Copy</button></div>
+        </div>
+        <div class="field">
+          <strong>Model</strong>
+          <div class="copyrow"><input id="model" readonly /><button type="button" data-copy="model">Copy</button></div>
+        </div>
+        <div class="field">
+          <strong>API key / device token</strong>
+          <div class="copyrow"><input id="token" type="password" readonly /><button type="button" data-copy="token">Copy</button></div>
+        </div>
+        <p id="expiry" class="small"></p>
+        <ol>
+          <li>Install FluidVoice on a supported Mac.</li>
+          <li>Open FluidVoice AI/provider settings and choose a custom OpenAI-compatible provider.</li>
+          <li>Paste the Base URL, Model and API key shown above.</li>
+          <li>Keep the API key in macOS Keychain. Do not paste the NVIDIA key into FluidVoice.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('pair-form');
+    const button = document.getElementById('pair-button');
+    const message = document.getElementById('message');
+    const result = document.getElementById('result');
+
+    async function jsonFetch(url, options) {
+      const response = await fetch(url, { credentials: 'include', ...options });
+      const text = await response.text();
+      let payload = {};
+      try { payload = text ? JSON.parse(text) : {}; } catch { payload = { error: text || 'Invalid server response' }; }
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      return payload;
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      result.classList.remove('visible');
+      message.className = 'notice';
+      message.textContent = 'Pairing…';
+      try {
+        const pin = document.getElementById('pin').value.trim();
+        const deviceName = document.getElementById('device-name').value.trim() || 'FluidVoice Mac';
+        await jsonFetch('/api/operator/unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin })
+        });
+        const pairing = await jsonFetch('/api/fluidvoice/pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceName, ttlDays: 90 })
+        });
+        document.getElementById('pin').value = '';
+        document.getElementById('base-url').value = pairing.baseUrl;
+        document.getElementById('model').value = pairing.model;
+        document.getElementById('token').value = pairing.token;
+        document.getElementById('expiry').textContent = `Device token expires ${new Date(pairing.expiresAt).toLocaleString()}. Pair again to issue a replacement.`;
+        result.classList.add('visible');
+        message.textContent = 'Paired successfully. Copy the three values below into FluidVoice.';
+      } catch (error) {
+        message.className = 'notice error';
+        message.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.querySelectorAll('[data-copy]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const input = document.getElementById(button.dataset.copy);
+        await navigator.clipboard.writeText(input.value);
+        const original = button.textContent;
+        button.textContent = 'Copied';
+        setTimeout(() => { button.textContent = original; }, 1200);
+      });
+    });
+  </script>
+</body>
+</html>
