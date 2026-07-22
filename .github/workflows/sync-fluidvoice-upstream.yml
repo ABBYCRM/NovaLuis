@@ -1,0 +1,68 @@
+name: Sync FluidVoice Upstream
+
+on:
+  push:
+    branches:
+      - 2026-07-22/fluidvoice-nova-companion
+    paths:
+      - .github/workflows/sync-fluidvoice-upstream.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fluidvoice-upstream-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUIDVOICE_UPSTREAM_URL: https://github.com/altic-dev/FluidVoice.git
+  FLUIDVOICE_UPSTREAM_COMMIT: 1b070a8e90e4f9cdba6e3ea6f4a4b03352c26729
+  FLUIDVOICE_PATH: integrations/fluidvoice/upstream
+
+jobs:
+  pin-upstream:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure commit identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add or refresh pinned FluidVoice submodule
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$FLUIDVOICE_PATH")"
+
+          if git ls-files --stage "$FLUIDVOICE_PATH" | grep -q '^160000 '; then
+            git submodule sync -- "$FLUIDVOICE_PATH"
+            git submodule update --init -- "$FLUIDVOICE_PATH"
+          else
+            rm -rf "$FLUIDVOICE_PATH"
+            git submodule add "$FLUIDVOICE_UPSTREAM_URL" "$FLUIDVOICE_PATH"
+          fi
+
+          git -C "$FLUIDVOICE_PATH" fetch --depth 1 origin "$FLUIDVOICE_UPSTREAM_COMMIT"
+          git -C "$FLUIDVOICE_PATH" checkout --detach "$FLUIDVOICE_UPSTREAM_COMMIT"
+          printf '%s\n' "$FLUIDVOICE_UPSTREAM_COMMIT" > integrations/fluidvoice/UPSTREAM_COMMIT
+
+          test "$(git -C "$FLUIDVOICE_PATH" rev-parse HEAD)" = "$FLUIDVOICE_UPSTREAM_COMMIT"
+          git add .gitmodules "$FLUIDVOICE_PATH" integrations/fluidvoice/UPSTREAM_COMMIT
+
+      - name: Commit pinned source reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            echo "FluidVoice is already pinned to $FLUIDVOICE_UPSTREAM_COMMIT"
+            exit 0
+          fi
+          git commit -m "vendor(fluidvoice): pin upstream $FLUIDVOICE_UPSTREAM_COMMIT"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
