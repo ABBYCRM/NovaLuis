@@ -10,6 +10,7 @@ const MAX_TOKEN_TTL_DAYS = 365;
 const MIN_SHORT_TOKEN_TTL_MINUTES = 5;
 const MAX_SHORT_TOKEN_TTL_MINUTES = 60;
 const DEFAULT_MODEL = "poolside/laguna-xs-2.1";
+const SSE_HEARTBEAT_MS = 10_000;
 
 interface FluidVoiceTokenPayload {
   v: number;
@@ -151,6 +152,41 @@ function tokenTtlMs(body: FluidVoicePairBody): number {
   return days * 24 * 60 * 60 * 1000;
 }
 
+function openSse(res: Response): NodeJS.Timeout {
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("X-Nova-Agent-Backend", "openclaw");
+  res.setHeader("X-Nova-Model", process.env.OPENCLAW_AGENT_MODEL || DEFAULT_MODEL);
+  res.flushHeaders();
+  // SSE comments are ignored by OpenAI-compatible clients but force the public
+  // edge to establish and retain the response while OpenClaw is still planning.
+  res.write(": nova-fluidvoice-openclaw\n\n");
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) {
+      res.write(`: heartbeat ${Date.now()}\n\n`);
+    }
+  }, SSE_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  return heartbeat;
+}
+
+function writeSseError(res: Response, status: number, message: string): void {
+  if (res.writableEnded || res.destroyed) return;
+  const payload = JSON.stringify({
+    error: {
+      message,
+      type: "nova_fluidvoice_upstream_error",
+      status,
+    },
+  });
+  res.write(`event: error\ndata: ${payload}\n\n`);
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
 router.post("/fluidvoice/pair", requireOperatorSession, (req, res) => {
   const secret = fluidVoiceSigningSecret();
   if (!secret) {
@@ -224,15 +260,19 @@ router.post(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15 * 60 * 1000);
     timeout.unref?.();
-    req.on("close", () => controller.abort());
+    // Track the response socket, not the already-consumed request body. This
+    // prevents normal request completion from cancelling the agent call.
+    res.on("close", () => controller.abort());
 
     const deviceId = req.fluidVoiceDevice?.deviceId || "unknown";
+    const wantsStream = incoming.stream !== false;
     const body = {
       ...incoming,
       model: process.env.OPENCLAW_AGENT_MODEL || DEFAULT_MODEL,
-      stream: incoming.stream !== false,
+      stream: wantsStream,
       user: `fluidvoice:${deviceId}`,
     };
+    const heartbeat = wantsStream ? openSse(res) : null;
 
     try {
       const upstream = await fetch(
@@ -241,7 +281,7 @@ router.post(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Accept: String(req.headers.accept || "text/event-stream, application/json"),
+            Accept: wantsStream ? "text/event-stream" : "application/json",
             "x-nova-user-id": `fv-${deviceId}`,
             "x-nova-client": "fluidvoice",
           },
@@ -250,6 +290,33 @@ router.post(
           duplex: "half",
         },
       );
+
+      if (wantsStream) {
+        if (!upstream.ok) {
+          const details = (await upstream.text().catch(() => "")).slice(0, 300);
+          writeSseError(
+            res,
+            upstream.status,
+            details || `OpenClaw returned HTTP ${upstream.status}`,
+          );
+          return;
+        }
+        if (!upstream.body) {
+          writeSseError(res, 502, "OpenClaw returned no streaming body");
+          return;
+        }
+
+        const reader = upstream.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!res.write(value)) {
+            await new Promise<void>((resolve) => res.once("drain", resolve));
+          }
+        }
+        res.end();
+        return;
+      }
 
       res.status(upstream.status);
       const blockedHeaders = new Set([
@@ -284,18 +351,20 @@ router.post(
       }
       res.end();
     } catch (error) {
-      if (!res.headersSent) {
-        const aborted = error instanceof Error && error.name === "AbortError";
-        res.status(aborted ? 504 : 502).json({
-          error: aborted
-            ? "FluidVoice request timed out"
-            : "NOVA OpenClaw runtime unreachable",
-          details: error instanceof Error ? error.message : String(error),
-        });
+      const aborted = error instanceof Error && error.name === "AbortError";
+      const status = aborted ? 504 : 502;
+      const message = aborted
+        ? "FluidVoice request timed out"
+        : `NOVA OpenClaw runtime unreachable: ${error instanceof Error ? error.message : String(error)}`;
+      if (wantsStream && res.headersSent) {
+        writeSseError(res, status, message);
+      } else if (!res.headersSent) {
+        res.status(status).json({ error: message });
       } else {
         res.end();
       }
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
       clearTimeout(timeout);
     }
   },
