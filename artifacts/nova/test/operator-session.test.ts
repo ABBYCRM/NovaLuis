@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function responseDouble() {
@@ -72,7 +74,7 @@ describe("operator workspace session", () => {
     expect(protectedResponse.state.body).toBeNull();
   });
 
-  it("preserves token query authentication for existing image elements", async () => {
+  it("preserves token query authentication for non-browser compatibility", async () => {
     const auth = await import("../../api-server/src/lib/api-auth");
     const next = vi.fn();
     const { response, state } = responseDouble();
@@ -88,6 +90,21 @@ describe("operator workspace session", () => {
 
     expect(next).toHaveBeenCalledTimes(1);
     expect(state.body).toBeNull();
+  });
+
+  it("ships browser recovery through operator PIN and never requires localStorage token persistence", () => {
+    const asset = fs.readFileSync(
+      path.resolve("public", "assets", "operator-session-auth.js"),
+      "utf8",
+    );
+
+    expect(asset).toContain("Enter your NovaLuis operator PIN to unlock Workspaces and Pictures.");
+    expect(asset).toContain("credentials: 'same-origin'");
+    expect(asset).toContain("window.novaUnlockWorkspace = unlockOperatorSession");
+    expect(asset).toContain("delete settings.novaApiToken");
+    expect(asset).toContain("event.stopImmediatePropagation()");
+    expect(asset).toContain("url.searchParams.delete('token')");
+    expect(asset).toContain("Use your NovaLuis operator PIN. The browser receives a signed HttpOnly session");
   });
 
   it("rejects a wrong PIN without creating a session", async () => {
