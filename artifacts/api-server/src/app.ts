@@ -7,6 +7,7 @@ import router from "./routes";
 import instagramPublishRouter from "./routes/instagram-publish";
 import { logger } from "./lib/logger";
 import { normalizeSocialSchedulePayload } from "./lib/social-schedule-compat";
+import { enforceResponseFormatContract } from "./lib/response-format-contract";
 import "./lib/vector-memory-fetch-hook";
 
 const app: Express = express();
@@ -33,6 +34,21 @@ app.use(
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// Final response-presentation boundary. Browser settings may include custom
+// system prompts, so normalize every main-chat request here, before either the
+// durable work-tree interceptor or interactive OpenClaw route sees it. The
+// presentation contract becomes the final system instruction while ordinary
+// conversation order remains unchanged.
+app.use("/api/agent/v1/chat/completions", (req, _res, next) => {
+  if (req.method === "POST" && req.body && typeof req.body === "object") {
+    const body = req.body as { messages?: unknown };
+    if (Array.isArray(body.messages)) {
+      body.messages = enforceResponseFormatContract(body.messages);
+    }
+  }
+  next();
+});
 
 // Normalize and validate Instagram media arguments at the application boundary.
 // This catches legacy or external callers that use imageUrl/videoUrl and stops an
@@ -168,12 +184,27 @@ if (process.env["NODE_ENV"] === "production") {
           '  <link rel="stylesheet" href="/assets/ui-preservation.css" />\n</head>',
         );
       }
+      if (!rendered.includes("/assets/response-presentation.css")) {
+        rendered = rendered.replace(
+          "</head>",
+          '  <link rel="stylesheet" href="/assets/response-presentation.css" />\n</head>',
+        );
+      }
       // The auth recovery wrapper must be parser-loaded before the navigation
       // repair so a fast first tap on Pictures cannot race its installation.
       if (!rendered.includes("/assets/operator-session-auth.js")) {
         rendered = rendered.replace(
           "</body>",
           '  <script src="/assets/operator-session-auth.js"></script>\n</body>',
+        );
+      }
+      // Presentation cleanup runs after the handwritten Markdown renderer and
+      // strips any literal hidden-thought/internal-trace block that reaches the
+      // DOM. It does not replace the chat renderer or alter stored messages.
+      if (!rendered.includes("/assets/response-presentation.js")) {
+        rendered = rendered.replace(
+          "</body>",
+          '  <script src="/assets/response-presentation.js"></script>\n</body>',
         );
       }
       if (!rendered.includes("/assets/ui-navigation-preservation.js")) {
