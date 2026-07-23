@@ -1,0 +1,114 @@
+/* NOVA structured response presentation
+ * Keeps long agent answers readable on desktop, installed PWA, and WhatsApp-sized
+ * mobile screens without replacing the handwritten chat renderer.
+ */
+.msg-row.bot .md-content,
+.msg-row.bot .message-content {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.msg-row.bot .md-content > h1,
+.msg-row.bot .md-content > h2,
+.msg-row.bot .md-content > h3,
+.msg-row.bot .message-content > h1,
+.msg-row.bot .message-content > h2,
+.msg-row.bot .message-content > h3 {
+  margin: 1.1rem 0 0.65rem;
+  line-height: 1.28;
+}
+
+.msg-row.bot .md-content > h1:first-child,
+.msg-row.bot .md-content > h2:first-child,
+.msg-row.bot .md-content > h3:first-child,
+.msg-row.bot .message-content > h1:first-child,
+.msg-row.bot .message-content > h2:first-child,
+.msg-row.bot .message-content > h3:first-child {
+  margin-top: 0;
+}
+
+.msg-row.bot .md-content > ol,
+.msg-row.bot .message-content > ol {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.msg-row.bot .md-content > ol > li,
+.msg-row.bot .message-content > ol > li {
+  margin: 0 0 0.8rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 14px;
+  background: rgba(255,255,255,0.035);
+  line-height: 1.65;
+}
+
+.msg-row.bot .md-content > ol > li:last-child,
+.msg-row.bot .message-content > ol > li:last-child {
+  margin-bottom: 0;
+}
+
+.msg-row.bot .md-content ul,
+.msg-row.bot .message-content ul {
+  padding-left: 1.25rem;
+  margin: 0.55rem 0 0.85rem;
+}
+
+.msg-row.bot .md-content li + li,
+.msg-row.bot .message-content li + li {
+  margin-top: 0.3rem;
+}
+
+.msg-row.bot .md-content hr,
+.msg-row.bot .message-content hr {
+  height: 1px;
+  border: 0;
+  background: var(--border, rgba(255,255,255,0.1));
+  margin: 1rem 0;
+}
+
+.msg-row.bot .md-content blockquote,
+.msg-row.bot .message-content blockquote {
+  margin: 0.65rem 0 1rem;
+  padding: 0.75rem 0.9rem;
+  border-left: 3px solid var(--accent, #f97316);
+  border-radius: 0 10px 10px 0;
+  background: rgba(249,115,22,0.08);
+}
+
+.msg-row.bot .md-content blockquote > :first-child,
+.msg-row.bot .message-content blockquote > :first-child {
+  margin-top: 0;
+}
+
+.msg-row.bot .md-content blockquote > :last-child,
+.msg-row.bot .message-content blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-row.bot .md-content table,
+.msg-row.bot .message-content table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.msg-row.bot .md-content a,
+.msg-row.bot .message-content a {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .msg-row.bot .md-content > ol > li,
+  .msg-row.bot .message-content > ol > li {
+    padding: 0.78rem 0.82rem;
+    border-radius: 12px;
+  }
+
+  .msg-row.bot .md-content,
+  .msg-row.bot .message-content {
+    line-height: 1.62;
+  }
+}
